@@ -1,0 +1,25 @@
+# HDB-Compass Experiment Configuration (config/experiment_config.yaml)
+# Proposal Page 14 Specification: Models, temp=0.0, seed=42, chunking, top-k
+
+global:
+  seed: 42
+  temperature: 0.0
+  embedding_model: "text-embedding-3-small"
+  llm_model: "gpt-4o-mini"
+
+# Member 2: Geospatial & Commute Engine Settings
+spatial:
+  svy21_crs: "EPSG:3414"
+  wgs84_crs: "EPSG:4326"
+  default_search_radius_meters: 1000
+  moe_school_priority_radius_meters: 1000
+  moe_school_secondary_radius_meters: 2000
+  circle_polygon_resolution: 64
+  walking_speed_meters_per_min: 80.0 # ~4.8 km/h standard pedestrian speed
+  data_sources:
+    hdb_geojson_id: "d_16b157c52ed637edd6ba1232e026258d"
+    hdb_property_id: "d_17f5382f26140b1fdae0ba2ef6239d2f"
+    schools_dataset_id: "d_688b934f82c1059ed0a6993d2a829089"
+    rail_stations_dataset_id: "d_8d886e3a83934d7447acdf5bc6959999"
+    hawker_dataset_id: "d_68a42f09f350881996d83f9cd73ab02f"
+    supermarket_dataset_id: "d_11edd0117280c5776651d7891114c88c"

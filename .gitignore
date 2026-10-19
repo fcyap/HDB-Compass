@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+.venv/
+venv/
+env/
+
+# Environment Secrets
+.env
+*.env
+backend/.env
+
+# Build outputs
+dist/
+frontend/dist/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Large dataset raw download cache (data.gov.sg blobs)
+data/cache/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
