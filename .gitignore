@@ -27,3 +27,10 @@ data/cache/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Member 4: benchmark outputs (keep summaries in the report, not git)
+evaluation/results/
+
+# Member 4: generated analysis outputs and local traces (regenerate with evaluation/analyze_category_e.py)
+evaluation/analysis/
+evaluation/traces/

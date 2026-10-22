@@ -40,3 +40,10 @@ class HDBCompassState(TypedDict, total=False):
     map_ui_payload: Dict[str, Any]                             # Synced to frontend map (GeoJSON markers + buffer rings)
     draft_response: str
     auditor_verdict: Dict[str, Any]                            # {"passed": bool, "critique": str, "retry_count": int}
+
+    # --- Member 4 additions (optional keys; additive, nothing above changes) ---
+    tool_call_log: Annotated[List[Dict[str, Any]], operator.add]   # schemas.ToolCallRecord dicts -> Tool F1 / Param EM
+    relaxation: Optional[Dict[str, Any]]                           # schemas.RelaxUnsatisfiedConstraintsOutput (use case E2)
+    variant: str                                                   # "A" | "B" | "C" — which architecture produced this run
+    errors: Annotated[List[str], operator.add]                     # non-fatal sub-agent errors surfaced to the UI/eval
+    subagent_notes: Annotated[List[Dict[str, Any]], operator.add]  # {"agent", "text"}: each sub-agent's own final summary

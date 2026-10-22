@@ -1,0 +1,230 @@
+"""
+Preliminary Experiment 1 runner — Category E only (evaluation/run_category_e_prelim.py).
+Owned by Member 4. Member 5's run_architecture_eval.py supersedes this for the
+full 90-query benchmark; the per-item scoring is shared (architecture_metrics.py).
+
+Runs Variants A/B/C over evaluation/category_e_queries.json on whatever LLM
+profile is active (ollama laptop, vllm cluster, or none), checkpointing one
+JSON line per (variant, query) so a dropped VPN, a Slurm wall-time limit or a
+closed laptop lid loses at most one query. Re-running resumes.
+
+    LLM_PROFILE=ollama .venv/bin/python evaluation/run_category_e_prelim.py            # all variants, all 15
+    LLM_PROFILE=vllm   .venv/bin/python evaluation/run_category_e_prelim.py --variants C --ids E1-01,E2-01
+    .venv/bin/python evaluation/run_category_e_prelim.py --summary-only                 # re-aggregate a results file
+
+Output: evaluation/results/prelim_<profile>_<model>.jsonl  (+ .summary.json)
+Each line: {run, variant, id, sub_use_case, profile, model, latency_s, scores, state_excerpt}
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+import traceback
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from agents.llm import active_profile  # noqa: E402
+from evaluation import architecture_metrics as M  # noqa: E402
+
+RESULTS_DIR = PROJECT_ROOT / "evaluation" / "results"
+QUERIES = PROJECT_ROOT / "evaluation" / "category_e_queries.json"
+
+
+def load_variant(name: str):
+    if name == "A":
+        from agents import arch_1_monolith as mod
+    elif name == "B":
+        from agents import arch_2_coarse as mod
+    elif name == "C":
+        from agents import arch_3_specialist_5agent as mod
+    else:
+        raise ValueError(name)
+    return mod
+
+
+def state_excerpt(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Enough to reconstruct a trace walkthrough without the full tool payloads."""
+    blocks = state.get("candidate_blocks_intersection") or []
+    return {
+        "user_constraints": state.get("user_constraints"),
+        "active_subagents": state.get("active_subagents"),
+        "tool_call_log": [{k: r.get(k) for k in ("agent", "tool", "arguments", "ok", "error", "latency_ms")} for r in state.get("tool_call_log", [])],
+        "n_candidates": len(blocks),
+        "candidates": [{"block": b.get("block"), "street": b.get("street"), "town": b.get("town"),
+                        "median_resale_price": b.get("median_resale_price"),
+                        "median_remaining_lease_years": b.get("median_remaining_lease_years"),
+                        "distances": b.get("distances")} for b in blocks[:10]],
+        "relaxation": state.get("relaxation"),
+        "auditor_verdict": state.get("auditor_verdict"),
+        "errors": state.get("errors"),
+        "map_markers": len(((state.get("map_ui_payload") or {}).get("markers") or {}).get("features") or []),
+        "draft_response": (state.get("draft_response") or "")[:4000],
+    }
+
+
+RESCORE_KEYS = ["variant", "user_constraints", "active_subagents", "tool_call_log", "sql_market_results",
+                "spatial_block_candidates", "financial_breakdown", "rag_policy_passages",
+                "candidate_blocks_intersection", "relaxation", "map_ui_payload", "draft_response",
+                "auditor_verdict", "errors"]
+
+
+def rescore_state(state: Dict[str, Any]) -> Dict[str, Any]:
+    """The parts of the final state the metrics read, so scores can be recomputed without the model."""
+    out = {k: state.get(k) for k in RESCORE_KEYS}
+    if isinstance(out.get("spatial_block_candidates"), list):
+        out["spatial_block_candidates"] = out["spatial_block_candidates"][:1000]
+    return out
+
+
+def results_path(profile: Dict[str, Any], tag: str) -> Path:
+    model = (profile.get("model") or "none").replace("/", "_").replace(":", "-")
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    return RESULTS_DIR / f"prelim_{profile['name']}_{model}{('_' + tag) if tag else ''}.jsonl"
+
+
+def load_done(path: Path) -> Dict[Tuple[str, str], Dict[str, Any]]:
+    done: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    if path.exists():
+        for line in path.read_text().splitlines():
+            if line.strip():
+                row = json.loads(line)
+                done[(row["variant"], row["id"])] = row
+    return done
+
+
+def _token_totals(usage: Dict[str, Any]) -> Dict[str, int]:
+    """Sum LangChain usage_metadata across models: input/output/total tokens for the whole query."""
+    tot = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    for u in (usage or {}).values():
+        for k in tot:
+            tot[k] += int((u or {}).get(k, 0) or 0)
+    return tot
+
+
+def run_one(mod, item: Dict[str, Any], variant: str, profile: Dict[str, Any], run_id: str) -> Dict[str, Any]:
+    from langchain_core.callbacks import get_usage_metadata_callback
+    t0 = time.perf_counter()
+    try:
+        with get_usage_metadata_callback() as cb:
+            state = mod.run(item["query"], item.get("initial_map_state"))
+        latency = time.perf_counter() - t0
+        return {"run": run_id, "variant": variant, "id": item["id"], "sub_use_case": item.get("sub_use_case"),
+                "profile": profile["name"], "model": profile.get("model"), "latency_s": round(latency, 2),
+                "tokens": _token_totals(cb.usage_metadata),
+                "status": "ok", "scores": M.score_item(item, state), "state_excerpt": state_excerpt(state),
+                "state": rescore_state(state)}
+    except Exception as e:  # noqa: BLE001 — a crash is a data point, not the end of the run
+        return {"run": run_id, "variant": variant, "id": item["id"], "sub_use_case": item.get("sub_use_case"),
+                "profile": profile["name"], "model": profile.get("model"), "latency_s": round(time.perf_counter() - t0, 2),
+                "status": "error", "error": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc()[-2000:]}
+
+
+def summarise(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    ok = [r for r in rows if r.get("status") == "ok"]
+    agg = M.aggregate([r["scores"] for r in ok])
+    for v, a in agg.items():
+        lat = sorted(r["latency_s"] for r in ok if r["variant"] == v)
+        a["latency_p50_s"] = lat[len(lat) // 2] if lat else None
+        a["latency_p95_s"] = lat[min(len(lat) - 1, int(round(0.95 * (len(lat) - 1))))] if lat else None
+        a["errors"] = sum(1 for r in rows if r["variant"] == v and r.get("status") == "error")
+        toks = [r.get("tokens", {}).get("total_tokens") for r in ok if r["variant"] == v and r.get("tokens")]
+        outs = [r.get("tokens", {}).get("output_tokens") for r in ok if r["variant"] == v and r.get("tokens")]
+        a["mean_total_tokens"] = round(sum(toks) / len(toks)) if toks else None
+        a["mean_output_tokens"] = round(sum(outs) / len(outs)) if outs else None
+        a["e1_with_candidates"] = sum(1 for r in ok if r["variant"] == v and r["sub_use_case"] == "E1" and r["state_excerpt"]["n_candidates"] > 0)
+        a["e2_relaxation_attempted"] = sum(1 for r in ok if r["variant"] == v and r["sub_use_case"] == "E2" and r["scores"]["relaxation_attempted"])
+    return agg
+
+
+def print_table(agg: Dict[str, Any]) -> None:
+    cols = ["n", "tool_selection_f1", "parameter_em_rate", "csr", "routing_exact_rate", "mean_tool_calls",
+            "latency_p50_s", "latency_p95_s", "mean_total_tokens", "errors", "e1_with_candidates", "e2_relaxation_attempted"]
+    print("\nvariant | " + " | ".join(cols))
+    for v, a in agg.items():
+        cells = []
+        for c in cols:
+            x = a.get(c)
+            cells.append("-" if x is None else (f"{x:.2f}" if isinstance(x, float) else str(x)))
+        print(f"{v:7s} | " + " | ".join(cells))
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--variants", default="A,B,C")
+    ap.add_argument("--ids", default="", help="comma-separated query ids; default all")
+    ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--tag", default="", help="suffix for the results file (e.g. seed2)")
+    ap.add_argument("--rerun", action="store_true", help="ignore existing checkpoints")
+    ap.add_argument("--summary-only", action="store_true")
+    ap.add_argument("--rescore", action="store_true", help="recompute scores from stored state with the current metrics")
+    args = ap.parse_args()
+
+    profile = active_profile()
+    path = results_path(profile, args.tag)
+    items = json.loads(QUERIES.read_text())
+    if args.ids:
+        wanted = set(args.ids.split(","))
+        items = [i for i in items if i["id"] in wanted]
+    if args.limit:
+        items = items[: args.limit]
+    variants = [v.strip() for v in args.variants.split(",") if v.strip()]
+
+    if args.rescore:
+        rows = list(load_done(path).values())
+        items_by_id = {i["id"]: i for i in json.loads(QUERIES.read_text())}
+        n = 0
+        for r in rows:
+            if r.get("status") == "ok" and r.get("state"):
+                r["scores"] = M.score_item(items_by_id[r["id"]], r["state"]); n += 1
+        path.rename(path.with_suffix(f".{datetime.now().strftime('%Y%m%d-%H%M%S')}.prescore.bak"))
+        path.write_text("".join(json.dumps(r, default=str) + "\n" for r in rows))
+        print(f"rescored {n} rows in {path}")
+        args.summary_only = True
+
+    if args.summary_only:
+        rows = list(load_done(path).values())
+        agg = summarise(rows)
+        path.with_suffix(".summary.json").write_text(json.dumps(agg, indent=2))
+        print_table(agg)
+        return
+
+    # resume: only successful rows count as done; a crashed or timed-out row is run again
+    done = {} if args.rerun else {k: r for k, r in load_done(path).items() if r.get("status") == "ok"}
+    if args.rerun and path.exists():
+        path.rename(path.with_suffix(f".{datetime.now().strftime('%Y%m%d-%H%M%S')}.bak.jsonl"))
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    todo = [(v, it) for v in variants for it in items if (v, it["id"]) not in done]
+    print(f"profile={profile['name']} model={profile.get('model')} results={path}")
+    print(f"{len(done)} rows already done, {len(todo)} to run")
+
+    with path.open("a", encoding="utf-8") as f:
+        for n, (v, it) in enumerate(todo, 1):
+            mod = load_variant(v)
+            print(f"[{n}/{len(todo)}] variant {v} {it['id']} ...", end="", flush=True)
+            row = run_one(mod, it, v, profile, run_id)
+            f.write(json.dumps(row, default=str) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+            if row["status"] == "ok":
+                s = row["scores"]
+                print(f" {row['latency_s']}s f1={s['tool_selection']['f1']:.2f} em={s['parameter_em']['rate']} "
+                      f"cands={row['state_excerpt']['n_candidates']} errs={len(row['state_excerpt']['errors'] or [])}")
+            else:
+                print(f" ERROR {row['error']}")
+
+    rows = list(load_done(path).values())
+    agg = summarise(rows)
+    path.with_suffix(".summary.json").write_text(json.dumps(agg, indent=2))
+    print_table(agg)
+    print(f"\nsummary -> {path.with_suffix('.summary.json')}")
+
+
+if __name__ == "__main__":
+    main()

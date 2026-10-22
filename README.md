@@ -172,3 +172,41 @@ npm run dev
 ```
 
 Open [http://localhost:3000/](http://localhost:3000/) in your browser to interact with the split-screen chat and map!
+
+---
+
+## Member 4 — Multi-Agent Orchestration & Architecture Study (Category E)
+
+Owns the LangGraph state machine, Agent 1 (Supervisor & Constraint Negotiator, incl. zero-result
+relaxation) and the three benchmark architectures of Experiment 1. Contract for every other
+workstream: [`docs/INTERFACES.md`](docs/INTERFACES.md). Graph drawings: [`docs/architecture_graphs.md`](docs/architecture_graphs.md).
+
+| File | What it is |
+|---|---|
+| `agents/state.py` | `HDBCompassState` (proposal §4.2) + `tool_call_log`, `relaxation`, `variant`, `errors` |
+| `agents/schemas.py` | Pydantic I/O models for all 11 MCP tools; canonical tool inventory |
+| `agents/tool_registry.py` | mock/real switch per tool (`config → tools.use_mock`), strict argument validation, tool-call logging |
+| `agents/llm.py` | one `get_llm()` for every node; profiles `ollama` / `vllm` / `none` |
+| `agents/supervisor.py` | extraction → routing → parallel `Send` fan-out → specialist ReAct loops → SQL ∩ spatial intersection → relaxation (E2) → synthesis + map sync (E1) → auditor hook → finalize |
+| `agents/arch_1_monolith.py` | Variant A: one ReAct agent, 11 tools, no auditor |
+| `agents/arch_2_coarse.py` | Variant B: supervisor + combined data agent (10 tools) + policy agent (1 tool), no auditor |
+| `agents/arch_3_specialist_5agent.py` | Variant C: proposed 5-agent graph + auditor self-correction loop |
+| `mcp_server/mock_tools.py` | deterministic fixtures for Members 1 & 3's tools until the real ones land |
+| `evaluation/category_e_queries.json` | 15 Category E golden queries with expected routing/tool calls (`build_category_e.py`) |
+| `evaluation/architecture_metrics.py` | Tool Selection F1, Parameter Exact-Match, CSR, routing accuracy, aggregation |
+| `cluster/` | vLLM Slurm job, SSH tunnel and smoke test for the SCIS GPU cluster |
+
+```bash
+# deterministic mode: no model needed — runs all graphs on mock + real spatial tools
+LLM_PROFILE=none .venv/bin/pytest tests/ -q
+
+# run one variant end to end (ollama profile by default; see config/experiment_config.yaml)
+.venv/bin/python agents/arch_3_specialist_5agent.py
+```
+
+Local Ollama note: the default 4096-token context is too small for Variant A (11 tool schemas). Quit the Ollama
+menu-bar app and start the server with a larger context before benchmarking locally:
+
+```bash
+OLLAMA_CONTEXT_LENGTH=16384 ollama serve
+```

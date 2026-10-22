@@ -1,0 +1,848 @@
+[
+  {
+    "id": "E1-01",
+    "category": "E",
+    "sub_use_case": "E1",
+    "query": "We earn $9,000/month, have $90k CPF, want a 4-room flat in Tampines under $680k, within 400m of an MRT and 500m of a hawker centre, with 65+ years lease. Map the matches.",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial",
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "TAMPINES"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 680000.0,
+          "min_lease_years": 65
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "TAMPINES"
+          ],
+          "amenity_constraints": {
+            "mrt": 400,
+            "hawker": 500
+          }
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "monthly_income": 9000.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 9000.0,
+          "cpf_oa_balance": 90000.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_bsd_and_upfront_outlay",
+        "required_params": {}
+      }
+    ],
+    "expected_behaviour": "non-empty candidate_blocks_intersection AND map_ui_payload.markers populated",
+    "ground_truth_facts": {
+      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+    }
+  },
+  {
+    "id": "E1-02",
+    "category": "E",
+    "sub_use_case": "E1",
+    "query": "Couple earning $7,500/month with $60k CPF. Show 4-room flats in Bishan under $760k within 400m of an MRT with at least 60 years lease, and map them.",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial",
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "BISHAN"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 760000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "BISHAN"
+          ],
+          "amenity_constraints": {
+            "mrt": 400
+          }
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "citizenship_pair": "SC_SC",
+          "monthly_income": 7500.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 7500.0,
+          "cpf_oa_balance": 60000.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_bsd_and_upfront_outlay",
+        "required_params": {}
+      }
+    ],
+    "expected_behaviour": "non-empty candidate_blocks_intersection AND map_ui_payload.markers populated",
+    "ground_truth_facts": {
+      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+    }
+  },
+  {
+    "id": "E1-03",
+    "category": "E",
+    "sub_use_case": "E1",
+    "query": "We are first-timer citizens earning $8,200/month. Find 5-room flats in Queenstown or Bukit Merah under $850k within 300m of an MRT with 60+ years lease and map the results.",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial",
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "BUKIT MERAH",
+            "QUEENSTOWN"
+          ],
+          "flat_types": [
+            "5 ROOM"
+          ],
+          "max_price": 850000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "BUKIT MERAH",
+            "QUEENSTOWN"
+          ],
+          "amenity_constraints": {
+            "mrt": 300
+          }
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 8200.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 8200.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_bsd_and_upfront_outlay",
+        "required_params": {}
+      }
+    ],
+    "expected_behaviour": "non-empty candidate_blocks_intersection AND map_ui_payload.markers populated",
+    "ground_truth_facts": {
+      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+    }
+  },
+  {
+    "id": "E1-04",
+    "category": "E",
+    "sub_use_case": "E1",
+    "query": "Budget $720k, income $9,500/month, $110k CPF. 4-room in Bishan within 500m of an MRT and 600m of a hawker centre, 60+ years lease. Map the candidates.",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial",
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "BISHAN"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 720000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "BISHAN"
+          ],
+          "amenity_constraints": {
+            "mrt": 500,
+            "hawker": 600
+          }
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "monthly_income": 9500.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 9500.0,
+          "cpf_oa_balance": 110000.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_bsd_and_upfront_outlay",
+        "required_params": {}
+      }
+    ],
+    "expected_behaviour": "non-empty candidate_blocks_intersection AND map_ui_payload.markers populated",
+    "ground_truth_facts": {
+      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+    }
+  },
+  {
+    "id": "E1-05",
+    "category": "E",
+    "sub_use_case": "E1",
+    "query": "Single citizen aged 36 earning $6,000/month. 4-room resale in Tampines under $620k within 400m of an MRT, 65+ years lease. Show them on the map.",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial",
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "TAMPINES"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 620000.0,
+          "min_lease_years": 65
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "TAMPINES"
+          ],
+          "amenity_constraints": {
+            "mrt": 400
+          }
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_Single",
+          "monthly_income": 6000.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 6000.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_bsd_and_upfront_outlay",
+        "required_params": {}
+      }
+    ],
+    "expected_behaviour": "non-empty candidate_blocks_intersection AND map_ui_payload.markers populated",
+    "ground_truth_facts": {
+      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+    }
+  },
+  {
+    "id": "E1-06",
+    "category": "E",
+    "sub_use_case": "E1",
+    "query": "We earn $10,000/month and have $150k CPF. Which 4-room flats in Bishan under $750k are within 400m of an MRT and have 60+ years lease? Map them and tell us our grants.",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial",
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "BISHAN"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 750000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "BISHAN"
+          ],
+          "amenity_constraints": {
+            "mrt": 400
+          }
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "monthly_income": 10000.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 10000.0,
+          "cpf_oa_balance": 150000.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_bsd_and_upfront_outlay",
+        "required_params": {}
+      }
+    ],
+    "expected_behaviour": "non-empty candidate_blocks_intersection AND map_ui_payload.markers populated",
+    "ground_truth_facts": {
+      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+    }
+  },
+  {
+    "id": "E1-07",
+    "category": "E",
+    "sub_use_case": "E1",
+    "query": "Income $8,800/month, CPF $95k. 4-room in Tampines under $650k within 300m of an MRT and 500m of a hawker centre with 65+ years lease. Map the matches.",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial",
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "TAMPINES"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 650000.0,
+          "min_lease_years": 65
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "TAMPINES"
+          ],
+          "amenity_constraints": {
+            "mrt": 300,
+            "hawker": 500
+          }
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "monthly_income": 8800.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 8800.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_bsd_and_upfront_outlay",
+        "required_params": {}
+      }
+    ],
+    "expected_behaviour": "non-empty candidate_blocks_intersection AND map_ui_payload.markers populated",
+    "ground_truth_facts": {
+      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+    }
+  },
+  {
+    "id": "E1-08",
+    "category": "E",
+    "sub_use_case": "E1",
+    "query": "Citizen + PR couple, $9,200/month, $80k CPF, buying a 4-room resale within 4km of parents in Tampines under $700k, within 500m of an MRT, 65+ years lease. Map it and calculate our grants.",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial",
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "TAMPINES"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 700000.0,
+          "min_lease_years": 65
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "TAMPINES"
+          ],
+          "amenity_constraints": {
+            "mrt": 500
+          }
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_PR",
+          "monthly_income": 9200.0,
+          "near_parents_4km": true
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 9200.0,
+          "cpf_oa_balance": 80000.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_bsd_and_upfront_outlay",
+        "required_params": {}
+      }
+    ],
+    "expected_behaviour": "non-empty candidate_blocks_intersection AND map_ui_payload.markers populated",
+    "ground_truth_facts": {
+      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+    }
+  },
+  {
+    "id": "E2-01",
+    "category": "E",
+    "sub_use_case": "E2",
+    "query": "Find a 5-room flat in Tiong Bahru under $600k within 200m of an MRT with 70+ years lease.",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "BUKIT MERAH"
+          ],
+          "flat_types": [
+            "5 ROOM"
+          ],
+          "max_price": 600000.0,
+          "min_lease_years": 70
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "BUKIT MERAH"
+          ],
+          "amenity_constraints": {
+            "mrt": 200
+          }
+        }
+      }
+    ],
+    "expected_behaviour": "candidate_blocks_intersection empty AND relaxation.best_single_change present",
+    "ground_truth_facts": {
+      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+    }
+  },
+  {
+    "id": "E2-02",
+    "category": "E",
+    "sub_use_case": "E2",
+    "query": "4-room flat in Bishan under $500k within 200m of an MRT and 100m of a hawker centre, 80+ years lease.",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "BISHAN"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 500000.0,
+          "min_lease_years": 80
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "BISHAN"
+          ],
+          "amenity_constraints": {
+            "mrt": 200,
+            "hawker": 100
+          }
+        }
+      }
+    ],
+    "expected_behaviour": "candidate_blocks_intersection empty AND relaxation.best_single_change present",
+    "ground_truth_facts": {
+      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+    }
+  },
+  {
+    "id": "E2-03",
+    "category": "E",
+    "sub_use_case": "E2",
+    "query": "5-room in Queenstown under $650k within 150m of an MRT, 75+ years lease.",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "QUEENSTOWN"
+          ],
+          "flat_types": [
+            "5 ROOM"
+          ],
+          "max_price": 650000.0,
+          "min_lease_years": 75
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "QUEENSTOWN"
+          ],
+          "amenity_constraints": {
+            "mrt": 150
+          }
+        }
+      }
+    ],
+    "expected_behaviour": "candidate_blocks_intersection empty AND relaxation.best_single_change present",
+    "ground_truth_facts": {
+      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+    }
+  },
+  {
+    "id": "E2-04",
+    "category": "E",
+    "sub_use_case": "E2",
+    "query": "4-room in Tampines under $450k within 250m of an MRT and 200m of a hawker centre, 70+ years lease.",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "TAMPINES"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 450000.0,
+          "min_lease_years": 70
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "TAMPINES"
+          ],
+          "amenity_constraints": {
+            "mrt": 250,
+            "hawker": 200
+          }
+        }
+      }
+    ],
+    "expected_behaviour": "candidate_blocks_intersection empty AND relaxation.best_single_change present",
+    "ground_truth_facts": {
+      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+    }
+  },
+  {
+    "id": "E2-05",
+    "category": "E",
+    "sub_use_case": "E2",
+    "query": "4-room in Bishan under $600k within 250m of an MRT, 90+ years lease.",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "BISHAN"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 600000.0,
+          "min_lease_years": 90
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "BISHAN"
+          ],
+          "amenity_constraints": {
+            "mrt": 250
+          }
+        }
+      }
+    ],
+    "expected_behaviour": "candidate_blocks_intersection empty AND relaxation.best_single_change present",
+    "ground_truth_facts": {
+      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+    }
+  },
+  {
+    "id": "E2-06",
+    "category": "E",
+    "sub_use_case": "E2",
+    "query": "We earn $7,000/month. 5-room in Bukit Merah under $700k within 200m of an MRT and 200m of a supermarket, 70+ years lease.",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial",
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "BUKIT MERAH"
+          ],
+          "flat_types": [
+            "5 ROOM"
+          ],
+          "max_price": 700000.0,
+          "min_lease_years": 70
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "BUKIT MERAH"
+          ],
+          "amenity_constraints": {
+            "mrt": 200,
+            "supermarket": 200
+          }
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "monthly_income": 7000.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 7000.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_bsd_and_upfront_outlay",
+        "required_params": {}
+      }
+    ],
+    "expected_behaviour": "candidate_blocks_intersection empty AND relaxation.best_single_change present",
+    "ground_truth_facts": {
+      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+    }
+  },
+  {
+    "id": "E2-07",
+    "category": "E",
+    "sub_use_case": "E2",
+    "query": "4-room in Tampines under $400k within 300m of an MRT, 75+ years lease.",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "TAMPINES"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 400000.0,
+          "min_lease_years": 75
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "TAMPINES"
+          ],
+          "amenity_constraints": {
+            "mrt": 300
+          }
+        }
+      }
+    ],
+    "expected_behaviour": "candidate_blocks_intersection empty AND relaxation.best_single_change present",
+    "ground_truth_facts": {
+      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+    }
+  }
+]
