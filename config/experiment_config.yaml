@@ -23,3 +23,56 @@ spatial:
     rail_stations_dataset_id: "d_8d886e3a83934d7447acdf5bc6959999"
     hawker_dataset_id: "d_68a42f09f350881996d83f9cd73ab02f"
     supermarket_dataset_id: "d_11edd0117280c5776651d7891114c88c"
+
+# ---------------------------------------------------------------------------
+# Member 4: LLM profiles, tool wiring and architecture study
+# One model for ALL variants and the auditor (proposal §6.2). Select with
+# LLM_PROFILE env var; LLM_BASE_URL / LLM_MODEL env vars override a profile.
+# ---------------------------------------------------------------------------
+llm:
+  active: ollama        # ollama | vllm | none (deterministic, no model)
+  profiles:
+    ollama:                       # local dev on the laptop (M3 Pro, 18 GB)
+      base_url: "http://localhost:11434/v1"
+      model: "qwen3:14b"
+      api_key_env: "OLLAMA_API_KEY"   # unused; any value works
+      max_tokens: 2048
+      timeout_s: 300
+      system_suffix: " /no_think"     # Qwen3 soft switch: disable thinking for fast, deterministic tool calls
+      # NOTE: Ollama defaults to a 4096-token context. Variant A needs ~8k+ for 11 tool schemas.
+      # Start the Ollama server with OLLAMA_CONTEXT_LENGTH=16384 (see README, Member 4 section).
+    vllm:                         # SMU Origami cluster, one 24 GB slice of an RTX PRO 6000, via cluster/tunnel.sh
+      base_url: "http://localhost:8001/v1"
+      model: "Qwen/Qwen3-30B-A3B-GPTQ-Int4"   # MoE, 3B active, 4-bit; fits a 24 GB slice with 40,960 context (see cluster/serve_vllm.sbatch)
+      api_key_env: "VLLM_API_KEY"   # written into .env by cluster/tunnel.sh
+      max_tokens: 4096
+      timeout_s: 300
+      system_suffix: " /no_think"   # same switch as the Ollama profile (same Qwen3 family)
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false    # Qwen3 template flag: no <think> block at all
+
+tools:
+  # Per tool: "mock" (mcp_server/mock_tools.py) or "real". Members 1 and 3 flip
+  # their tools to "real" when their modules land. Spatial tools are real already.
+  use_mock:
+    query_resale_blocks_by_criteria: mock
+    compute_town_price_timeseries: mock
+    compare_bto_launch_vs_resale: mock
+    filter_blocks_by_amenity_proximity: real
+    verify_primary_school_distance: real
+    compute_dual_transit_commute: real
+    sync_interactive_map_ui: real
+    calculate_cpf_housing_grants: mock
+    calculate_maximum_affordability: mock
+    calculate_bsd_and_upfront_outlay: mock
+    retrieve_hdb_policy_knowledge: mock
+
+architecture:
+  auditor_max_retries: 2            # proposal §5 risk 2
+  subagent_max_tool_iterations: 4   # ReAct loop cap per specialist
+  relaxation_steps:                 # use case E2 sensitivity sweep
+    max_budget_sgd_pct: 10
+    amenity_radius_meters: 150
+    min_remaining_lease_years: 5
+  variants: ["A", "B", "C"]
