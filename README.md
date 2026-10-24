@@ -29,22 +29,27 @@ The repository follows the project proposal structure (Page 14):
 
 ```
 HDB-Compass/
-├── README.md                        # Project documentation & setup guide
+├── README.md                        # Project overview and local setup
 ├── requirements.txt                 # Python dependencies (langgraph, fastmcp, scipy, pyproj, etc.)
-├── .env.example                     # OneMap API credentials template
+├── .env.example                     # Environment configuration template
 ├── .gitignore                       # Clean gitignore excluding node_modules, .env, and large cache
 │
 ├── config/                          # Experiment configuration (Proposal Page 14)
 │   └── experiment_config.yaml       # Models, temp=0.0, seed=42, chunking, top-k
 │
-├── data/                            # Data Ingestion & Spatial Precomputations (Member 2)
+├── data/                            # Market ingestion and spatial data
+│   ├── build_market_db.py            # Download, validate and build the resale database
+│   ├── market_database.py            # Database settings and read-only connections
+│   ├── gov_download.py               # Government dataset download and cache
+│   ├── sql/market_schema.sql         # DuckDB schema
 │   ├── build_spatial_index.py       # 100% dynamic API pipeline from data.gov.sg & OneMap
 │   ├── spatial_index.pkl            # Precomputed 2D KD-Tree indices (13,426 blocks, 179 schools, 806 amenities)
 │   ├── spatial_index.json           # Compact metadata summary
 │   └── geocoded_cache.json          # Cached postal code coordinates
 │
-├── mcp_server/                      # FastMCP Tool Server (Member 2)
+├── mcp_server/                      # FastMCP tools
 │   ├── server.py                    # FastMCP server entry point
+│   ├── market_sql_tools.py          # Resale queries against local DuckDB
 │   └── spatial_onemap_tools.py      # Geospatial & commute tools
 │
 ├── agents/                          # Multi-Agent Orchestration Layer
@@ -66,6 +71,8 @@ HDB-Compass/
 │       └── index.css                # Premium glassmorphic theme
 │
 └── tests/                           # Verification & Regression Test Suites
+    ├── test_market_data.py          # Ingestion, resale queries, agent and MCP integration
+    ├── test_market_download.py      # Download authentication and cache handling
     ├── test_spatial_engine.py       # SVY21 coordinate roundtrip & KD-Tree queries
     └── test_spatial_tools.py        # All 5 FastMCP tools regression suite
 ```
@@ -108,70 +115,196 @@ sync_interactive_map_ui(candidate_blocks: List[str], buffer_radii: Dict[str, int
 
 ---
 
-## Quickstart Guide
+## Setup
 
-### 1. Environment Setup
+Run commands from the repository root. Use Python 3.11 or 3.12; if your default
+`python` is older, use the appropriate interpreter to create the environment.
 
-Create and activate a virtual environment, then install Python dependencies:
+### 1. Install dependencies
 
 ```bash
-# Clone the repository
-git clone https://github.com/fcyap/HDB-Compass.git
-cd HDB-Compass
-
-# Create virtual environment
 python -m venv .venv
-# On Windows:
-.venv\Scripts\activate
-# On macOS/Linux:
+```
+
+Activate on macOS, Linux or WSL:
+
+```bash
 source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
 ```
 
-Create a `.env` file from `.env.example` and provide your free [OneMap API](https://www.onemap.gov.sg/apidocs/) credentials:
+Or in Windows PowerShell:
 
-```ini
-ONEMAP_EMAIL=your_email@example.com
-ONEMAP_PASSWORD=your_password
+```powershell
+.venv\Scripts\Activate.ps1
 ```
 
-### 2. Verify Spatial Engine & FastMCP Tools
-
-Run the automated regression suites:
+Install dependencies in the activated environment:
 
 ```bash
-# Verify spatial coordinate math, metric buffer generation & KD-Tree queries
-python tests/test_spatial_engine.py
-
-# Verify all FastMCP tools
-python tests/test_spatial_tools.py
+python -m pip install -r requirements.txt
 ```
 
-### 3. (Optional) Rebuild Dynamic Geospatial Index
+### 2. Configure `.env`
 
-To pull the latest official datasets from `data.gov.sg` and rebuild the spatial index:
+Copy `.env.example` to `.env`. If it already exists, add the required settings
+instead of replacing it. For local data and tool development:
+
+```dotenv
+DATA_GOV_SG_API_KEY=
+HDB_COMPASS_DB_PATH=data/local/hdb_compass.duckdb
+LLM_PROFILE=none
+LANGSMITH_TRACING=false
+```
+
+| Setting | Purpose |
+|---|---|
+| `DATA_GOV_SG_API_KEY` | Optional; leave blank for public resale downloads |
+| `HDB_COMPASS_DB_PATH` | Database location, relative to the repository root unless absolute |
+| `LLM_PROFILE` | `none` for deterministic agents; `ollama` or `vllm` for model inference |
+| `ONEMAP_EMAIL`, `ONEMAP_PASSWORD` | Live geocoding and spatial-data rebuilds |
+| `LANGSMITH_API_KEY` | Optional tracing when enabled |
+
+Environment variables override `.env`. Credentials, cached downloads and
+generated databases are ignored by Git.
+
+### 3. Build the market database
 
 ```bash
-python data/build_spatial_index.py
+python -m data.build_market_db
 ```
 
-### 4. Run the Full Application (Backend + Frontend)
+The command downloads and validates the 2017-onward resale dataset, builds
+DuckDB, and reuses `data/spatial_index.pkl` for coordinates. It requires neither
+OneMap nor a running model. Each developer generates the database locally.
 
-**Terminal 1 — Backend API & WebSocket Server:**
+Subsequent builds reuse a checksum-verified cache. To download fresh data:
+
+```bash
+python -m data.build_market_db --refresh
+```
+
+Stop database readers before refreshing, particularly on Windows. Failed builds
+leave the previous database intact. For an offline build, use
+`python -m data.build_market_db --csv /path/to/resale.csv`; see `--help` for
+alternate database paths and coordinate-free builds.
+
+The [market-data reference](docs/MARKET_DATA.md) describes the DuckDB schema,
+provenance and query calculations.
+
+### 4. Verify tools and agents
+
+```bash
+python -m pytest tests/ -q
+```
+
+Tests use synthetic/mock fixtures and require no downloaded market database,
+API credentials or running model. They include agent and in-memory MCP calls.
+
+After building the database, with `LLM_PROFILE=none` in `.env`:
+
+```bash
+python -c 'from agents.arch_3_specialist_5agent import run; print(run("Find 4-room flats in Bishan under 850k with at least 60 years lease.")["draft_response"])'
+```
+
+The graph uses real resale data through the Python tool registry. Trends, BTO
+comparisons, financial tools and policy retrieval still use mocks; configuration
+is in `config/experiment_config.yaml`.
+
+### 5. Run the MCP server
+
+```bash
+python -m mcp_server.server
+```
+
+An MCP client normally launches this stdio process and communicates over
+stdin/stdout. It exposes the resale-query tool and four spatial tools. The
+current agent registry executes Python directly and does not need this process.
+
+### 6. Run the web application (optional)
+
+The web backend currently streams the standalone geospatial agent. It does not
+yet run the full specialist graph or market query.
+
+Start the backend in an activated Python environment:
+
 ```bash
 python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-**Terminal 2 — Frontend Split-Screen UI:**
+In another terminal, with Node.js and npm installed:
+
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-Open [http://localhost:3000/](http://localhost:3000/) in your browser to interact with the split-screen chat and map!
+Open [localhost:3000](http://localhost:3000). Backend health is available at
+[localhost:8000/health](http://localhost:8000/health). Live geocoding needs OneMap
+credentials; querying the existing spatial index does not.
+
+To rebuild spatial data, configure OneMap credentials and run
+`python data/build_spatial_index.py`. Rebuild the market database afterwards to
+pick up coordinate changes.
+
+### Troubleshooting
+
+| Problem | Action |
+|---|---|
+| Missing market database | Run the build command and check `HDB_COMPASS_DB_PATH` |
+| Download fails or API returns 429 | Retry later; optionally configure a data.gov.sg key |
+| Cached checksum differs | Rebuild with `--refresh` |
+| CSV validation fails | Inspect the reported source rows for a source-format change |
+| Database replacement fails | Stop database readers before rebuilding |
+| Smoke run attempts a model connection | Set `LLM_PROFILE=none`; check for an overriding shell variable |
+| Frontend is disconnected | Start the backend on port 8000 |
+
+---
+
+## TODO: Member 1 — Market and financial tools (Categories A & D)
+
+Completed: resale ingestion, the local DuckDB schema, and
+`query_resale_blocks_by_criteria`, including Pydantic validation, agent-registry
+integration and FastMCP registration. Five of the six tools remain mocked.
+
+### Remaining tools
+
+- [ ] `compute_town_price_timeseries`: calculate quarterly medians, price per
+  square metre and year-on-year changes from the existing resale database;
+  handle incomplete quarters and missing comparison periods explicitly.
+- [ ] `calculate_cpf_housing_grants`: implement supported household scenarios
+  using verified, versioned eligibility rules and grant tables.
+- [ ] `calculate_maximum_affordability`: calculate borrowing and purchase limits
+  from income, available funds, debts and the applicable loan assumptions.
+- [ ] `calculate_bsd_and_upfront_outlay`: calculate stamp duty and upfront
+  CPF/cash requirements using price, valuation, financing, grants and fees.
+- [ ] `compare_bto_launch_vs_resale`: obtain verified launch prices and project
+  locations, select comparable nearby resale transactions, and calculate the
+  price gap with source and sample-size information.
+
+### Contracts, integration and verification
+
+- [ ] Finalize financial input/output schemas with Member 4, including missing
+  household details, buyer age, property lease, valuation and funding inputs.
+  Return missing-input or unsupported-scenario results explicitly.
+- [ ] Record financial rule sources, effective dates, assumptions and rounding
+  rules. Define how documentation changes are checked and released as tested
+  rule versions.
+- [ ] Coordinate the financial call sequence with Member 4: pass grants and
+  funding results between tools, avoid defaulting purchase price to zero, and
+  agree whether affordability already includes grants to prevent double-counting.
+- [ ] Validate inputs and outputs, register each completed tool with FastMCP,
+  switch its configuration to `real`, and verify direct, agent and MCP calls.
+- [ ] Add independent reference cases and boundary tests for each tool; produce
+  Category A & D accuracy results with Member 5 using fixed data/rule versions.
+  Existing unit tests and mock benchmarks do not establish that accuracy.
+- [ ] Document the MCP client–server flow and explain how SQL/Python calculations
+  supply numeric evidence to the LLM for the role presentation.
+
+Suggested order: price trends, financial contracts and calculators, then BTO
+comparison. Financial tools unblock realistic affordability filtering and
+combined recommendations. Other workstreams can continue with mocks; reliable
+Category A/D evaluation and complete financial results depend on these tools.
 
 ---
 
@@ -197,7 +330,7 @@ workstream: [`docs/INTERFACES.md`](docs/INTERFACES.md). Graph drawings: [`docs/a
 | `cluster/` | vLLM Slurm job, SSH tunnel and smoke test for the SCIS GPU cluster |
 
 ```bash
-# deterministic mode: no model needed — runs all graphs on mock + real spatial tools
+# deterministic tests: mock fixtures are isolated from the real market database
 LLM_PROFILE=none .venv/bin/pytest tests/ -q
 
 # run one variant end to end (ollama profile by default; see config/experiment_config.yaml)

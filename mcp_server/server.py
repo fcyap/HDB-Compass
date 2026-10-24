@@ -13,6 +13,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from fastmcp import FastMCP
+from agents.schemas import QueryResaleBlocksOutput
+from mcp_server.market_sql_tools import query_resale_blocks_by_criteria
 from mcp_server.spatial_onemap_tools import (
     mcp as spatial_mcp,
     verify_primary_school_distance,
@@ -29,7 +31,8 @@ mcp.add_tool(verify_primary_school_distance)
 mcp.add_tool(filter_blocks_by_amenity_proximity)
 mcp.add_tool(compute_dual_transit_commute)
 mcp.add_tool(sync_interactive_map_ui)
+mcp.tool(output_schema=QueryResaleBlocksOutput.model_json_schema())(query_resale_blocks_by_criteria)
 
 if __name__ == "__main__":
-    print("[HDB-Compass] Starting FastMCP Server on stdio...")
+    print("[HDB-Compass] Starting FastMCP Server on stdio...", file=sys.stderr)
     mcp.run()

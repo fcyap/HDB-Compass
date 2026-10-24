@@ -22,15 +22,21 @@ __pycache__/
 # Large dataset raw download cache (data.gov.sg blobs)
 data/cache/
 
+# Generated databases
+data/local/
+*.duckdb
+*.duckdb.wal
+*.duckdb.tmp/
+
 # IDE & OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
 
-# Member 4: benchmark outputs (keep summaries in the report, not git)
+# Benchmark outputs
 evaluation/results/
 
-# Member 4: generated analysis outputs and local traces (regenerate with evaluation/analyze_category_e.py)
+# Generated analysis and traces
 evaluation/analysis/
 evaluation/traces/

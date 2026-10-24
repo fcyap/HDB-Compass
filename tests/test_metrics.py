@@ -1,9 +1,16 @@
-import json, os, sys
+import json
+import os
+import sys
 from pathlib import Path
+
+import pytest
+
 os.environ["LLM_PROFILE"] = "none"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from evaluation import architecture_metrics as M
 from agents import arch_3_specialist_5agent as C, arch_1_monolith as A
+
+pytestmark = pytest.mark.usefixtures("mock_domain_tools")
 
 ITEMS = json.loads((Path(__file__).resolve().parent.parent / "evaluation" / "category_e_queries.json").read_text())
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -86,10 +86,19 @@ class RelaxUnsatisfiedConstraintsOutput(BaseModel):
 # Agent 2 — Market & Valuation SQL (Member 1)
 # ---------------------------------------------------------------------------
 class QueryResaleBlocksInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     towns: List[str]
     flat_types: List[str]
-    max_price: float
-    min_lease_years: int
+    max_price: float = Field(..., ge=0, allow_inf_nan=False)
+    min_lease_years: int = Field(..., ge=0, le=99)
+
+    @field_validator("towns", "flat_types")
+    @classmethod
+    def normalise_filters(cls, values: List[str]) -> List[str]:
+        result = [" ".join(value.upper().split()) for value in values]
+        if any(not value for value in result):
+            raise ValueError("Filter values must not be blank")
+        return list(dict.fromkeys(result))
 
 
 class ResaleBlockRecord(BlockRef):
@@ -101,9 +110,25 @@ class ResaleBlockRecord(BlockRef):
     last_transaction_month: str = Field(..., examples=["2026-09"])
 
 
+class MarketQueryMetadata(BaseModel):
+    snapshot_id: str
+    dataset_id: str
+    source_url: str
+    window_start_month: str
+    window_end_month: str
+    latest_source_month: str
+    lease_reference_month: str
+    total_matching_blocks: int
+    returned_blocks: int
+    result_limit: int
+    truncated: bool
+    notes: List[str] = Field(default_factory=list)
+
+
 class QueryResaleBlocksOutput(BaseModel):
     blocks: List[ResaleBlockRecord]
     sql: str = Field("", description="The parameterised SQL that ran (for auditing)")
+    metadata: Optional[MarketQueryMetadata] = None
 
 
 class ComputeTownPriceTimeseriesInput(BaseModel):

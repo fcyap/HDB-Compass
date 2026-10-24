@@ -56,7 +56,7 @@ tools:
   # Per tool: "mock" (mcp_server/mock_tools.py) or "real". Members 1 and 3 flip
   # their tools to "real" when their modules land. Spatial tools are real already.
   use_mock:
-    query_resale_blocks_by_criteria: mock
+    query_resale_blocks_by_criteria: real
     compute_town_price_timeseries: mock
     compare_bto_launch_vs_resale: mock
     filter_blocks_by_amenity_proximity: real

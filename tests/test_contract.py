@@ -19,6 +19,8 @@ from agents import schemas as S  # noqa: E402
 from agents.tool_registry import ToolRunner, build_runners, tools_for_agent  # noqa: E402
 from mcp_server.mock_tools import MOCK_TOOLS  # noqa: E402
 
+pytestmark = pytest.mark.usefixtures("mock_domain_tools")
+
 EXAMPLE_INPUTS = {
     "query_resale_blocks_by_criteria": dict(towns=["BISHAN", "TAMPINES"], flat_types=["4 ROOM"], max_price=750000, min_lease_years=60),
     "compute_town_price_timeseries": dict(towns=["TAMPINES", "BEDOK"], flat_type="4 ROOM", lookback_years=3),

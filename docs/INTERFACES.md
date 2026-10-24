@@ -7,6 +7,15 @@ other workstream. If you need to change anything here, open a PR that touches
 Status: **v1, frozen for Phase 1 (22 Oct 2026).** Member 2's spatial tools were
 already implemented and are described as-is.
 
+`query_resale_blocks_by_criteria` is configured as real. It accepts four inputs
+and returns shared block records. `QueryResaleBlocksOutput` includes optional
+`metadata` with snapshot, window, lease reference and truncation information.
+Numeric inputs reject negative or nonfinite prices and lease limits outside
+0–99 years. See [setup](../README.md#setup) and
+[market semantics](MARKET_DATA.md). Other Member 1 tools remain mocked. The
+unified MCP server registers the real query; the agent registry continues to
+execute Python directly.
+
 ## 1. The canonical 11 tools and who owns them
 
 | # | Tool | Owner | Agent | Input model | Output model |

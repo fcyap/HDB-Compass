@@ -26,6 +26,8 @@ from agents import arch_2_coarse as B  # noqa: E402
 from agents import arch_3_specialist_5agent as C  # noqa: E402
 from agents.schemas import TOOL_OWNER  # noqa: E402
 
+pytestmark = pytest.mark.usefixtures("mock_domain_tools")
+
 E1 = ("We earn $9,000/month, have $90k CPF, want a 4-room flat in Tampines under $680k, "
       "within 400m of an MRT and 500m of a hawker centre, with 65+ years lease. Map the matches.")
 E2 = "Find a 5-room flat in Tiong Bahru under $600k within 200m of an MRT and under 15 years old."
