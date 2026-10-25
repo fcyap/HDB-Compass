@@ -2,7 +2,7 @@
 Architecture Variant A — Baseline Monolithic ReAct Agent (agents/arch_1_monolith.py).
 Owned by Member 4. Proposal §6.2 Experiment 1, Variant A.
 
-One ReAct agent, ALL 11 MCP tools in a flat list, naive RAG (same retrieval tool
+One ReAct agent, all 12 tools in a flat list, naive RAG (same retrieval tool
 without the reranker stage: pipeline hint RAG-1), no constraint extraction, no
 supervisor, no intersection step, no runtime auditor. The model must plan,
 call tools and combine results on its own — this is the baseline whose

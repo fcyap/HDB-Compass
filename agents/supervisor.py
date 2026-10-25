@@ -35,11 +35,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from agents.llm import active_profile, get_llm, load_config
 from agents.schemas import (
+    TOOL_OWNER,
     AuditorVerdict,
     ExtractedConstraints,
     RelaxationSuggestion,
     RelaxUnsatisfiedConstraintsOutput,
-    TOOL_OWNER,
     block_key,
 )
 from agents.state import HDBCompassState
@@ -192,6 +192,11 @@ EXTRACT_SYSTEM = (
     "amenity_radii_meters keys: mrt, hawker, bus_stop, supermarket, park, school. "
     "policy_question: copy the regulatory question if the user asks about rules, MOP, grants eligibility, EIP, "
     "Prime/Plus/Standard, wait-out periods."
+    " Financial inputs contain only explicit user facts: never infer citizenship from 'couple', "
+    "first-timer status, CPF usability, no debts, zero ABSD, fees, grant/loan eligibility or confirmations. "
+    "Use financial_inputs.grants/affordability/upfront for supplied calculator facts. "
+    "For comparable transactions, use comparable_resale with explicit verified latitude, longitude and flat type. "
+    "Never invent coordinates or substitute a town centre for a project."
 )
 
 
@@ -218,7 +223,10 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
             extracted = ExtractedConstraints(**merged)
     if extracted is None:
         extracted = rule_based_extract(query)
-    return {"user_constraints": extracted.model_dump(), "errors": errors}
+    constraints = extracted.model_dump()
+    if extracted.financial_inputs is not None:
+        constraints["financial_inputs"] = extracted.financial_inputs.model_dump(exclude_unset=True)
+    return {"user_constraints": constraints, "errors": errors}
 
 
 # ---------------------------------------------------------------------------
@@ -226,12 +234,12 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 def decide_routing(c: Dict[str, Any]) -> List[str]:
     active: List[str] = []
-    if c.get("towns") and (c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or c.get("flat_types")
-                           or c.get("wants_price_trend") or c.get("wants_bto_comparison")):
+    if c.get("comparable_resale") or (c.get("towns") and (c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or c.get("flat_types")
+                           or c.get("wants_price_trend") or c.get("wants_bto_comparison"))):
         active.append("market_sql")
     if c.get("amenity_radii_meters") or c.get("school_name") or len(c.get("work_destinations") or []) >= 2:
         active.append("spatial")
-    if c.get("household_income") or c.get("cpf_oa_balance") or (c.get("citizenship_scheme") and c.get("max_budget_sgd")):
+    if c.get("financial_inputs") or c.get("household_income") or c.get("cpf_oa_balance") or (c.get("citizenship_scheme") and c.get("max_budget_sgd")):
         active.append("financial")
     if c.get("policy_question"):
         active.append("policy_rag")
@@ -255,11 +263,18 @@ def dispatch(state: HDBCompassState) -> List[Send]:
 AGENT_SYSTEM = {
     "market_sql": "You are the Market & Valuation SQL agent for Singapore HDB resale flats. Use your tools to fetch "
                   "block-level prices, trends and BTO comparisons that satisfy the user's constraints. Call tools with "
-                  "exact towns/flat types from the constraints. When done, reply with a one-paragraph summary.",
+                  "exact towns/flat types from the constraints. For comparable sales use verified coordinates and "
+                  "explicit matching filters. Disclose small samples, truncated examples and missing geocodes; "
+                  "do not widen filters silently or present comparables as an official valuation. "
+                  "When done, reply with a one-paragraph summary.",
     "spatial": "You are the Geospatial & Commute agent. Use your tools to find HDB blocks meeting amenity-distance, "
                "school-boundary and commute constraints. Pass towns exactly as given. Reply with a short summary when done.",
     "financial": "You are the Financial & Grant Calculator agent. Never do arithmetic yourself: call the calculators "
-                 "for grants, affordability (MSR/LTV) and upfront outlay (BSD). Reply with a short summary when done.",
+                 "for grants, affordability (MSR/LTV) and upfront outlay (BSD). Never invent eligibility confirmations "
+                 "or infer citizenship/first-timer status from legacy citizenship_scheme. Pass grant results forward once; "
+                 "real affordability already includes grants. Supply actual valuation, loan and quoted fees for upfront "
+                 "costs. Unknown funds/debts/grants are not zero. Report missing inputs and unsupported scenarios, "
+                 "including cost exclusions and cash shortfalls. Reply with a short summary when done.",
     "policy_rag": "You are the Regulatory Policy RAG agent. Call retrieve_hdb_policy_knowledge with the user's regulatory "
                   "question, then answer ONLY from the returned passages with inline [source] citations.",
 }
@@ -279,6 +294,8 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
     plan: List[Tuple[str, Dict[str, Any]]] = []
     towns = c.get("towns") or []
     if agent == "market_sql":
+        if c.get("comparable_resale"):
+            plan.append(("query_comparable_resale_transactions", c["comparable_resale"]))
         if towns:
             plan.append(("query_resale_blocks_by_criteria", dict(
                 towns=towns, flat_types=c.get("flat_types") or ["4 ROOM"],
@@ -360,12 +377,67 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
         if llm is not None:
             errors.append(f"{label}: no valid tool call from model; deterministic plan used")
         for agent in (plan_agents or [label]):
+            if agent == "financial" and all(
+                load_config()["tools"]["use_mock"].get(name) == "real"
+                for name in tools_for_agent("financial")
+            ):
+                outputs.update(run_financial_sequence(runners, c, query))
+                continue
             for name, args in deterministic_plan(agent, c, query):
                 if name in runners:
                     outputs[name] = runners[name](**args)
 
     log = [rec.model_dump() for r in runners.values() for rec in r.log]
     return outputs, log, errors, final_text
+
+
+def run_financial_sequence(runners, constraints, query):
+    """Pass confirmed results forward without replacing unknown financial facts with zero."""
+    details = constraints.get("financial_inputs") or {}
+    grant_args = {k: v for k, v in (details.get("grants") or {}).items() if v is not None}
+    aff_args = {k: v for k, v in (details.get("affordability") or {}).items() if v is not None}
+    upfront_args = {k: v for k, v in (details.get("upfront") or {}).items() if v is not None}
+    for key in ("youngest_buyer_age", "remaining_lease_years"):
+        if key in grant_args:
+            aff_args.setdefault(key, grant_args[key])
+    for key in ("loan_type", "cpf_oa_balance", "cash_savings"):
+        if key in aff_args:
+            upfront_args.setdefault(key, aff_args[key])
+    income = constraints.get("household_income")
+    if income is not None:
+        grant_args.setdefault("monthly_income", income)
+        aff_args.setdefault("monthly_income", income)
+    flat_types = constraints.get("flat_types") or []
+    if len(flat_types) == 1:
+        grant_args.setdefault("flat_type", flat_types[0])
+    # The legacy citizenship_scheme extractor infers citizenship/first-timer status;
+    # only explicitly supplied financial facts may be used by real calculators.
+    if re.search(r"\bbto\b", query, re.I) and not re.search(r"resale", query, re.I):
+        grant_args["flat_category"] = "bto"
+    for key in ("cpf_oa_balance", "cash_savings"):
+        if constraints.get(key) is not None:
+            aff_args.setdefault(key, constraints[key])
+            upfront_args.setdefault(key, constraints[key])
+    outputs = {}
+    grant_name = "calculate_cpf_housing_grants"
+    aff_name = "calculate_maximum_affordability"
+    upfront_name = "calculate_bsd_and_upfront_outlay"
+    if grant_name in runners:
+        grants = outputs[grant_name] = runners[grant_name](**grant_args)
+        if grants.get("status") == "ok":
+            for target in (aff_args, upfront_args):
+                if target.get("total_grants") is None:
+                    target["total_grants"] = grants["total_grants"]
+    if aff_name in runners:
+        aff = outputs[aff_name] = runners[aff_name](**aff_args)
+        if aff.get("status") == "ok" and upfront_args.get("loan_type", "hdb") == aff_args.get("loan_type", "hdb"):
+            upfront_args.setdefault("ltv_ratio", aff["ltv_ratio"])
+    if upfront_name in runners:
+        if "purchase_price" not in upfront_args and constraints.get("max_budget_sgd") is not None:
+            upfront_args["purchase_price"] = constraints["max_budget_sgd"]
+        if upfront_args.get("purchase_price", 0) > 0:
+            outputs[upfront_name] = runners[upfront_name](**upfront_args)
+    return outputs
 
 
 def _normalise_school_blocks(items: List[str], towns: List[str]) -> List[Dict[str, Any]]:
@@ -434,12 +506,40 @@ def _sql_blocks(state: HDBCompassState) -> Optional[List[Dict[str, Any]]]:
     return q.get("blocks") if isinstance(q, dict) else None
 
 
+def _comparable_lines(sql: Dict[str, Any]) -> List[str]:
+    lines: List[str] = []
+    comparables = sql.get("query_comparable_resale_transactions")
+    if comparables:
+        summary = comparables.get("summary")
+        if summary:
+            prices = summary["price"]
+            criteria = comparables["criteria"]
+            metadata = comparables["metadata"]
+            lines.append(f"- Comparison: {criteria['flat_type']}, within {criteria['radius_meters']} m straight-line, {metadata['window_start_month']}–{metadata['window_end_month']}.")
+            lines.append(f"- Comparable resale sales: {summary['transaction_count']} transactions across {summary['block_count']} blocks; median ${prices['median']:,.0f}, middle 50% ${prices['lower_quartile']:,.0f}–${prices['upper_quartile']:,.0f}.")
+            if comparables.get("status") == "insufficient_sample":
+                lines.append("- The comparable sample is below the requested minimum; treat it as limited evidence.")
+            if comparables.get("metadata", {}).get("sample_truncated"):
+                lines.append("- Displayed transaction examples are limited; statistics use the full matched sample.")
+        elif comparables.get("status") == "no_coverage":
+            lines.append("- The requested comparable-sales period predates the database's source coverage.")
+        elif "error" in comparables:
+            lines.append("- Comparable resale analysis is unavailable; check the supplied criteria and database setup.")
+        else:
+            lines.append("- No geocoded resale transactions match the comparable-sales criteria; filters have not been widened.")
+        if comparables.get("metadata", {}).get("transactions_without_coordinates", 0):
+            lines.append("- Some otherwise matching transactions have no coordinates; their proximity could not be assessed.")
+        if comparables.get("metadata", {}).get("history_truncated"):
+            lines.append("- The requested window extends before source history; earlier transactions are unavailable.")
+    return lines
+
+
 def _affordable_price(state: HDBCompassState) -> Optional[float]:
     fin = state.get("financial_breakdown") or {}
     aff = fin.get("calculate_maximum_affordability") or {}
     grants = (fin.get("calculate_cpf_housing_grants") or {}).get("total_grants", 0.0)
-    if aff.get("max_purchase_price"):
-        return float(aff["max_purchase_price"]) + float(grants or 0.0)
+    if aff.get("status", "ok") == "ok" and aff.get("max_purchase_price") is not None:
+        return float(aff["max_purchase_price"]) + (0.0 if aff.get("grants_included") else float(grants or 0.0))
     return None
 
 
@@ -461,7 +561,13 @@ def compute_intersection(sql_blocks: Optional[List[Dict[str, Any]]], spatial_blo
 
 
 def intersect_node(state: HDBCompassState) -> Dict[str, Any]:
-    cap = _affordable_price(state) if not state.get("user_constraints", {}).get("max_budget_sgd") else None
+    cap = _affordable_price(state)
+    budget = state.get("user_constraints", {}).get("max_budget_sgd")
+    if budget is not None:
+        aff = (state.get("financial_breakdown") or {}).get("calculate_maximum_affordability") or {}
+        if not aff.get("rule_version"):
+            cap = None  # Preserve the user-budget semantics of legacy mock benchmarks.
+        cap = min(cap, budget) if cap is not None else budget
     return {"candidate_blocks_intersection": compute_intersection(_sql_blocks(state), state.get("spatial_block_candidates"), cap)}
 
 
@@ -470,7 +576,7 @@ def intersect_node(state: HDBCompassState) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 def should_relax(state: HDBCompassState) -> str:
     c = state.get("user_constraints", {})
-    searched = {"market_sql", "spatial"} & set(state.get("active_subagents", []))
+    searched = _sql_blocks(state) is not None or state.get("spatial_block_candidates") is not None
     tunable = c.get("max_budget_sgd") or c.get("amenity_radii_meters") or c.get("min_remaining_lease_years")
     if searched and tunable and not state.get("candidate_blocks_intersection") and not state.get("relaxation"):
         return "relax_constraints"
@@ -551,10 +657,12 @@ HFE_DISCLAIMER = ("\n\n_Figures are indicative. Grant and loan eligibility is co
 
 
 def template_response(state: HDBCompassState) -> str:
-    c = state.get("user_constraints", {})
     lines: List[str] = []
     blocks = state.get("candidate_blocks_intersection") or []
-    searched = blocks or state.get("sql_market_results") or state.get("spatial_block_candidates") is not None
+    searched = (
+        blocks or _sql_blocks(state) is not None
+        or state.get("spatial_block_candidates") is not None
+    )
     if searched:
         if blocks:
             lines.append(f"**{len(blocks)} candidate block(s)** match all stated constraints:")
@@ -572,24 +680,59 @@ def template_response(state: HDBCompassState) -> str:
             for s in rel.get("suggestions", []):
                 lines.append(f"- {s['constraint']}: {s['original']} → {s['relaxed']} unlocks {s['unlocked_blocks']}")
     sql = state.get("sql_market_results") or {}
+    lines.extend(_comparable_lines(sql))
     if "compute_town_price_timeseries" in sql:
-        for t in sql["compute_town_price_timeseries"].get("summary", []):
-            lines.append(f"- {t['town']}: latest median ${t['latest_median_price']:,.0f}, ${t['median_price_per_sqm']:,.0f}/sqm, YoY {t['yoy_appreciation_pct']:+.1f}%")
+        trend = sql["compute_town_price_timeseries"]
+        for t in trend.get("summary", []):
+            period = t.get("latest_quarter") or "latest"
+            change = t.get("yoy_appreciation_pct")
+            if change is None:
+                reason = (
+                    "prior-year quarter is incomplete"
+                    if t.get("yoy_unavailable_reason") == "incomplete_prior_year_quarter"
+                    else "no comparable prior-year quarter"
+                )
+                yoy = f"YoY unavailable ({reason})"
+            else:
+                yoy = f"YoY {change:+.1f}%"
+            lines.append(f"- {t['town']}: {period} median ${t['latest_median_price']:,.0f}, ${t['median_price_per_sqm']:,.0f}/sqm, {yoy}")
+        metadata = trend.get("metadata") or {}
+        for town in metadata.get("towns_without_data", []):
+            lines.append(f"- {town}: no transactions for the requested flat type in the trend window.")
+        for town in metadata.get("towns_without_complete_quarters", []):
+            lines.append(f"- {town}: only incomplete quarters are available; no complete-quarter summary or YoY comparison.")
     if "compare_bto_launch_vs_resale" in sql:
         b = sql["compare_bto_launch_vs_resale"]
         lines.append(f"- BTO {b['bto_project_name']}: ${b['bto_indicative_price_range']['min']:,.0f}–${b['bto_indicative_price_range']['max']:,.0f} vs nearby resale median ${b['resale_median_nearby']:,.0f} ({b['price_gap_pct']:+.1f}%)")
     fin = state.get("financial_breakdown") or {}
     if fin:
         lines.append("**Financials:**")
+        labels = {"calculate_cpf_housing_grants": "Housing grants",
+                  "calculate_maximum_affordability": "Affordability",
+                  "calculate_bsd_and_upfront_outlay": "Upfront funding"}
+        for name, value in fin.items():
+            label = labels.get(name, "Financial estimate")
+            if "error" in value:
+                lines.append(f"- {label}: calculation unavailable.")
+                continue
+            if value.get("status", "ok") != "ok":
+                detail = ", ".join(field.replace("_", " ") for field in value.get("missing_inputs", [])) or "; ".join(value.get("notes", []))
+                status = "more information needed" if value.get("status") == "needs_information" else "scenario unavailable"
+                lines.append(f"- {label}: {status} — {detail}")
+        fin = {name: value for name, value in fin.items() if value.get("status", "ok") == "ok" and "error" not in value}
         g = fin.get("calculate_cpf_housing_grants")
         if g:
             lines.append(f"- Grants: EHG ${g['enhanced_housing_grant']:,.0f} + Family ${g['family_grant']:,.0f} + PHG ${g['proximity_housing_grant']:,.0f} = **${g['total_grants']:,.0f}**")
         a = fin.get("calculate_maximum_affordability")
         if a:
             lines.append(f"- Max purchase price ${a['max_purchase_price']:,.0f} (loan ${a['max_loan_amount']:,.0f}, instalment ${a['monthly_instalment']:,.0f}/mth, binding: {a['binding_constraint']})")
+            if not a.get("purchase_costs_included", True):
+                lines.append("- This purchase-only ceiling excludes taxes, fees and cash over valuation; check upfront funding before choosing a budget.")
         u = fin.get("calculate_bsd_and_upfront_outlay")
         if u:
             lines.append(f"- Upfront: BSD ${u['buyer_stamp_duty']:,.0f}, cash required ${u['cash_required']:,.0f}, total ${u['total_upfront']:,.0f}")
+            if (u.get("cash_shortfall") or 0) > 0:
+                lines.append(f"- Cash shortfall: ${u['cash_shortfall']:,.0f}.")
     passages = state.get("rag_policy_passages") or []
     if passages:
         lines.append("**Policy:**")
@@ -597,7 +740,7 @@ def template_response(state: HDBCompassState) -> str:
             lines.append(f"- {p['text']} [{p['source_url']}]")
     if not lines:
         lines.append("I could not find data for that request.")
-    if fin or passages:
+    if state.get("financial_breakdown") or passages:
         lines.append(HFE_DISCLAIMER)
     return "\n".join(lines)
 
@@ -607,6 +750,9 @@ SYNTH_SYSTEM = (
     "JSON evidence only. Every number, price, block, distance and grant amount MUST appear verbatim in the evidence; "
     "never invent or round differently. Cite policy passages by their source_url. Present trade-offs objectively "
     "(price vs lease vs distance). No speculation about future prices or profits. Use short markdown sections."
+    " Financial results with status needs_information or unsupported do not establish any numeric estimate; "
+    "ask for the missing facts or explain the limitation. Never add grants again when grants_included is true. "
+    "A purchase-only affordability ceiling excludes taxes and fees; disclose that and any reported cash shortfall."
 )
 
 
@@ -686,7 +832,8 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 def _load_member5_hooks() -> Tuple[Optional[Callable], Optional[Callable]]:
     try:
-        from agents import guardrails  # Member 5's module (proposal §8: agents/guardrails.py)
+        from agents import guardrails
+
     except Exception:  # noqa: BLE001
         return None, None
     return getattr(guardrails, "input_guardrail_node", None), getattr(guardrails, "runtime_auditor_node", None)

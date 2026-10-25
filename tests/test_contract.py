@@ -41,10 +41,10 @@ OUTPUT_MODELS = {
 }
 
 
-def test_canonical_inventory_is_eleven_tools():
-    assert len(S.TOOL_OWNER) == 11
+def test_inventory_includes_comparable_analytics():
+    assert len(S.TOOL_OWNER) == 12
     assert set(S.TOOL_OWNER) == set(S.TOOL_INPUT_MODEL)
-    assert len(tools_for_agent("market_sql")) == 3
+    assert len(tools_for_agent("market_sql")) == 4
     assert len(tools_for_agent("spatial")) == 4
     assert len(tools_for_agent("financial")) == 3
     assert len(tools_for_agent("policy_rag")) == 1

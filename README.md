@@ -206,9 +206,33 @@ After building the database, with `LLM_PROFILE=none` in `.env`:
 python -c 'from agents.arch_3_specialist_5agent import run; print(run("Find 4-room flats in Bishan under 850k with at least 60 years lease.")["draft_response"])'
 ```
 
-The graph uses real resale data through the Python tool registry. Trends, BTO
-comparisons, financial tools and policy retrieval still use mocks; configuration
-is in `config/experiment_config.yaml`.
+The graph uses real resale queries, comparable-sale analytics, town price trends and financial calculators
+through the Python tool registry. BTO comparisons and policy retrieval still
+use mocks; configuration is in `config/experiment_config.yaml`.
+
+The financial tools need no API key or database. They return missing-input lists
+when household, eligibility or funding facts are unknown. See
+[financial contracts and assumptions](docs/FINANCIAL_TOOLS.md). To test them:
+
+```bash
+python -m pytest tests/test_financial_tools.py -q
+python -c 'from mcp_server.financial_calc_tools import calculate_cpf_housing_grants; print(calculate_cpf_housing_grants(monthly_income=8000))'
+```
+
+That call intentionally returns `needs_information`. A complete conditional
+grant example, using explicitly confirmed sample facts:
+
+```python
+from mcp_server.financial_calc_tools import calculate_cpf_housing_grants
+
+result = calculate_cpf_housing_grants(
+    citizenship_pair="SC_SC", first_timer_status=True, monthly_income=4400,
+    flat_type="4 ROOM", youngest_buyer_age=30, youngest_core_member_age=30,
+    remaining_lease_years=70, eligibility_confirmed=True,
+    continuous_employment_12_months=True, proximity="none",
+)
+print(result["total_grants"])  # 150000.0
+```
 
 ### 5. Run the MCP server
 
@@ -217,7 +241,7 @@ python -m mcp_server.server
 ```
 
 An MCP client normally launches this stdio process and communicates over
-stdin/stdout. It exposes the resale-query tool and four spatial tools. The
+stdin/stdout. It exposes three market tools, three financial tools and four spatial tools. The
 current agent registry executes Python directly and does not need this process.
 
 ### 6. Run the web application (optional)
@@ -263,48 +287,162 @@ pick up coordinate changes.
 
 ## TODO: Member 1 — Market and financial tools (Categories A & D)
 
-Completed: resale ingestion, the local DuckDB schema, and
-`query_resale_blocks_by_criteria`, including Pydantic validation, agent-registry
-integration and FastMCP registration. Five of the six tools remain mocked.
+Completed: resale ingestion, the local DuckDB schema, three resale analytics
+tools and three financial calculators, with Pydantic validation, agent-registry
+integration and FastMCP registration. Six of seven Member 1 tools are real;
+`compare_bto_launch_vs_resale` remains mocked. Financial scenario coverage and
+exclusions are documented in [Financial tools](docs/FINANCIAL_TOOLS.md).
 
-### Remaining tools
+### Tool checklist
 
-- [ ] `compute_town_price_timeseries`: calculate quarterly medians, price per
+- [x] `query_comparable_resale_transactions`: match sales around verified
+  coordinates by flat type and optional area, lease, storey and historical date
+  filters. Return price/PSM distributions, source transactions and sample-quality
+  information. Statistics use the full matched sample; displayed examples are limited.
+- [x] `compute_town_price_timeseries`: calculate quarterly medians, price per
   square metre and year-on-year changes from the existing resale database;
   handle incomplete quarters and missing comparison periods explicitly.
-- [ ] `calculate_cpf_housing_grants`: implement supported household scenarios
+- [x] `calculate_cpf_housing_grants`: implement supported household scenarios
   using verified, versioned eligibility rules and grant tables.
-- [ ] `calculate_maximum_affordability`: calculate borrowing and purchase limits
+- [x] `calculate_maximum_affordability`: calculate borrowing and purchase limits
   from income, available funds, debts and the applicable loan assumptions.
-- [ ] `calculate_bsd_and_upfront_outlay`: calculate stamp duty and upfront
+- [x] `calculate_bsd_and_upfront_outlay`: calculate stamp duty and upfront
   CPF/cash requirements using price, valuation, financing, grants and fees.
-- [ ] `compare_bto_launch_vs_resale`: obtain verified launch prices and project
-  locations, select comparable nearby resale transactions, and calculate the
-  price gap with source and sample-size information.
+- [ ] `compare_bto_launch_vs_resale`: retrieve validated BTO details on demand,
+  reuse comparable resale analytics and calculate price differences by flat type
+  across the published price range. No complete BTO database is required.
+
+### Try comparable resale analytics
+
+Build the local market database using the setup instructions above, then run:
+
+```python
+from mcp_server.comparable_resale_tools import query_comparable_resale_transactions
+
+result = query_comparable_resale_transactions(
+    latitude=1.35, longitude=103.85, flat_type="4 ROOM",  # Example coordinates.
+    radius_meters=500, lookback_months=12,
+    min_floor_area_sqm=85, max_floor_area_sqm=110,
+    min_sample_size=5, sample_limit=10,
+)
+print(result["status"])
+print(result["summary"])
+print(result["metadata"])
+```
+
+Use verified project/property coordinates for a real comparison. No geocoding,
+API key or LLM is needed for this query. `end_month="YYYY-MM"` selects a historical
+comparison window; otherwise the snapshot's last completed analysis month is used.
+Results are historical sales, not current listings or an official valuation.
+See [matching and statistical semantics](docs/MARKET_DATA.md#comparable-resale-transactions).
+
+Run the isolated tests without a downloaded database:
+
+```bash
+python -m pytest tests/test_comparable_resale.py -q
+```
+
+### Next steps for BTO comparison
+
+- [ ] Define a validated BTO project schema: prices before grants by flat type,
+  areas, application dates/status, classification, completion estimates, location
+  precision, source URLs and retrieval dates. Unpublished facts remain unknown.
+- [ ] Connect official-source search/page/PDF reading to that schema for named,
+  open, upcoming and closed launches, with a small evidence cache where useful.
+- [ ] Coordinate project location resolution with Member 2's spatial interface;
+  do not substitute a town centre or silently use approximate coordinates.
+- [ ] Coordinate intent and session handling with Member 4: apply now, wait for a
+  future launch or compare options; capture the acceptable move-in date and
+  willingness to wait for completion separately from willingness to apply.
+- [ ] Extend financial calculators for supported BTO grants and payment stages;
+  retrieve relevant eligibility/restriction evidence through Member 3's policy
+  interface. Existing financial calculations are scoped to resale.
+- [ ] Test the complete project-retrieval → location → comparable-sales →
+  financial-comparison flow, including missing prices, ambiguous locations,
+  closed applications and insufficient resale samples.
 
 ### Contracts, integration and verification
 
-- [ ] Finalize financial input/output schemas with Member 4, including missing
-  household details, buyer age, property lease, valuation and funding inputs.
-  Return missing-input or unsupported-scenario results explicitly.
-- [ ] Record financial rule sources, effective dates, assumptions and rounding
+- [x] Implement financial input/output schemas, including household details,
+  buyer ages, property lease, valuation and funding inputs. Return missing-input
+  or unsupported-scenario results explicitly.
+- [ ] Review the expanded financial contracts and specialist prompts with Member 4.
+- [ ] Review the additional comparable-sale tool, coordinate handoff and updated
+  12-tool inventory with Member 4; run live-model tool-selection checks as well
+  as deterministic graph/MCP tests.
+- [x] Record financial rule sources, known effective dates, assumptions and rounding
   rules. Define how documentation changes are checked and released as tested
   rule versions.
-- [ ] Coordinate the financial call sequence with Member 4: pass grants and
-  funding results between tools, avoid defaulting purchase price to zero, and
-  agree whether affordability already includes grants to prevent double-counting.
-- [ ] Validate inputs and outputs, register each completed tool with FastMCP,
+- [x] Implement the financial call sequence: pass confirmed grants and known
+  funding inputs between tools, require a positive candidate price for upfront
+  costs and include grants once in affordability.
+- [x] Validate inputs and outputs, register each completed tool with FastMCP,
   switch its configuration to `real`, and verify direct, agent and MCP calls.
-- [ ] Add independent reference cases and boundary tests for each tool; produce
-  Category A & D accuracy results with Member 5 using fixed data/rule versions.
+- [x] Add independent financial reference cases, boundary and integration tests.
+- [ ] Produce Category A & D accuracy results with Member 5 using fixed data/rule versions.
   Existing unit tests and mock benchmarks do not establish that accuracy.
 - [ ] Document the MCP client–server flow and explain how SQL/Python calculations
   supply numeric evidence to the LLM for the role presentation.
 
-Suggested order: price trends, financial contracts and calculators, then BTO
-comparison. Financial tools unblock realistic affordability filtering and
-combined recommendations. Other workstreams can continue with mocks; reliable
-Category A/D evaluation and complete financial results depend on these tools.
+### Reliability improvements
+
+After the original deliverables above, prioritize:
+
+- [ ] Expose source coverage, download date and stale-data status consistently
+  across market tools, with freshness thresholds based on each source's update
+  cadence. Distinguish an old snapshot from delayed source reporting.
+- [ ] Validate refreshes before replacing the active snapshot: detect schema
+  changes, missing months, rejected rows and unusual changes in coverage or
+  values. Preserve the last valid snapshot when validation fails.
+- [ ] Coordinate a financial clarification flow with Member 4: collect missing
+  household, eligibility and funding facts and retain confirmed answers across
+  chat turns without inventing defaults.
+- [ ] Assess funding for a selected candidate using its price, actual valuation,
+  approved or explicitly modelled loan, taxes and fees. Report cash shortfalls;
+  do not treat the purchase-only ceiling or a block's median lease as proof
+  that a particular purchase is affordable or eligible.
+- [ ] Extend Category A/D evaluation with independently checked answers under
+  fixed snapshots and rule versions, including stale data, insufficient samples,
+  missing inputs and unsupported scenarios.
+- [ ] Add pagination or continuation for truncated market results and consistent
+  errors for no matches, insufficient observations, a missing database and
+  unavailable sources. Ensure agents disclose incomplete result coverage.
+- [ ] Define and test a stale/missing-evidence fallback policy: refresh official
+  structured data first; use official documentation or search for policy
+  clarification; retain source URLs and dates. Search results must not silently
+  replace verified calculator rules or missing numeric evidence.
+
+### Potential analytics expansion
+
+Comparable analytics are implemented; the remaining items are follow-up capabilities:
+
+- [x] Add comparable-sale price distributions and sample-quality information:
+  quartiles, price ranges, transaction counts and low-sample flags alongside medians.
+- [x] Add comparable-transaction analysis using recent sales matched by location,
+  flat type, floor area, remaining lease and storey range. Return matching
+  criteria, dates, sample sizes and limitations; comparisons are not an official
+  valuation or evidence of currently available listings.
+- [ ] Add side-by-side town comparisons for prices, price per square metre,
+  lease profiles, transaction activity and historical changes using consistent
+  periods and filters.
+- [ ] Add deterministic financial scenario comparisons for interest rates,
+  tenures, confirmed grants and available funds, showing repayment differences
+  and cash shortfalls under explicit assumptions.
+- [ ] Add trend composition checks to distinguish changes in the mix of flats
+  sold from like-for-like price changes. Avoid describing raw median growth as
+  appreciation of an individual flat.
+
+Extend existing tool outputs where practical. Agree any additional callable
+tools and contract changes with Member 4, updating schemas, prompts and
+evaluation expectations together. The inventory now contains 12 tools: the
+original 11 plus comparable resale analytics. Earlier 11-tool benchmark runs
+must remain labelled with their original inventory and configuration.
+
+Next: the BTO project schema and on-demand retrieval, contract review and
+Category A/D evaluation, followed by
+reliability improvements and selected analytics expansions. Broader financial
+scenarios remain future work. Complete financial estimates require the household,
+eligibility and funding facts described in the financial contracts.
 
 ---
 
@@ -317,12 +455,12 @@ workstream: [`docs/INTERFACES.md`](docs/INTERFACES.md). Graph drawings: [`docs/a
 | File | What it is |
 |---|---|
 | `agents/state.py` | `HDBCompassState` (proposal §4.2) + `tool_call_log`, `relaxation`, `variant`, `errors` |
-| `agents/schemas.py` | Pydantic I/O models for all 11 MCP tools; canonical tool inventory |
+| `agents/schemas.py` | Pydantic I/O models for all 12 tools; shared tool inventory |
 | `agents/tool_registry.py` | mock/real switch per tool (`config → tools.use_mock`), strict argument validation, tool-call logging |
 | `agents/llm.py` | one `get_llm()` for every node; profiles `ollama` / `vllm` / `none` |
 | `agents/supervisor.py` | extraction → routing → parallel `Send` fan-out → specialist ReAct loops → SQL ∩ spatial intersection → relaxation (E2) → synthesis + map sync (E1) → auditor hook → finalize |
-| `agents/arch_1_monolith.py` | Variant A: one ReAct agent, 11 tools, no auditor |
-| `agents/arch_2_coarse.py` | Variant B: supervisor + combined data agent (10 tools) + policy agent (1 tool), no auditor |
+| `agents/arch_1_monolith.py` | Variant A: one ReAct agent, 12 tools, no auditor |
+| `agents/arch_2_coarse.py` | Variant B: supervisor + combined data agent (11 tools) + policy agent (1 tool), no auditor |
 | `agents/arch_3_specialist_5agent.py` | Variant C: proposed 5-agent graph + auditor self-correction loop |
 | `mcp_server/mock_tools.py` | deterministic fixtures for Members 1 & 3's tools until the real ones land |
 | `evaluation/category_e_queries.json` | 15 Category E golden queries with expected routing/tool calls (`build_category_e.py`) |
@@ -337,7 +475,7 @@ LLM_PROFILE=none .venv/bin/pytest tests/ -q
 .venv/bin/python agents/arch_3_specialist_5agent.py
 ```
 
-Local Ollama note: the default 4096-token context is too small for Variant A (11 tool schemas). Quit the Ollama
+Local Ollama note: the default 4096-token context is too small for Variant A (12 tool schemas). Quit the Ollama
 menu-bar app and start the server with a larger context before benchmarking locally:
 
 ```bash

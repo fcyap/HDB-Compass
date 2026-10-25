@@ -1,7 +1,7 @@
 """
 Tool registry (agents/tool_registry.py). Owned by Member 4.
 
-Resolves each of the 11 canonical tools to a Python callable — real module or
+Resolves each registered tool to a Python callable — real module or
 mock — according to config/experiment_config.yaml -> tools.use_mock, and wraps
 every call so that:
   * arguments are validated against agents/schemas.TOOL_INPUT_MODEL (strict
@@ -15,6 +15,7 @@ mcp_server/* directly — so flipping mock->real is a config change.
 from __future__ import annotations
 
 import importlib
+import inspect
 import sys
 import time
 from pathlib import Path
@@ -33,6 +34,7 @@ from agents.schemas import TOOL_INPUT_MODEL, TOOL_OWNER, ToolCallRecord
 REAL_IMPL: Dict[str, Tuple[str, str]] = {
     "query_resale_blocks_by_criteria": ("mcp_server.market_sql_tools", "query_resale_blocks_by_criteria"),
     "compute_town_price_timeseries": ("mcp_server.market_sql_tools", "compute_town_price_timeseries"),
+    "query_comparable_resale_transactions": ("mcp_server.comparable_resale_tools", "query_comparable_resale_transactions"),
     "compare_bto_launch_vs_resale": ("mcp_server.market_sql_tools", "compare_bto_launch_vs_resale"),
     "filter_blocks_by_amenity_proximity": ("mcp_server.spatial_onemap_tools", "filter_blocks_by_amenity_proximity"),
     "verify_primary_school_distance": ("mcp_server.spatial_onemap_tools", "verify_primary_school_distance"),
@@ -71,6 +73,7 @@ class ToolRunner:
         self.agent = TOOL_OWNER[tool_name]
         self.input_model = TOOL_INPUT_MODEL[tool_name]
         self.fn = resolve_callable(tool_name)
+        self.is_mock = load_config()["tools"]["use_mock"].get(tool_name, "mock") != "real"
         self.log: List[ToolCallRecord] = []
 
     def __call__(self, **kwargs: Any) -> Any:
@@ -83,7 +86,13 @@ class ToolRunner:
             self.log.append(rec)
             return {"error": rec.error, "tool": self.name}
         try:
-            result = self.fn(**validated.model_dump())
+            arguments = validated.model_dump()
+            if self.is_mock:
+                # Legacy benchmark fixtures predate the expanded real-tool contracts.
+                parameters = inspect.signature(self.fn).parameters
+                arguments = {key: value for key, value in arguments.items()
+                             if key in parameters and value is not None}
+            result = self.fn(**arguments)
             ok, err = True, None
         except Exception as e:  # noqa: BLE001 — surface tool failures to the LLM, don't crash the graph
             result, ok, err = {"error": str(e), "tool": self.name}, False, str(e)

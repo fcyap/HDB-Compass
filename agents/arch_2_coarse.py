@@ -3,7 +3,7 @@ Architecture Variant B — Coarse 2-Agent Split (agents/arch_2_coarse.py).
 Owned by Member 4. Proposal §6.2 Experiment 1, Variant B.
 
 A supervisor routes between:
-  data_agent   — combined Market SQL + Geospatial + Financial agent (10 tools)
+  data_agent   — combined Market SQL + Geospatial + Financial agent (11 tools)
   policy_agent — Policy RAG agent (1 tool)
 No intersection node and no runtime auditor: the combined agent must reconcile
 SQL and spatial results on its own, which is the specific weakness this

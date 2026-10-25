@@ -12,11 +12,45 @@ and returns shared block records. `QueryResaleBlocksOutput` includes optional
 `metadata` with snapshot, window, lease reference and truncation information.
 Numeric inputs reject negative or nonfinite prices and lease limits outside
 0–99 years. See [setup](../README.md#setup) and
-[market semantics](MARKET_DATA.md). Other Member 1 tools remain mocked. The
+[market semantics](MARKET_DATA.md). The BTO comparison remains mocked. The
 unified MCP server registers the real query; the agent registry continues to
 execute Python directly.
 
-## 1. The canonical 11 tools and who owns them
+`compute_town_price_timeseries` is also configured as real. Its three input
+names are unchanged; town/type filters are normalized and `lookback_years` is
+an integer from 1 to 30. Series points add optional `is_complete`. Summaries
+add optional quarter, count and comparison fields; `yoy_appreciation_pct` is
+nullable when no complete same-quarter prior-year comparison exists, with
+`yoy_unavailable_reason` explaining why. Optional output `metadata` records
+source, coverage, requested window and towns with insufficient observations.
+Existing mock outputs remain valid. See [market semantics](MARKET_DATA.md#town-price-trends).
+
+The three financial tools are real and registered on the unified server.
+Their expanded contracts add explicit eligibility, age, lease, valuation,
+funding and fee inputs. Responses add `status`, missing inputs, notes, versioned
+rules and sources; numeric outputs are nullable for incomplete or unsupported
+scenarios. See [financial contracts](FINANCIAL_TOOLS.md) for the supported scope.
+These extensions need Member 4's integration review against the Phase 1 contract.
+
+`ExtractedConstraints.financial_inputs` optionally groups typed `grants`,
+`affordability` and `upfront` inputs. Confirmations must come from supplied facts.
+The deterministic real-tool sequence passes successful grant results forward;
+`grants_included=true` prevents adding grants again in the supervisor. Affordability
+excludes purchase costs explicitly. Upfront funding requires a positive price,
+valuation, actual candidate loan and quoted fees. Mock runners filter expanded
+arguments to the legacy fixture signatures; no real-tool validation is bypassed.
+
+`query_comparable_resale_transactions` adds transaction-level comparison around
+verified coordinates, with optional area/lease/storey/date bounds. It is real,
+available to the market specialist and registered on both market and unified
+MCP servers. Its full Pydantic contract is advertised by the unified server.
+`ExtractedConstraints.comparable_resale` carries explicit matching criteria;
+the deterministic fallback routes and executes it without requiring a town.
+Location resolution remains the spatial workstream's responsibility. Source
+coverage, missing geocodes, low samples and truncated examples are explicit.
+See [comparable semantics](MARKET_DATA.md#comparable-resale-transactions).
+
+## 1. The 12 tools and who owns them
 
 | # | Tool | Owner | Agent | Input model | Output model |
 |---|---|---|---|---|---|
@@ -31,25 +65,31 @@ execute Python directly.
 | 9 | `calculate_maximum_affordability` | Member 1 | financial | `CalculateMaximumAffordabilityInput` | `CalculateMaximumAffordabilityOutput` |
 | 10 | `calculate_bsd_and_upfront_outlay` | Member 1 | financial | `CalculateBsdAndUpfrontOutlayInput` | `CalculateBsdAndUpfrontOutlayOutput` |
 | 11 | `retrieve_hdb_policy_knowledge` | Member 3 | policy_rag | `RetrieveHdbPolicyKnowledgeInput` | `RetrieveHdbPolicyKnowledgeOutput` |
+| 12 | `query_comparable_resale_transactions` | Member 1 | market_sql | `QueryComparableResaleInput` | `QueryComparableResaleOutput` |
 
-All models live in `agents/schemas.py`. This count resolves the proposal's
-11-vs-12 ambiguity: Variant A (monolith) gets all 11; Variant B's combined
-Data/Spatial/Finance agent gets tools 1–10 and its Policy agent gets tool 11.
+All models live in `agents/schemas.py`. The original Phase 1 inventory had 11
+tools; comparable-sale analytics adds a twelfth. Variant A gets all 12;
+Variant B's combined agent gets the 11 non-policy tools and its Policy agent
+gets tool 11. The contract extension needs Member 4's integration review.
+Earlier evaluation runs retain their original inventory and mock/real settings;
+new evaluations must record the expanded inventory.
 `relax_unsatisfied_constraints` is a deterministic supervisor **node**, not an
 LLM-callable tool, so it is not counted.
 
 ### How to deliver a real tool (Members 1 and 3)
 
 1. Put it in the module named in `agents/tool_registry.py::REAL_IMPL`
-   (`mcp_server/market_sql_tools.py`, `mcp_server/financial_calc_tools.py`,
-   `mcp_server/policy_rag_tools.py`). Decorate with `@mcp.tool()` on your own
-   `FastMCP` instance, exactly like `mcp_server/spatial_onemap_tools.py`.
+   (`mcp_server/market_sql_tools.py`, `mcp_server/comparable_resale_tools.py`, `mcp_server/financial_calc_tools.py`,
+   `mcp_server/policy_rag_tools.py`). Keep a plain callable for registry access;
+   registration can happen centrally in `mcp_server/server.py` or on a domain
+   `FastMCP` instance as in `mcp_server/spatial_onemap_tools.py`.
 2. Accept the **exact** parameter names and types of the input model. Return a
    plain `dict` / `list` that validates against the output model
    (`OutputModel(**result)` must not raise). The tests in
    `tests/test_contract.py` show the pattern; add a parametrised case for your tool.
 3. Flip your tool from `mock` to `real` in `config/experiment_config.yaml → tools.use_mock`.
-4. Register it on the unified server in `mcp_server/server.py` with `mcp.add_tool(...)`.
+4. Register it on the unified server in `mcp_server/server.py`, preserving the
+   Pydantic input/output schemas in the advertised MCP contract.
 
 Until then the orchestration layer runs against `mcp_server/mock_tools.py`,
 which returns deterministic fixtures with the same shapes.

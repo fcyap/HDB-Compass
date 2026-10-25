@@ -57,15 +57,16 @@ tools:
   # their tools to "real" when their modules land. Spatial tools are real already.
   use_mock:
     query_resale_blocks_by_criteria: real
-    compute_town_price_timeseries: mock
+    compute_town_price_timeseries: real
+    query_comparable_resale_transactions: real
     compare_bto_launch_vs_resale: mock
     filter_blocks_by_amenity_proximity: real
     verify_primary_school_distance: real
     compute_dual_transit_commute: real
     sync_interactive_map_ui: real
-    calculate_cpf_housing_grants: mock
-    calculate_maximum_affordability: mock
-    calculate_bsd_and_upfront_outlay: mock
+    calculate_cpf_housing_grants: real
+    calculate_maximum_affordability: real
+    calculate_bsd_and_upfront_outlay: real
     retrieve_hdb_policy_knowledge: mock
 
 architecture:

@@ -153,8 +153,8 @@ def test_every_variant_has_uniform_entry_point(mod, variant):
 
 
 def test_variant_tool_surfaces_match_proposal():
-    assert len(A.TOOL_OWNER) == 11
-    assert len(B.DATA_TOOLS) == 10 and len(B.POLICY_TOOLS) == 1
+    assert len(A.TOOL_OWNER) == 12
+    assert len(B.DATA_TOOLS) == 11 and len(B.POLICY_TOOLS) == 1
     assert {len(sv.tools_for_agent(a)) for a in sv.SPECIALISTS} == {3, 4, 1}
 
 

@@ -6,7 +6,7 @@ Enables inspection in LangSmith and live synchronization with the interactive ma
 from __future__ import annotations
 
 import operator
-from typing import TypedDict, List, Dict, Optional, Annotated, Any
+from typing import Annotated, Any, Dict, List, Optional, TypedDict
 
 
 class UserConstraints(TypedDict, total=False):
@@ -17,6 +17,8 @@ class UserConstraints(TypedDict, total=False):
     amenity_radii_meters: Dict[str, int]   # e.g. {"mrt": 300, "hawker": 200, "school": 1000}
     household_income: Optional[float]
     citizenship_scheme: Optional[str]      # e.g. "SC_SC_FirstTimer", "SC_Single_35"
+    financial_inputs: Optional[Dict[str, Any]]
+    comparable_resale: Optional[Dict[str, Any]]
 
 
 class HDBCompassState(TypedDict, total=False):

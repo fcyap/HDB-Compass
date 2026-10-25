@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +60,12 @@ class ExtractedConstraints(BaseModel):
     policy_question: Optional[str] = Field(None, description="Regulatory question, if any, for Agent 5")
     wants_price_trend: bool = False
     wants_bto_comparison: bool = False
+    comparable_resale: Optional["QueryComparableResaleInput"] = Field(
+        None, description="Comparable-sale criteria with verified coordinates; never invent a project location"
+    )
+    financial_inputs: Optional["FinancialScenario"] = Field(
+        None, description="Explicit financial facts only. Never invent eligibility confirmations, citizenship, age, funds, fees or zero debts/grants."
+    )
 
 
 class RoutingDecision(BaseModel):
@@ -132,9 +138,26 @@ class QueryResaleBlocksOutput(BaseModel):
 
 
 class ComputeTownPriceTimeseriesInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     towns: List[str]
     flat_type: str
-    lookback_years: int = 3
+    lookback_years: int = Field(3, ge=1, le=30, strict=True)
+
+    @field_validator("towns")
+    @classmethod
+    def normalise_towns(cls, values: List[str]) -> List[str]:
+        result = [" ".join(value.upper().split()) for value in values]
+        if any(not value for value in result):
+            raise ValueError("Town filters must not be blank")
+        return list(dict.fromkeys(result))
+
+    @field_validator("flat_type")
+    @classmethod
+    def normalise_flat_type(cls, value: str) -> str:
+        result = " ".join(value.upper().split())
+        if not result:
+            raise ValueError("Flat type must not be blank")
+        return result
 
 
 class TownQuarterlyPoint(BaseModel):
@@ -143,18 +166,149 @@ class TownQuarterlyPoint(BaseModel):
     median_price: float
     median_price_per_sqm: float
     transaction_count: int
+    is_complete: Optional[bool] = Field(
+        None, description="Whether source coverage spans the full calendar quarter"
+    )
 
 
 class TownTrendSummary(BaseModel):
     town: str
     latest_median_price: float
-    yoy_appreciation_pct: float
+    yoy_appreciation_pct: Optional[float] = None
     median_price_per_sqm: float
+    latest_quarter: Optional[str] = None
+    transaction_count: Optional[int] = None
+    yoy_comparison_quarter: Optional[str] = None
+    yoy_unavailable_reason: Optional[
+        Literal["missing_prior_year_quarter", "incomplete_prior_year_quarter"]
+    ] = None
+
+
+class TownPriceTimeseriesMetadata(BaseModel):
+    snapshot_id: str
+    dataset_id: str
+    source_url: str
+    flat_type: str
+    lookback_years: int
+    requested_start_month: str
+    window_start_month: str
+    window_end_month: str
+    first_source_month: str
+    latest_source_month: str
+    history_truncated: bool
+    towns_without_data: List[str] = Field(default_factory=list)
+    towns_without_complete_quarters: List[str] = Field(default_factory=list)
+    notes: List[str] = Field(default_factory=list)
 
 
 class ComputeTownPriceTimeseriesOutput(BaseModel):
     series: List[TownQuarterlyPoint]
     summary: List[TownTrendSummary]
+    metadata: Optional[TownPriceTimeseriesMetadata] = None
+
+
+class QueryComparableResaleInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    flat_type: str
+    radius_meters: int = Field(500, ge=1, le=10000, strict=True)
+    lookback_months: int = Field(12, ge=1, le=120, strict=True)
+    end_month: Optional[str] = Field(None, description="YYYY-MM; defaults to the snapshot's last completed analysis month")
+    min_floor_area_sqm: Optional[float] = Field(None, gt=0)
+    max_floor_area_sqm: Optional[float] = Field(None, gt=0)
+    min_lease_years: Optional[float] = Field(None, ge=0, le=99)
+    max_lease_years: Optional[float] = Field(None, ge=0, le=99)
+    min_storey: Optional[int] = Field(None, ge=1, le=99, strict=True)
+    max_storey: Optional[int] = Field(None, ge=1, le=99, strict=True)
+    min_sample_size: int = Field(5, ge=1, le=1000, strict=True)
+    sample_limit: int = Field(20, ge=1, le=100, strict=True)
+
+    @field_validator("flat_type")
+    @classmethod
+    def normalise_flat_type(cls, value: str) -> str:
+        result = " ".join(value.upper().split())
+        if not result:
+            raise ValueError("Flat type must not be blank")
+        return result
+
+    @field_validator("end_month")
+    @classmethod
+    def validate_month(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None:
+            from datetime import date
+
+            parsed = date.fromisoformat(value + "-01")
+            if parsed.strftime("%Y-%m") != value:
+                raise ValueError("Use YYYY-MM for end_month")
+        return value
+
+    @model_validator(mode="after")
+    def ordered_ranges(self):
+        for lower, upper in (("min_floor_area_sqm", "max_floor_area_sqm"),
+                             ("min_lease_years", "max_lease_years"),
+                             ("min_storey", "max_storey")):
+            low, high = getattr(self, lower), getattr(self, upper)
+            if low is not None and high is not None and low > high:
+                raise ValueError(f"{lower} must not exceed {upper}")
+        return self
+
+
+class ComparablePriceDistribution(BaseModel):
+    minimum: float
+    lower_quartile: float
+    median: float
+    upper_quartile: float
+    maximum: float
+
+
+class ComparableResaleSummary(BaseModel):
+    transaction_count: int
+    block_count: int
+    price: ComparablePriceDistribution
+    price_per_sqm: ComparablePriceDistribution
+    median_floor_area_sqm: float
+    median_remaining_lease_years: float
+    first_transaction_month: str
+    last_transaction_month: str
+
+
+class ComparableResaleTransaction(BlockRef):
+    source_row_number: int
+    month: str
+    flat_type: str
+    floor_area_sqm: float
+    storey_range: str
+    remaining_lease_years: float
+    resale_price: float
+    price_per_sqm: float
+    distance_meters: float
+
+
+class ComparableResaleMetadata(BaseModel):
+    snapshot_id: str
+    dataset_id: str
+    source_url: str
+    retrieved_at: str
+    first_source_month: str
+    latest_source_month: str
+    window_start_month: str
+    window_end_month: str
+    lease_reference_month: str
+    history_truncated: bool
+    transactions_without_coordinates: int
+    returned_transactions: int
+    sample_truncated: bool
+    notes: List[str] = Field(default_factory=list)
+
+
+class QueryComparableResaleOutput(BaseModel):
+    status: Literal["ok", "insufficient_sample", "no_matches", "no_coverage"]
+    criteria: QueryComparableResaleInput
+    summary: Optional[ComparableResaleSummary] = None
+    transactions: List[ComparableResaleTransaction]
+    metadata: ComparableResaleMetadata
+    sql: str
 
 
 class CompareBtoLaunchVsResaleInput(BaseModel):
@@ -206,54 +360,109 @@ class SyncInteractiveMapUiInput(BaseModel):
 # ---------------------------------------------------------------------------
 # Agent 4 — Financial & Grant Calculator (Member 1)
 # ---------------------------------------------------------------------------
-class CalculateCpfHousingGrantsInput(BaseModel):
-    flat_category: Literal["bto", "resale"]
-    citizenship_pair: Literal["SC_SC", "SC_PR", "SC_Single"] = Field(
-        ..., description="SC_SC: two Singapore citizens; SC_PR: citizen + permanent resident; SC_Single: single citizen")
-    first_timer_status: bool
-    monthly_income: float
+class FinancialInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+
+class FinancialResult(BaseModel):
+    status: Literal["ok", "needs_information", "unsupported", "ineligible"] = "ok"
+    missing_inputs: List[str] = Field(default_factory=list)
+    notes: List[str] = Field(default_factory=list)
+    rule_version: Optional[str] = None
+    verified_on: Optional[str] = None
+    sources: List[str] = Field(default_factory=list)
+
+
+class CalculateCpfHousingGrantsInput(FinancialInput):
+    flat_category: Literal["bto", "resale"] = "resale"
+    citizenship_pair: Optional[Literal["SC_SC", "SC_PR", "SC_Single"]] = None
+    first_timer_status: Optional[bool] = None
+    monthly_income: Optional[float] = Field(None, ge=0, description="HFE-assessed average monthly income")
     near_parents_4km: bool = False
+    flat_type: Optional[Literal["2 ROOM", "3 ROOM", "4 ROOM", "5 ROOM", "EXECUTIVE"]] = None
+    youngest_buyer_age: Optional[int] = Field(None, ge=21, le=100)
+    youngest_core_member_age: Optional[int] = Field(None, ge=0, le=100, description="Youngest core buyer or core occupier for EHG lease coverage")
+    remaining_lease_years: Optional[float] = Field(None, gt=0, le=99)
+    eligibility_confirmed: Optional[bool] = Field(None, description="Confirm standard first-timer scheme, unclassified/Standard resale flat, citizenship and property-ownership prerequisites; see financial documentation")
+    continuous_employment_12_months: Optional[bool] = None
+    proximity: Optional[Literal["none", "near", "with"]] = None
+    proximity_eligibility_confirmed: Optional[bool] = Field(None, description="Confirm eligible relatives/residence, no previous PHG and all PHG conditions")
 
 
-class CalculateCpfHousingGrantsOutput(BaseModel):
-    enhanced_housing_grant: float
-    family_grant: float
-    proximity_housing_grant: float
-    total_grants: float
+class CalculateCpfHousingGrantsOutput(FinancialResult):
+    enhanced_housing_grant: Optional[float] = None
+    family_grant: Optional[float] = None
+    proximity_housing_grant: Optional[float] = None
+    total_grants: Optional[float] = None
     eligibility_notes: List[str] = Field(default_factory=list)
 
 
-class CalculateMaximumAffordabilityInput(BaseModel):
-    monthly_income: float
-    cpf_oa_balance: float
-    cash_savings: float
-    loan_type: Literal["hdb", "bank"]
-    interest_rate: float = 2.6
-    tenure_years: int = 25
+class CalculateMaximumAffordabilityInput(FinancialInput):
+    monthly_income: Optional[float] = Field(None, gt=0)
+    cpf_oa_balance: Optional[float] = Field(None, ge=0, description="CPF OA available after retention and CPF eligibility limits")
+    cash_savings: Optional[float] = Field(None, ge=0)
+    loan_type: Literal["hdb", "bank"] = "hdb"
+    interest_rate: Optional[float] = Field(None, ge=0, le=100, description="Annual percent; bank input must include highest applicable thereafter rate")
+    tenure_years: int = Field(25, ge=1, le=30, strict=True)
+    average_applicant_age: Optional[float] = Field(None, ge=21, lt=65, description="HDB average age; for bank loans use the lender-assessed income-weighted age")
+    oldest_buyer_age: Optional[int] = Field(None, ge=21, le=100)
+    youngest_buyer_age: Optional[int] = Field(None, ge=21, le=100)
+    remaining_lease_years: Optional[float] = Field(None, gt=20, le=99)
+    monthly_debt_obligations: Optional[float] = Field(None, ge=0)
+    total_grants: Optional[float] = Field(None, ge=0, description="Confirmed grant estimate; supply explicit zero if none")
+    loan_eligibility_confirmed: Optional[bool] = Field(None, description="Confirm requested loan eligibility and no outstanding housing loans; approval still required")
 
 
-class CalculateMaximumAffordabilityOutput(BaseModel):
-    max_loan_amount: float
-    max_purchase_price: float
-    monthly_instalment: float
-    msr_cap_monthly: float
-    ltv_ratio: float
-    binding_constraint: Literal["MSR", "LTV", "TDSR", "DOWNPAYMENT"]
+class CalculateMaximumAffordabilityOutput(FinancialResult):
+    max_loan_amount: Optional[float] = None
+    borrowing_ceiling: Optional[float] = None
+    max_purchase_price: Optional[float] = None
+    monthly_instalment: Optional[float] = None
+    msr_cap_monthly: Optional[float] = None
+    ltv_ratio: Optional[float] = None
+    binding_constraint: Optional[Literal["MSR", "LTV", "TDSR", "DOWNPAYMENT"]] = None
+    assessment_interest_rate: Optional[float] = None
+    interest_rate: Optional[float] = None
+    tenure_months: Optional[int] = None
+    grants_included: bool = False
+    purchase_costs_included: bool = False
 
 
-class CalculateBsdAndUpfrontOutlayInput(BaseModel):
-    purchase_price: float
-    loan_type: Literal["hdb", "bank"]
-    total_grants: float = 0.0
+class CalculateBsdAndUpfrontOutlayInput(FinancialInput):
+    purchase_price: float = Field(..., gt=0)
+    loan_type: Literal["hdb", "bank"] = "hdb"
+    total_grants: Optional[float] = Field(None, ge=0)
+    market_valuation: Optional[float] = Field(None, gt=0)
+    loan_amount: Optional[float] = Field(None, ge=0, description="Actual approved or modelled loan, not borrowing ceiling")
+    cpf_oa_balance: Optional[float] = Field(None, ge=0, description="CPF OA confirmed usable for purchase and eligible fees")
+    cash_savings: Optional[float] = Field(None, ge=0)
+    legal_and_valuation_fees: Optional[float] = Field(None, ge=0, description="Quoted costs; conservatively cash-funded")
+    additional_buyer_stamp_duty: Optional[float] = Field(None, ge=0, description="Separately assessed ABSD; explicit zero if none")
+    ltv_ratio: Optional[Literal[0.75, 0.55]] = None
 
 
-class CalculateBsdAndUpfrontOutlayOutput(BaseModel):
-    buyer_stamp_duty: float
-    min_cash_downpayment: float
-    cpf_oa_usable: float
-    legal_and_valuation_fees: float
-    total_upfront: float
-    cash_required: float
+class CalculateBsdAndUpfrontOutlayOutput(FinancialResult):
+    buyer_stamp_duty: Optional[float] = None
+    min_cash_downpayment: Optional[float] = None
+    cpf_oa_usable: Optional[float] = None
+    legal_and_valuation_fees: Optional[float] = None
+    total_upfront: Optional[float] = None
+    cash_required: Optional[float] = None
+    cash_shortfall: Optional[float] = None
+    cash_over_valuation: Optional[float] = None
+    grants_used: Optional[float] = None
+    unused_grants: Optional[float] = None
+    additional_buyer_stamp_duty: Optional[float] = None
+
+
+class FinancialScenario(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    grants: Optional[CalculateCpfHousingGrantsInput] = None
+    affordability: Optional[CalculateMaximumAffordabilityInput] = None
+    upfront: Optional[CalculateBsdAndUpfrontOutlayInput] = None
+
+
+ExtractedConstraints.model_rebuild()
 
 
 # ---------------------------------------------------------------------------
@@ -301,12 +510,13 @@ class ToolCallRecord(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Canonical tool inventory (resolves the 11-vs-12 count in the proposal)
+# Tool inventory: original 11 tools plus comparable resale analytics.
 # ---------------------------------------------------------------------------
 TOOL_OWNER: Dict[str, str] = {
     # Agent 2 — Member 1
     "query_resale_blocks_by_criteria": "market_sql",
     "compute_town_price_timeseries": "market_sql",
+    "query_comparable_resale_transactions": "market_sql",
     "compare_bto_launch_vs_resale": "market_sql",
     # Agent 3 — Member 2
     "filter_blocks_by_amenity_proximity": "spatial",
@@ -320,14 +530,15 @@ TOOL_OWNER: Dict[str, str] = {
     # Agent 5 — Member 3
     "retrieve_hdb_policy_knowledge": "policy_rag",
 }
-# Variant A (monolith) gets all 11. Variant B: combined agent gets the 10 non-RAG tools,
+# Variant A gets all 12. Variant B's combined agent gets the 11 non-RAG tools;
 # the policy agent gets 1. relax_unsatisfied_constraints is a deterministic supervisor
 # node, not an LLM-callable tool, so it is not counted.
-assert len(TOOL_OWNER) == 11
+assert len(TOOL_OWNER) == 12
 
 TOOL_INPUT_MODEL: Dict[str, type[BaseModel]] = {
     "query_resale_blocks_by_criteria": QueryResaleBlocksInput,
     "compute_town_price_timeseries": ComputeTownPriceTimeseriesInput,
+    "query_comparable_resale_transactions": QueryComparableResaleInput,
     "compare_bto_launch_vs_resale": CompareBtoLaunchVsResaleInput,
     "filter_blocks_by_amenity_proximity": FilterBlocksByAmenityProximityInput,
     "verify_primary_school_distance": VerifyPrimarySchoolDistanceInput,
