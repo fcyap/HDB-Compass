@@ -3,8 +3,49 @@
     "id": "E1-01",
     "category": "E",
     "sub_use_case": "E1",
-    "query": "We earn $9,000/month, have $90k CPF, want a 4-room flat in Tampines under $680k, within 400m of an MRT and 500m of a hawker centre, with 65+ years lease. Map the matches.",
+    "query": "We are a married Singapore citizen couple aged 36 and 35, both first-timers with no children, buying a resale flat. Our HFE-assessed household income is $8,500 a month and we have $120,000 in CPF OA we can use, plus $30,000 in cash savings. We have no other debts, have been continuously employed for the past 12 months, and our eligibility for the grants and an HDB loan is confirmed. No proximity grant applies. Find 4-room resale flats in Jurong East under $650,000 with at least 60 years of lease left, within 400m of an MRT station. Use 60 years of remaining lease for the grant and loan calculation. Map the matches and tell us our grants and maximum budget.",
     "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "JURONG EAST"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 650000.0,
+      "min_remaining_lease_years": 60,
+      "amenity_radii_meters": {
+        "mrt": 400
+      }
+    },
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "monthly_income": 8500.0,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 60.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 35,
+        "youngest_core_member_age": 35
+      },
+      "affordability": {
+        "monthly_income": 8500.0,
+        "cpf_oa_balance": 120000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 60.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "cash_savings": 30000.0,
+        "youngest_buyer_age": 35,
+        "oldest_buyer_age": 36,
+        "average_applicant_age": 35.5
+      }
+    },
+    "omitted_financial_facts": null,
     "expected_agents": [
       "market_sql",
       "spatial",
@@ -16,12 +57,323 @@
         "tool": "query_resale_blocks_by_criteria",
         "required_params": {
           "towns": [
-            "TAMPINES"
+            "JURONG EAST"
           ],
           "flat_types": [
             "4 ROOM"
           ],
-          "max_price": 680000.0,
+          "max_price": 650000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "JURONG EAST"
+          ],
+          "amenity_constraints": {
+            "mrt": 400
+          }
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 8500.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 60.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 35,
+          "youngest_core_member_age": 35
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 8500.0,
+          "cpf_oa_balance": 120000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 60.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "cash_savings": 30000.0,
+          "youngest_buyer_age": 35,
+          "oldest_buyer_age": 36,
+          "average_applicant_age": 35.5
+        }
+      }
+    ],
+    "expected_behaviour": "Recommend exactly the matching blocks (median price within the affordability cap), map them, and report the grant total and maximum purchase price from the calculators.",
+    "ground_truth_facts": {
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": "sg-hdb-resale-2026-10-25.v1"
+      },
+      "price_query_blocks": 28,
+      "distance_filter_blocks": 116,
+      "affordability_cap": 650000.0,
+      "matching_block_keys": [
+        "228 JURONG EAST ST 21",
+        "288B JURONG EAST ST 21",
+        "266 TOH GUAN RD",
+        "286D TOH GUAN RD",
+        "268 TOH GUAN RD"
+      ],
+      "financial": {
+        "calculate_cpf_housing_grants": {
+          "status": "ok",
+          "missing_inputs": [],
+          "enhanced_housing_grant": 10000.0,
+          "family_grant": 80000.0,
+          "proximity_housing_grant": 0.0,
+          "total_grants": 90000.0,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        },
+        "calculate_maximum_affordability": {
+          "status": "ok",
+          "missing_inputs": [],
+          "max_purchase_price": 777734.95,
+          "max_loan_amount": 537734.95,
+          "monthly_instalment": 2439.54,
+          "binding_constraint": "MSR",
+          "grants_included": true,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        }
+      }
+    }
+  },
+  {
+    "id": "E1-02",
+    "category": "E",
+    "sub_use_case": "E1",
+    "query": "We are a married Singapore citizen couple aged 31 and 29, both first-timers with no children, buying a resale flat. Our HFE-assessed household income is $11,000 a month and we have $150,000 in CPF OA we can use, plus $60,000 in cash savings. We have no other debts, have been continuously employed for the past 12 months, and our eligibility for the grants and an HDB loan is confirmed. No proximity grant applies. Find 5-room resale flats in Jurong East under $850,000 with at least 66 years of lease left, within 400m of an MRT station. Use 66 years of remaining lease for the grant and loan calculation. Map the matches and tell us our grants and maximum budget.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "JURONG EAST"
+      ],
+      "flat_types": [
+        "5 ROOM"
+      ],
+      "max_budget_sgd": 850000.0,
+      "min_remaining_lease_years": 66,
+      "amenity_radii_meters": {
+        "mrt": 400
+      }
+    },
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "monthly_income": 11000.0,
+        "flat_type": "5 ROOM",
+        "remaining_lease_years": 66.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 29,
+        "youngest_core_member_age": 29
+      },
+      "affordability": {
+        "monthly_income": 11000.0,
+        "cpf_oa_balance": 150000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 66.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "cash_savings": 60000.0,
+        "youngest_buyer_age": 29,
+        "oldest_buyer_age": 31,
+        "average_applicant_age": 30.0
+      }
+    },
+    "omitted_financial_facts": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial",
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "JURONG EAST"
+          ],
+          "flat_types": [
+            "5 ROOM"
+          ],
+          "max_price": 850000.0,
+          "min_lease_years": 66
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "JURONG EAST"
+          ],
+          "amenity_constraints": {
+            "mrt": 400
+          }
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 11000.0,
+          "flat_type": "5 ROOM",
+          "remaining_lease_years": 66.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 29,
+          "youngest_core_member_age": 29
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 11000.0,
+          "cpf_oa_balance": 150000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 66.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "cash_savings": 60000.0,
+          "youngest_buyer_age": 29,
+          "oldest_buyer_age": 31,
+          "average_applicant_age": 30.0
+        }
+      }
+    ],
+    "expected_behaviour": "Recommend exactly the matching blocks (median price within the affordability cap), map them, and report the grant total and maximum purchase price from the calculators.",
+    "ground_truth_facts": {
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": "sg-hdb-resale-2026-10-25.v1"
+      },
+      "price_query_blocks": 16,
+      "distance_filter_blocks": 116,
+      "affordability_cap": 850000.0,
+      "matching_block_keys": [
+        "286D TOH GUAN RD",
+        "267 TOH GUAN RD",
+        "269 TOH GUAN RD",
+        "288B JURONG EAST ST 21",
+        "288E JURONG EAST ST 21",
+        "265 TOH GUAN RD",
+        "286A TOH GUAN RD"
+      ],
+      "financial": {
+        "calculate_cpf_housing_grants": {
+          "status": "ok",
+          "missing_inputs": [],
+          "enhanced_housing_grant": 0.0,
+          "family_grant": 50000.0,
+          "proximity_housing_grant": 0.0,
+          "total_grants": 50000.0,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        },
+        "calculate_maximum_affordability": {
+          "status": "ok",
+          "missing_inputs": [],
+          "max_purchase_price": 955892.29,
+          "max_loan_amount": 695892.29,
+          "monthly_instalment": 3157.05,
+          "binding_constraint": "MSR",
+          "grants_included": true,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        }
+      }
+    }
+  },
+  {
+    "id": "E1-03",
+    "category": "E",
+    "sub_use_case": "E1",
+    "query": "We are a married Singapore citizen couple aged 32 and 30, both first-timers with no children, buying a resale flat. Our HFE-assessed household income is $9,000 a month and we have $90,000 in CPF OA we can use, plus $40,000 in cash savings. We have no other debts, have been continuously employed for the past 12 months, and our eligibility for the grants and an HDB loan is confirmed. No proximity grant applies. Find 4-room resale flats in Ang Mo Kio under $750,000 with at least 65 years of lease left, within 400m of an MRT station and 500m of a hawker centre. Use 65 years of remaining lease for the grant and loan calculation. Map the matches and tell us our grants and maximum budget.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "ANG MO KIO"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 750000.0,
+      "min_remaining_lease_years": 65,
+      "amenity_radii_meters": {
+        "mrt": 400,
+        "hawker": 500
+      }
+    },
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "monthly_income": 9000.0,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 65.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 30,
+        "youngest_core_member_age": 30
+      },
+      "affordability": {
+        "monthly_income": 9000.0,
+        "cpf_oa_balance": 90000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 65.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "cash_savings": 40000.0,
+        "youngest_buyer_age": 30,
+        "oldest_buyer_age": 32,
+        "average_applicant_age": 31.0
+      }
+    },
+    "omitted_financial_facts": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial",
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "ANG MO KIO"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 750000.0,
           "min_lease_years": 65
         }
       },
@@ -30,7 +382,7 @@
         "tool": "filter_blocks_by_amenity_proximity",
         "required_params": {
           "towns": [
-            "TAMPINES"
+            "ANG MO KIO"
           ],
           "amenity_constraints": {
             "mrt": 400,
@@ -42,7 +394,17 @@
         "agent": "financial",
         "tool": "calculate_cpf_housing_grants",
         "required_params": {
-          "monthly_income": 9000.0
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 9000.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 65.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 30,
+          "youngest_core_member_age": 30
         }
       },
       {
@@ -50,158 +412,104 @@
         "tool": "calculate_maximum_affordability",
         "required_params": {
           "monthly_income": 9000.0,
-          "cpf_oa_balance": 90000.0
+          "cpf_oa_balance": 90000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 65.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "cash_savings": 40000.0,
+          "youngest_buyer_age": 30,
+          "oldest_buyer_age": 32,
+          "average_applicant_age": 31.0
         }
-      },
-      {
-        "agent": "financial",
-        "tool": "calculate_bsd_and_upfront_outlay",
-        "required_params": {}
       }
     ],
-    "expected_behaviour": "non-empty candidate_blocks_intersection AND map_ui_payload.markers populated",
+    "expected_behaviour": "Recommend exactly the matching blocks (median price within the affordability cap), map them, and report the grant total and maximum purchase price from the calculators.",
     "ground_truth_facts": {
-      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
-    }
-  },
-  {
-    "id": "E1-02",
-    "category": "E",
-    "sub_use_case": "E1",
-    "query": "Couple earning $7,500/month with $60k CPF. Show 4-room flats in Bishan under $760k within 400m of an MRT with at least 60 years lease, and map them.",
-    "initial_map_state": null,
-    "expected_agents": [
-      "market_sql",
-      "spatial",
-      "financial"
-    ],
-    "expected_mcp_calls": [
-      {
-        "agent": "market_sql",
-        "tool": "query_resale_blocks_by_criteria",
-        "required_params": {
-          "towns": [
-            "BISHAN"
-          ],
-          "flat_types": [
-            "4 ROOM"
-          ],
-          "max_price": 760000.0,
-          "min_lease_years": 60
-        }
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": "sg-hdb-resale-2026-10-25.v1"
       },
-      {
-        "agent": "spatial",
-        "tool": "filter_blocks_by_amenity_proximity",
-        "required_params": {
-          "towns": [
-            "BISHAN"
-          ],
-          "amenity_constraints": {
-            "mrt": 400
-          }
+      "price_query_blocks": 7,
+      "distance_filter_blocks": 153,
+      "affordability_cap": 750000.0,
+      "matching_block_keys": [
+        "627 ANG MO KIO AVE 9",
+        "102 ANG MO KIO AVE 3"
+      ],
+      "financial": {
+        "calculate_cpf_housing_grants": {
+          "status": "ok",
+          "missing_inputs": [],
+          "enhanced_housing_grant": 5000.0,
+          "family_grant": 80000.0,
+          "proximity_housing_grant": 0.0,
+          "total_grants": 85000.0,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        },
+        "calculate_maximum_affordability": {
+          "status": "ok",
+          "missing_inputs": [],
+          "max_purchase_price": 784366.42,
+          "max_loan_amount": 569366.42,
+          "monthly_instalment": 2583.04,
+          "binding_constraint": "MSR",
+          "grants_included": true,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
         }
-      },
-      {
-        "agent": "financial",
-        "tool": "calculate_cpf_housing_grants",
-        "required_params": {
-          "citizenship_pair": "SC_SC",
-          "monthly_income": 7500.0
-        }
-      },
-      {
-        "agent": "financial",
-        "tool": "calculate_maximum_affordability",
-        "required_params": {
-          "monthly_income": 7500.0,
-          "cpf_oa_balance": 60000.0
-        }
-      },
-      {
-        "agent": "financial",
-        "tool": "calculate_bsd_and_upfront_outlay",
-        "required_params": {}
       }
-    ],
-    "expected_behaviour": "non-empty candidate_blocks_intersection AND map_ui_payload.markers populated",
-    "ground_truth_facts": {
-      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
-    }
-  },
-  {
-    "id": "E1-03",
-    "category": "E",
-    "sub_use_case": "E1",
-    "query": "We are first-timer citizens earning $8,200/month. Find 5-room flats in Queenstown or Bukit Merah under $850k within 300m of an MRT with 60+ years lease and map the results.",
-    "initial_map_state": null,
-    "expected_agents": [
-      "market_sql",
-      "spatial",
-      "financial"
-    ],
-    "expected_mcp_calls": [
-      {
-        "agent": "market_sql",
-        "tool": "query_resale_blocks_by_criteria",
-        "required_params": {
-          "towns": [
-            "BUKIT MERAH",
-            "QUEENSTOWN"
-          ],
-          "flat_types": [
-            "5 ROOM"
-          ],
-          "max_price": 850000.0,
-          "min_lease_years": 60
-        }
-      },
-      {
-        "agent": "spatial",
-        "tool": "filter_blocks_by_amenity_proximity",
-        "required_params": {
-          "towns": [
-            "BUKIT MERAH",
-            "QUEENSTOWN"
-          ],
-          "amenity_constraints": {
-            "mrt": 300
-          }
-        }
-      },
-      {
-        "agent": "financial",
-        "tool": "calculate_cpf_housing_grants",
-        "required_params": {
-          "citizenship_pair": "SC_SC",
-          "first_timer_status": true,
-          "monthly_income": 8200.0
-        }
-      },
-      {
-        "agent": "financial",
-        "tool": "calculate_maximum_affordability",
-        "required_params": {
-          "monthly_income": 8200.0
-        }
-      },
-      {
-        "agent": "financial",
-        "tool": "calculate_bsd_and_upfront_outlay",
-        "required_params": {}
-      }
-    ],
-    "expected_behaviour": "non-empty candidate_blocks_intersection AND map_ui_payload.markers populated",
-    "ground_truth_facts": {
-      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
     }
   },
   {
     "id": "E1-04",
     "category": "E",
     "sub_use_case": "E1",
-    "query": "Budget $720k, income $9,500/month, $110k CPF. 4-room in Bishan within 500m of an MRT and 600m of a hawker centre, 60+ years lease. Map the candidates.",
+    "query": "We are a married Singapore citizen couple aged 32 and 30, both first-timers with no children, buying a resale flat. Our HFE-assessed household income is $9,000 a month and we have $90,000 in CPF OA we can use, plus $40,000 in cash savings. We have no other debts, have been continuously employed for the past 12 months, and our eligibility for the grants and an HDB loan is confirmed. No proximity grant applies. Find 4-room resale flats in Bukit Merah under $750,000 with at least 65 years of lease left, within 400m of an MRT station and 500m of a hawker centre. Use 65 years of remaining lease for the grant and loan calculation. Map the matches and tell us our grants and maximum budget.",
     "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "BUKIT MERAH"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 750000.0,
+      "min_remaining_lease_years": 65,
+      "amenity_radii_meters": {
+        "mrt": 400,
+        "hawker": 500
+      }
+    },
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "monthly_income": 9000.0,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 65.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 30,
+        "youngest_core_member_age": 30
+      },
+      "affordability": {
+        "monthly_income": 9000.0,
+        "cpf_oa_balance": 90000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 65.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "cash_savings": 40000.0,
+        "youngest_buyer_age": 30,
+        "oldest_buyer_age": 32,
+        "average_applicant_age": 31.0
+      }
+    },
+    "omitted_financial_facts": null,
     "expected_agents": [
       "market_sql",
       "spatial",
@@ -213,13 +521,13 @@
         "tool": "query_resale_blocks_by_criteria",
         "required_params": {
           "towns": [
-            "BISHAN"
+            "BUKIT MERAH"
           ],
           "flat_types": [
             "4 ROOM"
           ],
-          "max_price": 720000.0,
-          "min_lease_years": 60
+          "max_price": 750000.0,
+          "min_lease_years": 65
         }
       },
       {
@@ -227,11 +535,11 @@
         "tool": "filter_blocks_by_amenity_proximity",
         "required_params": {
           "towns": [
-            "BISHAN"
+            "BUKIT MERAH"
           ],
           "amenity_constraints": {
-            "mrt": 500,
-            "hawker": 600
+            "mrt": 400,
+            "hawker": 500
           }
         }
       },
@@ -239,34 +547,121 @@
         "agent": "financial",
         "tool": "calculate_cpf_housing_grants",
         "required_params": {
-          "monthly_income": 9500.0
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 9000.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 65.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 30,
+          "youngest_core_member_age": 30
         }
       },
       {
         "agent": "financial",
         "tool": "calculate_maximum_affordability",
         "required_params": {
-          "monthly_income": 9500.0,
-          "cpf_oa_balance": 110000.0
+          "monthly_income": 9000.0,
+          "cpf_oa_balance": 90000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 65.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "cash_savings": 40000.0,
+          "youngest_buyer_age": 30,
+          "oldest_buyer_age": 32,
+          "average_applicant_age": 31.0
         }
-      },
-      {
-        "agent": "financial",
-        "tool": "calculate_bsd_and_upfront_outlay",
-        "required_params": {}
       }
     ],
-    "expected_behaviour": "non-empty candidate_blocks_intersection AND map_ui_payload.markers populated",
+    "expected_behaviour": "Recommend exactly the matching blocks (median price within the affordability cap), map them, and report the grant total and maximum purchase price from the calculators.",
     "ground_truth_facts": {
-      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": "sg-hdb-resale-2026-10-25.v1"
+      },
+      "price_query_blocks": 7,
+      "distance_filter_blocks": 147,
+      "affordability_cap": 750000.0,
+      "matching_block_keys": [
+        "14 TELOK BLANGAH CRES",
+        "86 TELOK BLANGAH HTS"
+      ],
+      "financial": {
+        "calculate_cpf_housing_grants": {
+          "status": "ok",
+          "missing_inputs": [],
+          "enhanced_housing_grant": 5000.0,
+          "family_grant": 80000.0,
+          "proximity_housing_grant": 0.0,
+          "total_grants": 85000.0,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        },
+        "calculate_maximum_affordability": {
+          "status": "ok",
+          "missing_inputs": [],
+          "max_purchase_price": 784366.42,
+          "max_loan_amount": 569366.42,
+          "monthly_instalment": 2583.04,
+          "binding_constraint": "MSR",
+          "grants_included": true,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        }
+      }
     }
   },
   {
     "id": "E1-05",
     "category": "E",
     "sub_use_case": "E1",
-    "query": "Single citizen aged 36 earning $6,000/month. 4-room resale in Tampines under $620k within 400m of an MRT, 65+ years lease. Show them on the map.",
+    "query": "I am a single Singapore citizen aged 38, a first-timer, buying a resale flat. My HFE-assessed income is $5,500 a month and I have $110,000 in CPF OA I can use, plus $50,000 in cash savings. I have no other debts, have been continuously employed for the past 12 months, and my eligibility for the grants and an HDB loan is confirmed. No proximity grant applies. Find 3-room resale flats in Tampines under $500,000 with at least 60 years of lease left, within 400m of an MRT station. Use 60 years of remaining lease for the grant and loan calculation. Map the matches and tell me my grants and maximum budget.",
     "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "TAMPINES"
+      ],
+      "flat_types": [
+        "3 ROOM"
+      ],
+      "max_budget_sgd": 500000.0,
+      "min_remaining_lease_years": 60,
+      "amenity_radii_meters": {
+        "mrt": 400
+      }
+    },
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_Single",
+        "first_timer_status": true,
+        "monthly_income": 5500.0,
+        "flat_type": "3 ROOM",
+        "remaining_lease_years": 60.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 38,
+        "youngest_core_member_age": 38
+      },
+      "affordability": {
+        "monthly_income": 5500.0,
+        "cpf_oa_balance": 110000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 60.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "cash_savings": 50000.0,
+        "youngest_buyer_age": 38,
+        "oldest_buyer_age": 38,
+        "average_applicant_age": 38.0
+      }
+    },
+    "omitted_financial_facts": null,
     "expected_agents": [
       "market_sql",
       "spatial",
@@ -281,10 +676,10 @@
             "TAMPINES"
           ],
           "flat_types": [
-            "4 ROOM"
+            "3 ROOM"
           ],
-          "max_price": 620000.0,
-          "min_lease_years": 65
+          "max_price": 500000.0,
+          "min_lease_years": 60
         }
       },
       {
@@ -305,33 +700,119 @@
         "required_params": {
           "flat_category": "resale",
           "citizenship_pair": "SC_Single",
-          "monthly_income": 6000.0
+          "first_timer_status": true,
+          "monthly_income": 5500.0,
+          "flat_type": "3 ROOM",
+          "remaining_lease_years": 60.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 38,
+          "youngest_core_member_age": 38
         }
       },
       {
         "agent": "financial",
         "tool": "calculate_maximum_affordability",
         "required_params": {
-          "monthly_income": 6000.0
+          "monthly_income": 5500.0,
+          "cpf_oa_balance": 110000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 60.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "cash_savings": 50000.0,
+          "youngest_buyer_age": 38,
+          "oldest_buyer_age": 38,
+          "average_applicant_age": 38.0
         }
-      },
-      {
-        "agent": "financial",
-        "tool": "calculate_bsd_and_upfront_outlay",
-        "required_params": {}
       }
     ],
-    "expected_behaviour": "non-empty candidate_blocks_intersection AND map_ui_payload.markers populated",
+    "expected_behaviour": "Recommend exactly the matching blocks (median price within the affordability cap), map them, and report the grant total and maximum purchase price from the calculators.",
     "ground_truth_facts": {
-      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": "sg-hdb-resale-2026-10-25.v1"
+      },
+      "price_query_blocks": 17,
+      "distance_filter_blocks": 259,
+      "affordability_cap": 500000.0,
+      "matching_block_keys": [
+        "201E TAMPINES ST 23",
+        "899 TAMPINES ST 81"
+      ],
+      "financial": {
+        "calculate_cpf_housing_grants": {
+          "status": "ok",
+          "missing_inputs": [],
+          "enhanced_housing_grant": 0.0,
+          "family_grant": 40000.0,
+          "proximity_housing_grant": 0.0,
+          "total_grants": 40000.0,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        },
+        "calculate_maximum_affordability": {
+          "status": "ok",
+          "missing_inputs": [],
+          "max_purchase_price": 547946.14,
+          "max_loan_amount": 347946.14,
+          "monthly_instalment": 1578.53,
+          "binding_constraint": "MSR",
+          "grants_included": true,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        }
+      }
     }
   },
   {
     "id": "E1-06",
     "category": "E",
     "sub_use_case": "E1",
-    "query": "We earn $10,000/month and have $150k CPF. Which 4-room flats in Bishan under $750k are within 400m of an MRT and have 60+ years lease? Map them and tell us our grants.",
+    "query": "We are a married Singapore citizen couple aged 31 and 29, both first-timers with no children, buying a resale flat. Our HFE-assessed household income is $11,000 a month and we have $150,000 in CPF OA we can use, plus $60,000 in cash savings. We have no other debts, have been continuously employed for the past 12 months, and our eligibility for the grants and an HDB loan is confirmed. No proximity grant applies. Find 5-room resale flats in Bedok under $850,000 with at least 66 years of lease left, within 400m of an MRT station. Use 66 years of remaining lease for the grant and loan calculation. Map the matches and tell us our grants and maximum budget.",
     "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "BEDOK"
+      ],
+      "flat_types": [
+        "5 ROOM"
+      ],
+      "max_budget_sgd": 850000.0,
+      "min_remaining_lease_years": 66,
+      "amenity_radii_meters": {
+        "mrt": 400
+      }
+    },
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "monthly_income": 11000.0,
+        "flat_type": "5 ROOM",
+        "remaining_lease_years": 66.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 29,
+        "youngest_core_member_age": 29
+      },
+      "affordability": {
+        "monthly_income": 11000.0,
+        "cpf_oa_balance": 150000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 66.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "cash_savings": 60000.0,
+        "youngest_buyer_age": 29,
+        "oldest_buyer_age": 31,
+        "average_applicant_age": 30.0
+      }
+    },
+    "omitted_financial_facts": null,
     "expected_agents": [
       "market_sql",
       "spatial",
@@ -343,13 +824,13 @@
         "tool": "query_resale_blocks_by_criteria",
         "required_params": {
           "towns": [
-            "BISHAN"
+            "BEDOK"
           ],
           "flat_types": [
-            "4 ROOM"
+            "5 ROOM"
           ],
-          "max_price": 750000.0,
-          "min_lease_years": 60
+          "max_price": 850000.0,
+          "min_lease_years": 66
         }
       },
       {
@@ -357,7 +838,7 @@
         "tool": "filter_blocks_by_amenity_proximity",
         "required_params": {
           "towns": [
-            "BISHAN"
+            "BEDOK"
           ],
           "amenity_constraints": {
             "mrt": 400
@@ -368,98 +849,123 @@
         "agent": "financial",
         "tool": "calculate_cpf_housing_grants",
         "required_params": {
-          "monthly_income": 10000.0
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 11000.0,
+          "flat_type": "5 ROOM",
+          "remaining_lease_years": 66.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 29,
+          "youngest_core_member_age": 29
         }
       },
       {
         "agent": "financial",
         "tool": "calculate_maximum_affordability",
         "required_params": {
-          "monthly_income": 10000.0,
-          "cpf_oa_balance": 150000.0
+          "monthly_income": 11000.0,
+          "cpf_oa_balance": 150000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 66.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "cash_savings": 60000.0,
+          "youngest_buyer_age": 29,
+          "oldest_buyer_age": 31,
+          "average_applicant_age": 30.0
         }
-      },
-      {
-        "agent": "financial",
-        "tool": "calculate_bsd_and_upfront_outlay",
-        "required_params": {}
       }
     ],
-    "expected_behaviour": "non-empty candidate_blocks_intersection AND map_ui_payload.markers populated",
+    "expected_behaviour": "Recommend exactly the matching blocks (median price within the affordability cap), map them, and report the grant total and maximum purchase price from the calculators.",
     "ground_truth_facts": {
-      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": "sg-hdb-resale-2026-10-25.v1"
+      },
+      "price_query_blocks": 14,
+      "distance_filter_blocks": 97,
+      "affordability_cap": 850000.0,
+      "matching_block_keys": [
+        "763 BEDOK RESERVOIR VIEW",
+        "761 BEDOK RESERVOIR VIEW",
+        "762 BEDOK RESERVOIR VIEW"
+      ],
+      "financial": {
+        "calculate_cpf_housing_grants": {
+          "status": "ok",
+          "missing_inputs": [],
+          "enhanced_housing_grant": 0.0,
+          "family_grant": 50000.0,
+          "proximity_housing_grant": 0.0,
+          "total_grants": 50000.0,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        },
+        "calculate_maximum_affordability": {
+          "status": "ok",
+          "missing_inputs": [],
+          "max_purchase_price": 955892.29,
+          "max_loan_amount": 695892.29,
+          "monthly_instalment": 3157.05,
+          "binding_constraint": "MSR",
+          "grants_included": true,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        }
+      }
     }
   },
   {
     "id": "E1-07",
     "category": "E",
     "sub_use_case": "E1",
-    "query": "Income $8,800/month, CPF $95k. 4-room in Tampines under $650k within 300m of an MRT and 500m of a hawker centre with 65+ years lease. Map the matches.",
+    "query": "We are a married couple aged 34 and 33, one Singapore citizen and one permanent resident, both first-timers with no children, buying a resale flat. Our HFE-assessed household income is $7,800 a month and we have $80,000 in CPF OA we can use. We have no other debts, have been continuously employed for the past 12 months, and our eligibility for the grants and an HDB loan is confirmed. No proximity grant applies. Find 4-room resale flats in Toa Payoh under $750,000 with at least 65 years of lease left, within 400m of an MRT station. Use 65 years of remaining lease for the grant and loan calculation. Map the matches and tell us our grants and maximum budget.",
     "initial_map_state": null,
-    "expected_agents": [
-      "market_sql",
-      "spatial",
-      "financial"
-    ],
-    "expected_mcp_calls": [
-      {
-        "agent": "market_sql",
-        "tool": "query_resale_blocks_by_criteria",
-        "required_params": {
-          "towns": [
-            "TAMPINES"
-          ],
-          "flat_types": [
-            "4 ROOM"
-          ],
-          "max_price": 650000.0,
-          "min_lease_years": 65
-        }
-      },
-      {
-        "agent": "spatial",
-        "tool": "filter_blocks_by_amenity_proximity",
-        "required_params": {
-          "towns": [
-            "TAMPINES"
-          ],
-          "amenity_constraints": {
-            "mrt": 300,
-            "hawker": 500
-          }
-        }
-      },
-      {
-        "agent": "financial",
-        "tool": "calculate_cpf_housing_grants",
-        "required_params": {
-          "monthly_income": 8800.0
-        }
-      },
-      {
-        "agent": "financial",
-        "tool": "calculate_maximum_affordability",
-        "required_params": {
-          "monthly_income": 8800.0
-        }
-      },
-      {
-        "agent": "financial",
-        "tool": "calculate_bsd_and_upfront_outlay",
-        "required_params": {}
+    "stated_constraints": {
+      "towns": [
+        "TOA PAYOH"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 750000.0,
+      "min_remaining_lease_years": 65,
+      "amenity_radii_meters": {
+        "mrt": 400
       }
+    },
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_PR",
+        "first_timer_status": true,
+        "monthly_income": 7800.0,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 65.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 33,
+        "youngest_core_member_age": 33
+      },
+      "affordability": {
+        "monthly_income": 7800.0,
+        "cpf_oa_balance": 80000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 65.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "youngest_buyer_age": 33,
+        "oldest_buyer_age": 34,
+        "average_applicant_age": 33.5
+      }
+    },
+    "omitted_financial_facts": [
+      "cash"
     ],
-    "expected_behaviour": "non-empty candidate_blocks_intersection AND map_ui_payload.markers populated",
-    "ground_truth_facts": {
-      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
-    }
-  },
-  {
-    "id": "E1-08",
-    "category": "E",
-    "sub_use_case": "E1",
-    "query": "Citizen + PR couple, $9,200/month, $80k CPF, buying a 4-room resale within 4km of parents in Tampines under $700k, within 500m of an MRT, 65+ years lease. Map it and calculate our grants.",
-    "initial_map_state": null,
     "expected_agents": [
       "market_sql",
       "spatial",
@@ -471,12 +977,12 @@
         "tool": "query_resale_blocks_by_criteria",
         "required_params": {
           "towns": [
-            "TAMPINES"
+            "TOA PAYOH"
           ],
           "flat_types": [
             "4 ROOM"
           ],
-          "max_price": 700000.0,
+          "max_price": 750000.0,
           "min_lease_years": 65
         }
       },
@@ -485,10 +991,10 @@
         "tool": "filter_blocks_by_amenity_proximity",
         "required_params": {
           "towns": [
-            "TAMPINES"
+            "TOA PAYOH"
           ],
           "amenity_constraints": {
-            "mrt": 500
+            "mrt": 400
           }
         }
       },
@@ -498,252 +1004,120 @@
         "required_params": {
           "flat_category": "resale",
           "citizenship_pair": "SC_PR",
-          "monthly_income": 9200.0,
-          "near_parents_4km": true
+          "first_timer_status": true,
+          "monthly_income": 7800.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 65.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 33,
+          "youngest_core_member_age": 33
         }
       },
       {
         "agent": "financial",
         "tool": "calculate_maximum_affordability",
         "required_params": {
-          "monthly_income": 9200.0,
-          "cpf_oa_balance": 80000.0
-        }
-      },
-      {
-        "agent": "financial",
-        "tool": "calculate_bsd_and_upfront_outlay",
-        "required_params": {}
-      }
-    ],
-    "expected_behaviour": "non-empty candidate_blocks_intersection AND map_ui_payload.markers populated",
-    "ground_truth_facts": {
-      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
-    }
-  },
-  {
-    "id": "E2-01",
-    "category": "E",
-    "sub_use_case": "E2",
-    "query": "Find a 5-room flat in Tiong Bahru under $600k within 200m of an MRT with 70+ years lease.",
-    "initial_map_state": null,
-    "expected_agents": [
-      "market_sql",
-      "spatial"
-    ],
-    "expected_mcp_calls": [
-      {
-        "agent": "market_sql",
-        "tool": "query_resale_blocks_by_criteria",
-        "required_params": {
-          "towns": [
-            "BUKIT MERAH"
-          ],
-          "flat_types": [
-            "5 ROOM"
-          ],
-          "max_price": 600000.0,
-          "min_lease_years": 70
-        }
-      },
-      {
-        "agent": "spatial",
-        "tool": "filter_blocks_by_amenity_proximity",
-        "required_params": {
-          "towns": [
-            "BUKIT MERAH"
-          ],
-          "amenity_constraints": {
-            "mrt": 200
-          }
+          "monthly_income": 7800.0,
+          "cpf_oa_balance": 80000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 65.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "youngest_buyer_age": 33,
+          "oldest_buyer_age": 34,
+          "average_applicant_age": 33.5
         }
       }
     ],
-    "expected_behaviour": "candidate_blocks_intersection empty AND relaxation.best_single_change present",
+    "expected_behaviour": "Recommend exactly the matching blocks and map them; do not invent a maximum budget. Say which facts are missing (cash_savings) and ask for them.",
     "ground_truth_facts": {
-      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
-    }
-  },
-  {
-    "id": "E2-02",
-    "category": "E",
-    "sub_use_case": "E2",
-    "query": "4-room flat in Bishan under $500k within 200m of an MRT and 100m of a hawker centre, 80+ years lease.",
-    "initial_map_state": null,
-    "expected_agents": [
-      "market_sql",
-      "spatial"
-    ],
-    "expected_mcp_calls": [
-      {
-        "agent": "market_sql",
-        "tool": "query_resale_blocks_by_criteria",
-        "required_params": {
-          "towns": [
-            "BISHAN"
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": "sg-hdb-resale-2026-10-25.v1"
+      },
+      "price_query_blocks": 2,
+      "distance_filter_blocks": 217,
+      "affordability_cap": null,
+      "matching_block_keys": [
+        "62 LOR 4 TOA PAYOH",
+        "11 LOR 8 TOA PAYOH"
+      ],
+      "financial": {
+        "calculate_cpf_housing_grants": {
+          "status": "ok",
+          "missing_inputs": [],
+          "enhanced_housing_grant": 20000.0,
+          "family_grant": 70000.0,
+          "proximity_housing_grant": 0.0,
+          "total_grants": 90000.0,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        },
+        "calculate_maximum_affordability": {
+          "status": "needs_information",
+          "missing_inputs": [
+            "cash_savings"
           ],
-          "flat_types": [
-            "4 ROOM"
-          ],
-          "max_price": 500000.0,
-          "min_lease_years": 80
+          "max_purchase_price": null,
+          "max_loan_amount": null,
+          "monthly_instalment": null,
+          "binding_constraint": null,
+          "grants_included": false,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
         }
       },
-      {
-        "agent": "spatial",
-        "tool": "filter_blocks_by_amenity_proximity",
-        "required_params": {
-          "towns": [
-            "BISHAN"
-          ],
-          "amenity_constraints": {
-            "mrt": 200,
-            "hawker": 100
-          }
-        }
-      }
-    ],
-    "expected_behaviour": "candidate_blocks_intersection empty AND relaxation.best_single_change present",
-    "ground_truth_facts": {
-      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+      "missing_financial_inputs": [
+        "cash_savings"
+      ]
     }
   },
   {
-    "id": "E2-03",
+    "id": "E1-08",
     "category": "E",
-    "sub_use_case": "E2",
-    "query": "5-room in Queenstown under $650k within 150m of an MRT, 75+ years lease.",
+    "sub_use_case": "E1",
+    "query": "We are a married Singapore citizen couple, both first-timers with no children, buying a resale flat. Our HFE-assessed household income is $9,000 a month and we have $90,000 in CPF OA we can use, plus $40,000 in cash savings. We have no other debts, have been continuously employed for the past 12 months, and our eligibility for the grants and an HDB loan is confirmed. No proximity grant applies. Find 4-room resale flats in Jurong East under $750,000 with at least 65 years of lease left, within 400m of an MRT station. Use 65 years of remaining lease for the grant and loan calculation. Map the matches and tell us our grants and maximum budget.",
     "initial_map_state": null,
-    "expected_agents": [
-      "market_sql",
-      "spatial"
-    ],
-    "expected_mcp_calls": [
-      {
-        "agent": "market_sql",
-        "tool": "query_resale_blocks_by_criteria",
-        "required_params": {
-          "towns": [
-            "QUEENSTOWN"
-          ],
-          "flat_types": [
-            "5 ROOM"
-          ],
-          "max_price": 650000.0,
-          "min_lease_years": 75
-        }
+    "stated_constraints": {
+      "towns": [
+        "JURONG EAST"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 750000.0,
+      "min_remaining_lease_years": 65,
+      "amenity_radii_meters": {
+        "mrt": 400
+      }
+    },
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "monthly_income": 9000.0,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 65.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none"
       },
-      {
-        "agent": "spatial",
-        "tool": "filter_blocks_by_amenity_proximity",
-        "required_params": {
-          "towns": [
-            "QUEENSTOWN"
-          ],
-          "amenity_constraints": {
-            "mrt": 150
-          }
-        }
+      "affordability": {
+        "monthly_income": 9000.0,
+        "cpf_oa_balance": 90000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 65.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "cash_savings": 40000.0
       }
+    },
+    "omitted_financial_facts": [
+      "ages"
     ],
-    "expected_behaviour": "candidate_blocks_intersection empty AND relaxation.best_single_change present",
-    "ground_truth_facts": {
-      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
-    }
-  },
-  {
-    "id": "E2-04",
-    "category": "E",
-    "sub_use_case": "E2",
-    "query": "4-room in Tampines under $450k within 250m of an MRT and 200m of a hawker centre, 70+ years lease.",
-    "initial_map_state": null,
-    "expected_agents": [
-      "market_sql",
-      "spatial"
-    ],
-    "expected_mcp_calls": [
-      {
-        "agent": "market_sql",
-        "tool": "query_resale_blocks_by_criteria",
-        "required_params": {
-          "towns": [
-            "TAMPINES"
-          ],
-          "flat_types": [
-            "4 ROOM"
-          ],
-          "max_price": 450000.0,
-          "min_lease_years": 70
-        }
-      },
-      {
-        "agent": "spatial",
-        "tool": "filter_blocks_by_amenity_proximity",
-        "required_params": {
-          "towns": [
-            "TAMPINES"
-          ],
-          "amenity_constraints": {
-            "mrt": 250,
-            "hawker": 200
-          }
-        }
-      }
-    ],
-    "expected_behaviour": "candidate_blocks_intersection empty AND relaxation.best_single_change present",
-    "ground_truth_facts": {
-      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
-    }
-  },
-  {
-    "id": "E2-05",
-    "category": "E",
-    "sub_use_case": "E2",
-    "query": "4-room in Bishan under $600k within 250m of an MRT, 90+ years lease.",
-    "initial_map_state": null,
-    "expected_agents": [
-      "market_sql",
-      "spatial"
-    ],
-    "expected_mcp_calls": [
-      {
-        "agent": "market_sql",
-        "tool": "query_resale_blocks_by_criteria",
-        "required_params": {
-          "towns": [
-            "BISHAN"
-          ],
-          "flat_types": [
-            "4 ROOM"
-          ],
-          "max_price": 600000.0,
-          "min_lease_years": 90
-        }
-      },
-      {
-        "agent": "spatial",
-        "tool": "filter_blocks_by_amenity_proximity",
-        "required_params": {
-          "towns": [
-            "BISHAN"
-          ],
-          "amenity_constraints": {
-            "mrt": 250
-          }
-        }
-      }
-    ],
-    "expected_behaviour": "candidate_blocks_intersection empty AND relaxation.best_single_change present",
-    "ground_truth_facts": {
-      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
-    }
-  },
-  {
-    "id": "E2-06",
-    "category": "E",
-    "sub_use_case": "E2",
-    "query": "We earn $7,000/month. 5-room in Bukit Merah under $700k within 200m of an MRT and 200m of a supermarket, 70+ years lease.",
-    "initial_map_state": null,
     "expected_agents": [
       "market_sql",
       "spatial",
@@ -755,13 +1129,13 @@
         "tool": "query_resale_blocks_by_criteria",
         "required_params": {
           "towns": [
-            "BUKIT MERAH"
+            "JURONG EAST"
           ],
           "flat_types": [
-            "5 ROOM"
+            "4 ROOM"
           ],
-          "max_price": 700000.0,
-          "min_lease_years": 70
+          "max_price": 750000.0,
+          "min_lease_years": 65
         }
       },
       {
@@ -769,11 +1143,10 @@
         "tool": "filter_blocks_by_amenity_proximity",
         "required_params": {
           "towns": [
-            "BUKIT MERAH"
+            "JURONG EAST"
           ],
           "amenity_constraints": {
-            "mrt": 200,
-            "supermarket": 200
+            "mrt": 400
           }
         }
       },
@@ -781,33 +1154,111 @@
         "agent": "financial",
         "tool": "calculate_cpf_housing_grants",
         "required_params": {
-          "monthly_income": 7000.0
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 9000.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 65.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none"
         }
       },
       {
         "agent": "financial",
         "tool": "calculate_maximum_affordability",
         "required_params": {
-          "monthly_income": 7000.0
+          "monthly_income": 9000.0,
+          "cpf_oa_balance": 90000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 65.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "cash_savings": 40000.0
         }
-      },
-      {
-        "agent": "financial",
-        "tool": "calculate_bsd_and_upfront_outlay",
-        "required_params": {}
       }
     ],
-    "expected_behaviour": "candidate_blocks_intersection empty AND relaxation.best_single_change present",
+    "expected_behaviour": "Recommend exactly the matching blocks and map them; do not invent a maximum budget. Say which facts are missing (average_applicant_age, oldest_buyer_age, total_grants, youngest_buyer_age, youngest_core_member_age) and ask for them.",
     "ground_truth_facts": {
-      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": "sg-hdb-resale-2026-10-25.v1"
+      },
+      "price_query_blocks": 35,
+      "distance_filter_blocks": 116,
+      "affordability_cap": null,
+      "matching_block_keys": [
+        "288B JURONG EAST ST 21",
+        "266 TOH GUAN RD",
+        "286D TOH GUAN RD",
+        "268 TOH GUAN RD",
+        "288E JURONG EAST ST 21",
+        "267 TOH GUAN RD",
+        "286A TOH GUAN RD",
+        "288A JURONG EAST ST 21"
+      ],
+      "financial": {
+        "calculate_cpf_housing_grants": {
+          "status": "needs_information",
+          "missing_inputs": [
+            "youngest_buyer_age",
+            "youngest_core_member_age"
+          ],
+          "enhanced_housing_grant": null,
+          "family_grant": null,
+          "proximity_housing_grant": null,
+          "total_grants": null,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        },
+        "calculate_maximum_affordability": {
+          "status": "needs_information",
+          "missing_inputs": [
+            "average_applicant_age",
+            "youngest_buyer_age",
+            "oldest_buyer_age",
+            "total_grants"
+          ],
+          "max_purchase_price": null,
+          "max_loan_amount": null,
+          "monthly_instalment": null,
+          "binding_constraint": null,
+          "grants_included": false,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        }
+      },
+      "missing_financial_inputs": [
+        "average_applicant_age",
+        "oldest_buyer_age",
+        "total_grants",
+        "youngest_buyer_age",
+        "youngest_core_member_age"
+      ]
     }
   },
   {
-    "id": "E2-07",
+    "id": "E2-01",
     "category": "E",
     "sub_use_case": "E2",
-    "query": "4-room in Tampines under $400k within 300m of an MRT, 75+ years lease.",
+    "query": "Find 4-room resale flats in Tampines under $700,000 with at least 70 years of lease left, within 400m of an MRT station.",
     "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "TAMPINES"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 700000.0,
+      "min_remaining_lease_years": 70,
+      "amenity_radii_meters": {
+        "mrt": 400
+      }
+    },
+    "financial_inputs": null,
+    "omitted_financial_facts": null,
     "expected_agents": [
       "market_sql",
       "spatial"
@@ -823,8 +1274,8 @@
           "flat_types": [
             "4 ROOM"
           ],
-          "max_price": 400000.0,
-          "min_lease_years": 75
+          "max_price": 700000.0,
+          "min_lease_years": 70
         }
       },
       {
@@ -835,14 +1286,738 @@
             "TAMPINES"
           ],
           "amenity_constraints": {
-            "mrt": 300
+            "mrt": 400
           }
         }
       }
     ],
-    "expected_behaviour": "candidate_blocks_intersection empty AND relaxation.best_single_change present",
+    "expected_behaviour": "Say that no block meets every constraint, present nothing as a match, and offer the single change that unlocks blocks with its number.",
     "ground_truth_facts": {
-      "_todo": "Member 5 fills from real DuckDB + spatial index: exact block IDs, grant $ amounts"
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": null
+      },
+      "price_query_blocks": 10,
+      "distance_filter_blocks": 259,
+      "affordability_cap": null,
+      "matching_block_keys": [],
+      "relaxations": [
+        {
+          "constraint": "max_budget_sgd",
+          "original": 700000,
+          "relaxed": 770000.0,
+          "unlocked_blocks": 0,
+          "unlocked_block_keys": []
+        },
+        {
+          "constraint": "amenity_radii_meters.mrt",
+          "original": 400,
+          "relaxed": 550,
+          "unlocked_blocks": 0,
+          "unlocked_block_keys": []
+        },
+        {
+          "constraint": "min_remaining_lease_years",
+          "original": 70,
+          "relaxed": 65,
+          "unlocked_blocks": 6,
+          "unlocked_block_keys": [
+            "450C TAMPINES ST 42",
+            "235 TAMPINES ST 21",
+            "395 TAMPINES AVE 7",
+            "301 TAMPINES ST 32",
+            "388 TAMPINES ST 32",
+            "450A TAMPINES ST 42"
+          ]
+        }
+      ],
+      "best_single_change": {
+        "constraint": "min_remaining_lease_years",
+        "original": 70,
+        "relaxed": 65,
+        "unlocked_blocks": 6,
+        "unlocked_block_keys": [
+          "450C TAMPINES ST 42",
+          "235 TAMPINES ST 21",
+          "395 TAMPINES AVE 7",
+          "301 TAMPINES ST 32",
+          "388 TAMPINES ST 32",
+          "450A TAMPINES ST 42"
+        ]
+      }
+    }
+  },
+  {
+    "id": "E2-02",
+    "category": "E",
+    "sub_use_case": "E2",
+    "query": "Find 4-room resale flats in Jurong East under $750,000 with at least 65 years of lease left, within 400m of an MRT station and 500m of a hawker centre.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "JURONG EAST"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 750000.0,
+      "min_remaining_lease_years": 65,
+      "amenity_radii_meters": {
+        "mrt": 400,
+        "hawker": 500
+      }
+    },
+    "financial_inputs": null,
+    "omitted_financial_facts": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "JURONG EAST"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 750000.0,
+          "min_lease_years": 65
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "JURONG EAST"
+          ],
+          "amenity_constraints": {
+            "mrt": 400,
+            "hawker": 500
+          }
+        }
+      }
+    ],
+    "expected_behaviour": "Say that no block meets every constraint, present nothing as a match, and offer the single change that unlocks blocks with its number.",
+    "ground_truth_facts": {
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": null
+      },
+      "price_query_blocks": 35,
+      "distance_filter_blocks": 51,
+      "affordability_cap": null,
+      "matching_block_keys": [],
+      "relaxations": [
+        {
+          "constraint": "max_budget_sgd",
+          "original": 750000,
+          "relaxed": 825000.0,
+          "unlocked_blocks": 0,
+          "unlocked_block_keys": []
+        },
+        {
+          "constraint": "amenity_radii_meters.mrt",
+          "original": 400,
+          "relaxed": 550,
+          "unlocked_blocks": 0,
+          "unlocked_block_keys": []
+        },
+        {
+          "constraint": "amenity_radii_meters.hawker",
+          "original": 500,
+          "relaxed": 650,
+          "unlocked_blocks": 0,
+          "unlocked_block_keys": []
+        },
+        {
+          "constraint": "min_remaining_lease_years",
+          "original": 65,
+          "relaxed": 60,
+          "unlocked_blocks": 1,
+          "unlocked_block_keys": [
+            "228 JURONG EAST ST 21"
+          ]
+        }
+      ],
+      "best_single_change": {
+        "constraint": "min_remaining_lease_years",
+        "original": 65,
+        "relaxed": 60,
+        "unlocked_blocks": 1,
+        "unlocked_block_keys": [
+          "228 JURONG EAST ST 21"
+        ]
+      }
+    }
+  },
+  {
+    "id": "E2-03",
+    "category": "E",
+    "sub_use_case": "E2",
+    "query": "Find 5-room resale flats in Bukit Merah under $850,000 with at least 65 years of lease left, within 300m of an MRT station and 300m of a hawker centre.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "BUKIT MERAH"
+      ],
+      "flat_types": [
+        "5 ROOM"
+      ],
+      "max_budget_sgd": 850000.0,
+      "min_remaining_lease_years": 65,
+      "amenity_radii_meters": {
+        "mrt": 300,
+        "hawker": 300
+      }
+    },
+    "financial_inputs": null,
+    "omitted_financial_facts": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "BUKIT MERAH"
+          ],
+          "flat_types": [
+            "5 ROOM"
+          ],
+          "max_price": 850000.0,
+          "min_lease_years": 65
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "BUKIT MERAH"
+          ],
+          "amenity_constraints": {
+            "mrt": 300,
+            "hawker": 300
+          }
+        }
+      }
+    ],
+    "expected_behaviour": "Say that no block meets every constraint, present nothing as a match, and offer the single change that unlocks blocks with its number.",
+    "ground_truth_facts": {
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": null
+      },
+      "price_query_blocks": 2,
+      "distance_filter_blocks": 52,
+      "affordability_cap": null,
+      "matching_block_keys": [],
+      "relaxations": [
+        {
+          "constraint": "max_budget_sgd",
+          "original": 850000,
+          "relaxed": 935000.0,
+          "unlocked_blocks": 0,
+          "unlocked_block_keys": []
+        },
+        {
+          "constraint": "amenity_radii_meters.mrt",
+          "original": 300,
+          "relaxed": 450,
+          "unlocked_blocks": 1,
+          "unlocked_block_keys": [
+            "86 TELOK BLANGAH HTS"
+          ]
+        },
+        {
+          "constraint": "amenity_radii_meters.hawker",
+          "original": 300,
+          "relaxed": 450,
+          "unlocked_blocks": 0,
+          "unlocked_block_keys": []
+        },
+        {
+          "constraint": "min_remaining_lease_years",
+          "original": 65,
+          "relaxed": 60,
+          "unlocked_blocks": 0,
+          "unlocked_block_keys": []
+        }
+      ],
+      "best_single_change": {
+        "constraint": "amenity_radii_meters.mrt",
+        "original": 300,
+        "relaxed": 450,
+        "unlocked_blocks": 1,
+        "unlocked_block_keys": [
+          "86 TELOK BLANGAH HTS"
+        ]
+      }
+    }
+  },
+  {
+    "id": "E2-04",
+    "category": "E",
+    "sub_use_case": "E2",
+    "query": "Find 5-room resale flats in Bedok under $850,000 with at least 65 years of lease left, within 400m of an MRT station and 500m of a hawker centre.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "BEDOK"
+      ],
+      "flat_types": [
+        "5 ROOM"
+      ],
+      "max_budget_sgd": 850000.0,
+      "min_remaining_lease_years": 65,
+      "amenity_radii_meters": {
+        "mrt": 400,
+        "hawker": 500
+      }
+    },
+    "financial_inputs": null,
+    "omitted_financial_facts": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "BEDOK"
+          ],
+          "flat_types": [
+            "5 ROOM"
+          ],
+          "max_price": 850000.0,
+          "min_lease_years": 65
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "BEDOK"
+          ],
+          "amenity_constraints": {
+            "mrt": 400,
+            "hawker": 500
+          }
+        }
+      }
+    ],
+    "expected_behaviour": "Say that no block meets every constraint, present nothing as a match, and offer the single change that unlocks blocks with its number.",
+    "ground_truth_facts": {
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": null
+      },
+      "price_query_blocks": 19,
+      "distance_filter_blocks": 70,
+      "affordability_cap": null,
+      "matching_block_keys": [],
+      "relaxations": [
+        {
+          "constraint": "max_budget_sgd",
+          "original": 850000,
+          "relaxed": 935000.0,
+          "unlocked_blocks": 2,
+          "unlocked_block_keys": [
+            "613B BEDOK RESERVOIR RD",
+            "629 BEDOK RESERVOIR RD"
+          ]
+        },
+        {
+          "constraint": "amenity_radii_meters.mrt",
+          "original": 400,
+          "relaxed": 550,
+          "unlocked_blocks": 2,
+          "unlocked_block_keys": [
+            "611 BEDOK RESERVOIR RD",
+            "767 BEDOK RESERVOIR VIEW"
+          ]
+        },
+        {
+          "constraint": "amenity_radii_meters.hawker",
+          "original": 500,
+          "relaxed": 650,
+          "unlocked_blocks": 3,
+          "unlocked_block_keys": [
+            "763 BEDOK RESERVOIR VIEW",
+            "761 BEDOK RESERVOIR VIEW",
+            "762 BEDOK RESERVOIR VIEW"
+          ]
+        },
+        {
+          "constraint": "min_remaining_lease_years",
+          "original": 65,
+          "relaxed": 60,
+          "unlocked_blocks": 0,
+          "unlocked_block_keys": []
+        }
+      ],
+      "best_single_change": {
+        "constraint": "amenity_radii_meters.hawker",
+        "original": 500,
+        "relaxed": 650,
+        "unlocked_blocks": 3,
+        "unlocked_block_keys": [
+          "763 BEDOK RESERVOIR VIEW",
+          "761 BEDOK RESERVOIR VIEW",
+          "762 BEDOK RESERVOIR VIEW"
+        ]
+      }
+    }
+  },
+  {
+    "id": "E2-05",
+    "category": "E",
+    "sub_use_case": "E2",
+    "query": "Find 4-room resale flats in Ang Mo Kio under $650,000 with at least 60 years of lease left, within 400m of an MRT station.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "ANG MO KIO"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 650000.0,
+      "min_remaining_lease_years": 60,
+      "amenity_radii_meters": {
+        "mrt": 400
+      }
+    },
+    "financial_inputs": null,
+    "omitted_financial_facts": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "ANG MO KIO"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 650000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "ANG MO KIO"
+          ],
+          "amenity_constraints": {
+            "mrt": 400
+          }
+        }
+      }
+    ],
+    "expected_behaviour": "Say that no block meets every constraint, present nothing as a match, and offer the single change that unlocks blocks with its number.",
+    "ground_truth_facts": {
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": null
+      },
+      "price_query_blocks": 2,
+      "distance_filter_blocks": 167,
+      "affordability_cap": null,
+      "matching_block_keys": [],
+      "relaxations": [
+        {
+          "constraint": "max_budget_sgd",
+          "original": 650000,
+          "relaxed": 715000.0,
+          "unlocked_blocks": 2,
+          "unlocked_block_keys": [
+            "627 ANG MO KIO AVE 9",
+            "102 ANG MO KIO AVE 3"
+          ]
+        },
+        {
+          "constraint": "amenity_radii_meters.mrt",
+          "original": 400,
+          "relaxed": 550,
+          "unlocked_blocks": 1,
+          "unlocked_block_keys": [
+            "221 ANG MO KIO AVE 1"
+          ]
+        },
+        {
+          "constraint": "min_remaining_lease_years",
+          "original": 60,
+          "relaxed": 55,
+          "unlocked_blocks": 0,
+          "unlocked_block_keys": []
+        }
+      ],
+      "best_single_change": {
+        "constraint": "max_budget_sgd",
+        "original": 650000,
+        "relaxed": 715000.0,
+        "unlocked_blocks": 2,
+        "unlocked_block_keys": [
+          "627 ANG MO KIO AVE 9",
+          "102 ANG MO KIO AVE 3"
+        ]
+      }
+    }
+  },
+  {
+    "id": "E2-06",
+    "category": "E",
+    "sub_use_case": "E2",
+    "query": "Find 5-room resale flats in Toa Payoh under $850,000 with at least 65 years of lease left, within 400m of an MRT station and 500m of a hawker centre.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "TOA PAYOH"
+      ],
+      "flat_types": [
+        "5 ROOM"
+      ],
+      "max_budget_sgd": 850000.0,
+      "min_remaining_lease_years": 65,
+      "amenity_radii_meters": {
+        "mrt": 400,
+        "hawker": 500
+      }
+    },
+    "financial_inputs": null,
+    "omitted_financial_facts": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "TOA PAYOH"
+          ],
+          "flat_types": [
+            "5 ROOM"
+          ],
+          "max_price": 850000.0,
+          "min_lease_years": 65
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "TOA PAYOH"
+          ],
+          "amenity_constraints": {
+            "mrt": 400,
+            "hawker": 500
+          }
+        }
+      }
+    ],
+    "expected_behaviour": "Say that no block meets every constraint, present nothing as a match, and offer the single change that unlocks blocks with its number.",
+    "ground_truth_facts": {
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": null
+      },
+      "price_query_blocks": 3,
+      "distance_filter_blocks": 198,
+      "affordability_cap": null,
+      "matching_block_keys": [],
+      "relaxations": [
+        {
+          "constraint": "max_budget_sgd",
+          "original": 850000,
+          "relaxed": 935000.0,
+          "unlocked_blocks": 0,
+          "unlocked_block_keys": []
+        },
+        {
+          "constraint": "amenity_radii_meters.mrt",
+          "original": 400,
+          "relaxed": 550,
+          "unlocked_blocks": 2,
+          "unlocked_block_keys": [
+            "11 LOR 8 TOA PAYOH",
+            "43 LOR 5 TOA PAYOH"
+          ]
+        },
+        {
+          "constraint": "amenity_radii_meters.hawker",
+          "original": 500,
+          "relaxed": 650,
+          "unlocked_blocks": 1,
+          "unlocked_block_keys": [
+            "11 LOR 8 TOA PAYOH"
+          ]
+        },
+        {
+          "constraint": "min_remaining_lease_years",
+          "original": 65,
+          "relaxed": 60,
+          "unlocked_blocks": 0,
+          "unlocked_block_keys": []
+        }
+      ],
+      "best_single_change": {
+        "constraint": "amenity_radii_meters.mrt",
+        "original": 400,
+        "relaxed": 550,
+        "unlocked_blocks": 2,
+        "unlocked_block_keys": [
+          "11 LOR 8 TOA PAYOH",
+          "43 LOR 5 TOA PAYOH"
+        ]
+      }
+    }
+  },
+  {
+    "id": "E2-07",
+    "category": "E",
+    "sub_use_case": "E2",
+    "query": "Find 4-room resale flats in Jurong East under $650,000 with at least 60 years of lease left, within 300m of an MRT station and 300m of a hawker centre.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "JURONG EAST"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 650000.0,
+      "min_remaining_lease_years": 60,
+      "amenity_radii_meters": {
+        "mrt": 300,
+        "hawker": 300
+      }
+    },
+    "financial_inputs": null,
+    "omitted_financial_facts": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "JURONG EAST"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 650000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "JURONG EAST"
+          ],
+          "amenity_constraints": {
+            "mrt": 300,
+            "hawker": 300
+          }
+        }
+      }
+    ],
+    "expected_behaviour": "Say that no block meets every constraint, present nothing as a match, and offer the single change that unlocks blocks with its number.",
+    "ground_truth_facts": {
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": null
+      },
+      "price_query_blocks": 28,
+      "distance_filter_blocks": 16,
+      "affordability_cap": null,
+      "matching_block_keys": [],
+      "relaxations": [
+        {
+          "constraint": "max_budget_sgd",
+          "original": 650000,
+          "relaxed": 715000.0,
+          "unlocked_blocks": 0,
+          "unlocked_block_keys": []
+        },
+        {
+          "constraint": "amenity_radii_meters.mrt",
+          "original": 300,
+          "relaxed": 450,
+          "unlocked_blocks": 1,
+          "unlocked_block_keys": [
+            "228 JURONG EAST ST 21"
+          ]
+        },
+        {
+          "constraint": "amenity_radii_meters.hawker",
+          "original": 300,
+          "relaxed": 450,
+          "unlocked_blocks": 0,
+          "unlocked_block_keys": []
+        },
+        {
+          "constraint": "min_remaining_lease_years",
+          "original": 60,
+          "relaxed": 55,
+          "unlocked_blocks": 1,
+          "unlocked_block_keys": [
+            "257 JURONG EAST ST 24"
+          ]
+        }
+      ],
+      "best_single_change": {
+        "constraint": "amenity_radii_meters.mrt",
+        "original": 300,
+        "relaxed": 450,
+        "unlocked_blocks": 1,
+        "unlocked_block_keys": [
+          "228 JURONG EAST ST 21"
+        ]
+      }
     }
   }
 ]

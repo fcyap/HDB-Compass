@@ -170,7 +170,8 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
         max_commute = int(m.group(1))
 
     policy = None
-    if re.search(r"\b(mop|minimum occupation|prime|plus|standard flat|clawback|subsidy recovery|eip|ethnic|quota|wait[- ]out|eligib|scheme|rental restriction|exempt)\b", q, re.I):
+    # "plus" only in the Plus-classification sense: "plus $30,000 in cash" is not a policy question.
+    if re.search(r"\b(mop|minimum occupation|prime|plus (?:flats?|models?|bto|resale|classification)|standard flat|clawback|subsidy recovery|eip|ethnic|quota|wait[- ]out|eligib|scheme|rental restriction|exempt)\b", q, re.I):
         policy = q
 
     return ExtractedConstraints(

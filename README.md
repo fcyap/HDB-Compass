@@ -463,7 +463,7 @@ workstream: [`docs/INTERFACES.md`](docs/INTERFACES.md). Graph drawings: [`docs/a
 | `agents/arch_2_coarse.py` | Variant B: supervisor + combined data agent (11 tools) + policy agent (1 tool), no auditor |
 | `agents/arch_3_specialist_5agent.py` | Variant C: proposed 5-agent graph + auditor self-correction loop |
 | `mcp_server/mock_tools.py` | deterministic fixtures for Members 1 & 3's tools until the real ones land |
-| `evaluation/category_e_queries.json` | 15 Category E golden queries with expected routing/tool calls (`build_category_e.py`) |
+| `evaluation/category_e_queries.json` | 15 Category E golden questions grounded on the real database, with ground truth (`python -m evaluation.ground_category_e`) |
 | `evaluation/architecture_metrics.py` | Tool Selection F1, Parameter Exact-Match, CSR, routing accuracy, aggregation |
 | `cluster/` | vLLM Slurm job, SSH tunnel and smoke test for the SCIS GPU cluster |
 
