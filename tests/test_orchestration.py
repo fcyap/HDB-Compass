@@ -187,3 +187,8 @@ def test_b_synthesis_gets_its_own_reconciliation_and_the_distance_results():
     assert evidence["data_agent_summary"].startswith("924 meets")
     assert evidence["spatial_block_candidates"][0]["block"] == "924" and "sql_market_results" in evidence
     assert "no code has joined them" in rule
+
+
+def test_plus_in_an_amount_is_not_a_policy_question():
+    assert sv.rule_based_extract("We have $90,000 in CPF OA, plus $40,000 in cash savings.").policy_question is None
+    assert sv.rule_based_extract("Compare a Prime BTO with a Plus resale flat.").policy_question is not None

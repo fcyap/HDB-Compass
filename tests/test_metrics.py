@@ -14,22 +14,39 @@ pytestmark = pytest.mark.usefixtures("mock_domain_tools")
 
 ITEMS = json.loads((Path(__file__).resolve().parent.parent / "evaluation" / "category_e_queries.json").read_text())
 
+# The scoring tests below run on the stand-in tools (mock_domain_tools), so they use their own questions written
+# for the stand-in fixture rather than the grounded dataset, whose answers come from the real database.
+from agents import supervisor as sv  # noqa: E402
+
+MOCK_E1 = ("We earn $9,000/month, have $90k CPF, want a 4-room flat in Tampines under $680k, "
+           "within 400m of an MRT and 500m of a hawker centre, with 65+ years lease. Map the matches.")
+MOCK_E2 = "Find a 5-room flat in Tiong Bahru under $600k within 200m of an MRT with 70+ years lease."
+
+
+def _mock_item(qid, sub, query):
+    c = sv.rule_based_extract(query).model_dump()
+    agents = sv.decide_routing(c)
+    search = {"query_resale_blocks_by_criteria", "filter_blocks_by_amenity_proximity"}
+    calls = [{"agent": a, "tool": t, "required_params": args if t in search else {}}
+             for a in agents for t, args in sv.deterministic_plan(a, c, query)]
+    return {"id": qid, "sub_use_case": sub, "query": query, "expected_agents": agents, "expected_mcp_calls": calls}
+
 
 def test_f1_and_em_are_perfect_for_variant_c_in_deterministic_mode():
-    item = next(i for i in ITEMS if i["id"] == "E1-01")
+    item = _mock_item("M-E1", "E1", MOCK_E1)
     row = M.score_item(item, C.run(item["query"]))
     assert row["tool_selection"]["f1"] == 1.0 and row["parameter_em"]["rate"] == 1.0
     assert row["routing"]["exact"] and row["csr"]["rate"] == 1.0
 
 
 def test_e2_item_scores_relaxation():
-    item = next(i for i in ITEMS if i["id"] == "E2-01")
+    item = _mock_item("M-E2", "E2", MOCK_E2)
     row = M.score_item(item, C.run(item["query"]))
     assert row["relaxation_attempted"] and row["csr"]["rate"] is None  # a single step need not unlock anything
 
 
 def test_aggregate_groups_by_variant():
-    item = ITEMS[0]
+    item = _mock_item("M-E1", "E1", MOCK_E1)
     rows = [M.score_item(item, C.run(item["query"])), M.score_item(item, A.run(item["query"]))]
     agg = M.aggregate(rows)
     assert set(agg) == {"A", "C"} and agg["C"]["tool_selection_f1"] == 1.0
@@ -78,10 +95,36 @@ def test_tool_f1_ignores_the_map_tool_on_both_sides():
     assert M.tool_selection_prf(exp, log)["f1"] == 1.0
 
 
-def test_golden_params_hold_only_what_the_user_stated():
-    e101 = next(i for i in ITEMS if i["id"] == "E1-01")
-    grants = next(c for c in e101["expected_mcp_calls"] if c["tool"] == "calculate_cpf_housing_grants")
-    assert grants["required_params"] == {"monthly_income": 9000.0}
+def test_grounded_dataset_has_the_promised_shape():
+    e1 = [i for i in ITEMS if i["sub_use_case"] == "E1"]
+    e2 = [i for i in ITEMS if i["sub_use_case"] == "E2"]
+    assert len(e1) == 8 and len(e2) == 7
+    assert all(i["ground_truth_facts"]["matching_block_keys"] for i in e1)
+    assert all(not i["ground_truth_facts"]["matching_block_keys"] and i["ground_truth_facts"]["best_single_change"] for i in e2)
+    assert all(i["ground_truth_facts"]["data"]["snapshot_id"] for i in ITEMS)
+
+
+def test_grounded_questions_state_what_is_scored():
+    for item in ITEMS:
+        c = sv.rule_based_extract(item["query"])
+        stated = item["stated_constraints"]
+        assert (c.towns, c.flat_types, c.max_budget_sgd, c.min_remaining_lease_years, c.amenity_radii_meters) == (
+            stated["towns"], stated["flat_types"], stated["max_budget_sgd"], stated["min_remaining_lease_years"],
+            stated["amenity_radii_meters"]), item["id"]
+        fin = {c_["tool"]: c_["required_params"] for c_ in item["expected_mcp_calls"] if c_["agent"] == "financial"}
+        if item["financial_inputs"]:
+            assert fin["calculate_cpf_housing_grants"] == item["financial_inputs"]["grants"]
+            assert fin["calculate_maximum_affordability"] == item["financial_inputs"]["affordability"]
+        else:
+            assert not fin
+
+
+def test_omitted_facts_are_neither_stated_nor_expected():
+    e107 = next(i for i in ITEMS if i["id"] == "E1-07")
+    assert "cash" not in e107["query"].lower() and "cash_savings" not in e107["financial_inputs"]["affordability"]
+    assert "cash_savings" in e107["ground_truth_facts"]["missing_financial_inputs"]
+    e108 = next(i for i in ITEMS if i["id"] == "E1-08")
+    assert " aged " not in e108["query"] and "youngest_buyer_age" not in e108["financial_inputs"]["grants"]
 
 
 def test_free_text_citizenship_is_rejected_at_the_tool_boundary():
