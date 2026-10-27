@@ -1,9 +1,19 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 // @ts-ignore
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
-import { Layers, Compass } from 'lucide-react';
+import {
+  Layers,
+  Compass,
+  Train,
+  School,
+  Utensils,
+  ShoppingCart,
+  X,
+  Clock,
+  Sparkles,
+} from 'lucide-react';
 
 // Explicitly register worker with MapLibre to avoid Vite worker isolation issues
 if (typeof (maplibregl as any).setWorkerUrl === 'function') {
@@ -24,6 +34,7 @@ interface InteractiveMapProps {
   theme?: string;
   onThemeChange?: (theme: string) => void;
   selectedBlockHighlight?: string | null;
+  clearTrigger?: number;
 }
 
 export const ONEMAP_THEMES: Record<string, string> = {
@@ -32,6 +43,30 @@ export const ONEMAP_THEMES: Record<string, string> = {
   Grey: 'https://www.onemap.gov.sg/maps/json/raster/mbstyle/Grey.json',
   Original: 'https://www.onemap.gov.sg/maps/json/raster/mbstyle/Original.json',
 };
+
+type AmenityCategory = 'all' | 'mrt' | 'school' | 'hawker' | 'supermarket';
+
+interface NearbyFacility {
+  name: string;
+  category: string;
+  distance_meters: number;
+  walking_mins: number;
+  lat: number;
+  lng: number;
+  line_code?: string;
+  rawCategory?: string;
+  source?: string;
+}
+
+interface SelectedBlockInfo {
+  name: string;
+  lat: number;
+  lng: number;
+  price?: number;
+  lease?: number;
+  town?: string;
+  isHdb?: boolean;
+}
 
 const wrapFeatureCollection = (geo: any): GeoJSON.FeatureCollection => {
   if (!geo) return { type: 'FeatureCollection', features: [] };
@@ -47,19 +82,217 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   onMapClick,
   theme = 'Night',
   onThemeChange,
+  selectedBlockHighlight,
+  clearTrigger,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const centerMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const clickMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const facilityMarkerRef = useRef<maplibregl.Marker | null>(null);
+
   const [mapLoaded, setMapLoaded] = useState(false);
   const [cursorCoords, setCursorCoords] = useState<{ lat: number; lng: number } | null>(null);
+
+  // PropertyGuru-style Facility Drawer state
+  const [selectedCategory, setSelectedCategory] = useState<AmenityCategory>('all');
+  const [selectedBlock, setSelectedBlock] = useState<SelectedBlockInfo | null>(null);
+  const [allNearbyFacilities, setAllNearbyFacilities] = useState<NearbyFacility[]>([]);
+  const [loadingFacilities, setLoadingFacilities] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Keep latest GeoJSON state accessible in theme switch callbacks
   const bufferGeoJSONRef = useRef(bufferGeoJSON);
   bufferGeoJSONRef.current = bufferGeoJSON;
   const poisGeoJSONRef = useRef(poisGeoJSON);
   poisGeoJSONRef.current = poisGeoJSON;
+
+  // Compute category counts
+  const categoryCounts = useMemo(() => {
+    let mrt = 0, school = 0, hawker = 0, supermarket = 0;
+    allNearbyFacilities.forEach((f) => {
+      const cat = (f.category || '').toLowerCase();
+      if (cat.includes('mrt') || cat.includes('rail') || cat.includes('transit')) mrt++;
+      else if (cat.includes('school')) school++;
+      else if (cat.includes('hawker') || cat.includes('food') || cat.includes('restaurant') || cat.includes('cafe')) hawker++;
+      else if (cat.includes('supermarket') || cat.includes('mart') || cat.includes('grocery')) supermarket++;
+    });
+    return {
+      all: allNearbyFacilities.length,
+      mrt,
+      school,
+      hawker,
+      supermarket,
+    };
+  }, [allNearbyFacilities]);
+
+  // Filter facilities based on selected category pill
+  const filteredFacilities = useMemo(() => {
+    if (selectedCategory === 'all') return allNearbyFacilities;
+    return allNearbyFacilities.filter((f) => {
+      const cat = (f.category || '').toLowerCase();
+      if (selectedCategory === 'mrt') return cat.includes('mrt') || cat.includes('rail') || cat.includes('transit');
+      if (selectedCategory === 'school') return cat.includes('school');
+      if (selectedCategory === 'hawker') return cat.includes('hawker') || cat.includes('food') || cat.includes('restaurant') || cat.includes('cafe');
+      if (selectedCategory === 'supermarket') return cat.includes('supermarket') || cat.includes('mart') || cat.includes('grocery');
+      return true;
+    });
+  }, [allNearbyFacilities, selectedCategory]);
+
+  // Convert filtered facilities into GeoJSON FeatureCollection
+  const facilitiesGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => {
+    return {
+      type: 'FeatureCollection',
+      features: filteredFacilities.map((f) => {
+        let normCat = 'amenity';
+        const c = (f.category || '').toLowerCase();
+        if (c.includes('mrt') || c.includes('rail') || c.includes('transit')) normCat = 'mrt';
+        else if (c.includes('school')) normCat = 'school';
+        else if (c.includes('hawker') || c.includes('food') || c.includes('restaurant') || c.includes('cafe')) normCat = 'hawker';
+        else if (c.includes('supermarket') || c.includes('mart') || c.includes('grocery')) normCat = 'supermarket';
+
+        return {
+          type: 'Feature',
+          geometry: {
+            type: 'Point',
+            coordinates: [f.lng, f.lat],
+          },
+          properties: {
+            name: f.name,
+            category: normCat,
+            rawCategory: f.rawCategory || f.category,
+            distance_meters: f.distance_meters,
+            walking_mins: f.walking_mins,
+            source: f.source,
+          },
+        };
+      }),
+    };
+  }, [filteredFacilities]);
+
+  const facilitiesGeoJSONRef = useRef(facilitiesGeoJSON);
+  facilitiesGeoJSONRef.current = facilitiesGeoJSON;
+
+  // Fetch all nearby facilities around a coordinate
+  const fetchFacilitiesForLocation = useCallback((lat: number, lng: number) => {
+    setLoadingFacilities(true);
+    fetch('http://127.0.0.1:8000/api/spatial/radius', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lat,
+        lng,
+        radius_meters: 1500.0,
+        include_buffer_polygon: false,
+      }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        setAllNearbyFacilities(data.results || []);
+      })
+      .catch((err) => {
+        console.error('[Nearby Facilities Fetch Error]', err);
+      })
+      .finally(() => {
+        setLoadingFacilities(false);
+      });
+  }, []);
+
+  // Reset/Clear Map State whenever clearTrigger fires
+  useEffect(() => {
+    if (clearTrigger && clearTrigger > 0) {
+      setSelectedBlock(null);
+      setDrawerOpen(false);
+      setAllNearbyFacilities([]);
+      if (clickMarkerRef.current) {
+        clickMarkerRef.current.remove();
+        clickMarkerRef.current = null;
+      }
+      if (centerMarkerRef.current) {
+        centerMarkerRef.current.remove();
+        centerMarkerRef.current = null;
+      }
+      if (facilityMarkerRef.current) {
+        facilityMarkerRef.current.remove();
+        facilityMarkerRef.current = null;
+      }
+      if (popupRef.current) {
+        popupRef.current.remove();
+        popupRef.current = null;
+      }
+      if (mapRef.current && mapLoaded) {
+        const src1 = mapRef.current.getSource('agent-facilities-source') as maplibregl.GeoJSONSource;
+        if (src1) src1.setData({ type: 'FeatureCollection', features: [] });
+        const src2 = mapRef.current.getSource('agent-pois-source') as maplibregl.GeoJSONSource;
+        if (src2) src2.setData({ type: 'FeatureCollection', features: [] });
+        const src3 = mapRef.current.getSource('agent-buffer-source') as maplibregl.GeoJSONSource;
+        if (src3) src3.setData({ type: 'FeatureCollection', features: [] });
+      }
+    }
+  }, [clearTrigger, mapLoaded]);
+
+  // Update map facilities layer when filtered GeoJSON updates
+  useEffect(() => {
+    if (!mapRef.current || !mapLoaded) return;
+    const src = mapRef.current.getSource('agent-facilities-source') as maplibregl.GeoJSONSource;
+    if (src) {
+      src.setData(facilitiesGeoJSON);
+    }
+  }, [facilitiesGeoJSON, mapLoaded]);
+
+  // Handle block highlight selection from chat cards
+  useEffect(() => {
+    if (!selectedBlockHighlight || !poisGeoJSON?.features) return;
+    const cleanHighlight = selectedBlockHighlight.toUpperCase();
+    const match = poisGeoJSON.features.find((f: any) => {
+      const name = (f.properties?.name || '').toUpperCase();
+      return name.includes(cleanHighlight) || cleanHighlight.includes(name);
+    });
+
+    if (match && match.geometry && (match.geometry as any).coordinates) {
+      const [lng, lat] = (match.geometry as any).coordinates;
+      const props = match.properties || {};
+      setSelectedBlock({
+        name: props.name || selectedBlockHighlight,
+        lat,
+        lng,
+        price: props.median_resale_price,
+        lease: props.remaining_lease_years,
+        town: props.town,
+        isHdb: true,
+      });
+      setDrawerOpen(true);
+      fetchFacilitiesForLocation(lat, lng);
+      if (mapRef.current) {
+        mapRef.current.flyTo({ center: [lng, lat], zoom: 15.5, speed: 1.2 });
+      }
+    }
+  }, [selectedBlockHighlight, poisGeoJSON, fetchFacilitiesForLocation]);
+
+  // Auto-select 1st candidate block when search results arrive
+  useEffect(() => {
+    if (!poisGeoJSON?.features || poisGeoJSON.features.length === 0) return;
+    const candidates = poisGeoJSON.features.filter(
+      (f: any) => f.properties?.category === 'hdb_candidate'
+    );
+    const target = candidates.length > 0 ? candidates[0] : poisGeoJSON.features[0];
+    if (target && target.geometry && (target.geometry as any).coordinates) {
+      const [lng, lat] = (target.geometry as any).coordinates;
+      const props = target.properties || {};
+      setSelectedBlock({
+        name: props.name || 'Candidate Block',
+        lat,
+        lng,
+        price: props.median_resale_price,
+        lease: props.remaining_lease_years,
+        town: props.town,
+        isHdb: true,
+      });
+      setDrawerOpen(true);
+      fetchFacilitiesForLocation(lat, lng);
+    }
+  }, [poisGeoJSON, fetchFacilitiesForLocation]);
 
   // Reusable helper to attach all custom analysis layers & interactions
   const setupLayers = useCallback((map: maplibregl.Map) => {
@@ -76,7 +309,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         source: 'agent-buffer-source',
         paint: {
           'fill-color': '#38bdf8',
-          'fill-opacity': 0.22,
+          'fill-opacity': 0.18,
         },
       });
 
@@ -86,7 +319,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         source: 'agent-buffer-source',
         paint: {
           'line-color': '#0ea5e9',
-          'line-width': 3,
+          'line-width': 2.5,
           'line-dasharray': [3, 1.5],
         },
       });
@@ -95,45 +328,154 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       src.setData(wrapFeatureCollection(bufferGeoJSONRef.current));
     }
 
-    // 2. Candidate HDB Blocks & POIs Layer
+    // 2. Nearby Facilities Layer (Schools, Transit, Food & Dining, Groceries)
+    if (!map.getSource('agent-facilities-source')) {
+      map.addSource('agent-facilities-source', {
+        type: 'geojson',
+        data: facilitiesGeoJSONRef.current,
+      });
+
+      // Facility Glow Layer
+      map.addLayer({
+        id: 'agent-facilities-glow',
+        type: 'circle',
+        source: 'agent-facilities-source',
+        paint: {
+          'circle-radius': 11,
+          'circle-color': [
+            'match',
+            ['get', 'category'],
+            'mrt', '#38bdf8',
+            'school', '#f59e0b',
+            'hawker', '#f43f5e',
+            'supermarket', '#10b981',
+            '#a855f7',
+          ],
+          'circle-opacity': 0.38,
+          'circle-blur': 0.6,
+        },
+      });
+
+      // Facility Sharp Core Circle
+      map.addLayer({
+        id: 'agent-facilities-circle',
+        type: 'circle',
+        source: 'agent-facilities-source',
+        paint: {
+          'circle-radius': 5.5,
+          'circle-color': [
+            'match',
+            ['get', 'category'],
+            'mrt', '#0ea5e9',
+            'school', '#f59e0b',
+            'hawker', '#f43f5e',
+            'supermarket', '#10b981',
+            '#a855f7',
+          ],
+          'circle-stroke-width': 2,
+          'circle-stroke-color': '#ffffff',
+        },
+      });
+
+      // Facility Name Label
+      map.addLayer({
+        id: 'agent-facilities-label',
+        type: 'symbol',
+        source: 'agent-facilities-source',
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-size': 10,
+          'text-offset': [0, 1.3],
+          'text-anchor': 'top',
+          'text-optional': true,
+        },
+        paint: {
+          'text-color': '#e2e8f0',
+          'text-halo-color': '#090d16',
+          'text-halo-width': 2.2,
+        },
+      });
+
+      // Interactive Click on Facility Pins
+      map.on('click', 'agent-facilities-circle', (e: any) => {
+        if (!e.features || !e.features[0]) return;
+        const feature = e.features[0];
+        const coordinates = (feature.geometry as any).coordinates.slice();
+        const props = feature.properties || {};
+
+        let catColor = '#a855f7';
+        let catLabel = 'AMENITY';
+        if (props.category === 'mrt') { catColor = '#0ea5e9'; catLabel = 'TRANSIT'; }
+        else if (props.category === 'school') { catColor = '#f59e0b'; catLabel = 'PRIMARY SCHOOL'; }
+        else if (props.category === 'hawker') { catColor = '#f43f5e'; catLabel = 'FOOD & DINING'; }
+        else if (props.category === 'supermarket') { catColor = '#10b981'; catLabel = 'GROCERY'; }
+
+        const html = `
+          <div style="font-family: sans-serif; padding: 6px; color: #0f172a; min-width: 190px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+              <span style="background: ${catColor}; color: #fff; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; text-transform: uppercase;">
+                ${catLabel}
+              </span>
+              <span style="font-size: 11px; font-weight: 700; color: #0284c7;">
+                ${Math.round(props.distance_meters)}m
+              </span>
+            </div>
+            <strong style="font-size: 13px; color: #0f172a; display: block; margin-bottom: 4px;">
+              ${props.name}
+            </strong>
+            <div style="font-size: 11px; color: #475569; display: flex; align-items: center; gap: 4px;">
+              🚶 ~${props.walking_mins} mins walk
+            </div>
+          </div>
+        `;
+
+        if (popupRef.current) popupRef.current.remove();
+        popupRef.current = new maplibregl.Popup({ offset: 12 })
+          .setLngLat(coordinates)
+          .setHTML(html)
+          .addTo(map);
+      });
+
+      map.on('mouseenter', 'agent-facilities-circle', () => {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mouseleave', 'agent-facilities-circle', () => {
+        map.getCanvas().style.cursor = '';
+      });
+    } else {
+      const src = map.getSource('agent-facilities-source') as maplibregl.GeoJSONSource;
+      src.setData(facilitiesGeoJSONRef.current);
+    }
+
+    // 3. Candidate HDB Blocks Layer
     if (!map.getSource('agent-pois-source')) {
       map.addSource('agent-pois-source', {
         type: 'geojson',
         data: wrapFeatureCollection(poisGeoJSONRef.current),
       });
 
-      // Glow circle
+      // Green Candidate Block Glow
       map.addLayer({
         id: 'agent-pois-glow',
         type: 'circle',
         source: 'agent-pois-source',
         paint: {
-          'circle-radius': 13,
-          'circle-color': [
-            'case',
-            ['==', ['get', 'category'], 'hdb_candidate'],
-            '#10b981',
-            '#a855f7',
-          ],
+          'circle-radius': 14,
+          'circle-color': '#10b981',
           'circle-opacity': 0.45,
           'circle-blur': 0.6,
         },
       });
 
-      // Sharp Core Dot
+      // Green Sharp Core Dot
       map.addLayer({
         id: 'agent-pois-circle',
         type: 'circle',
         source: 'agent-pois-source',
         paint: {
-          'circle-radius': 6.5,
-          'circle-color': [
-            'case',
-            ['==', ['get', 'category'], 'hdb_candidate'],
-            '#10b981',
-            '#c084fc',
-          ],
-          'circle-stroke-width': 2,
+          'circle-radius': 7,
+          'circle-color': '#10b981',
+          'circle-stroke-width': 2.5,
           'circle-stroke-color': '#ffffff',
         },
       });
@@ -146,44 +488,68 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         layout: {
           'text-field': ['get', 'name'],
           'text-size': 11,
-          'text-offset': [0, 1.3],
+          'text-offset': [0, 1.4],
           'text-anchor': 'top',
           'text-optional': true,
         },
         paint: {
-          'text-color': '#f8fafc',
+          'text-color': '#ffffff',
           'text-halo-color': '#090d16',
-          'text-halo-width': 2.5,
+          'text-halo-width': 2.8,
         },
       });
 
-      // Interactive Click Popup on HDB Candidate Pins
+      // Interactive Click Popup & Drawer Trigger on HDB Candidate Pins
       map.on('click', 'agent-pois-circle', (e: any) => {
         if (!e.features || !e.features[0]) return;
         const feature = e.features[0];
         const coordinates = (feature.geometry as any).coordinates.slice();
         const props = feature.properties || {};
 
+        const blockName = props.name || 'HDB Block';
+        const priceStr = props.median_resale_price
+          ? `$${Number(props.median_resale_price).toLocaleString()}`
+          : 'Price on request';
+        const leaseStr = props.remaining_lease_years
+          ? `${Math.round(props.remaining_lease_years)} yrs lease`
+          : '';
+
+        // Select block, open PropertyGuru-style nearby drawer, and fetch facilities
+        setSelectedBlock({
+          name: blockName,
+          lat: coordinates[1],
+          lng: coordinates[0],
+          price: props.median_resale_price,
+          lease: props.remaining_lease_years,
+          town: props.town,
+          isHdb: true,
+        });
+        setDrawerOpen(true);
+        fetchFacilitiesForLocation(coordinates[1], coordinates[0]);
+
         const html = `
-          <div style="font-family: sans-serif; padding: 4px; color: #0f172a; min-width: 200px;">
-            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+          <div style="font-family: sans-serif; padding: 6px; color: #0f172a; min-width: 210px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
               <span style="background: #10b981; color: #fff; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px;">
-                ${props.priority || 'HDB RESALE'}
+                HDB RESALE
+              </span>
+              <span style="font-size: 11px; font-weight: 700; color: #0284c7;">
+                ${priceStr}
               </span>
             </div>
             <strong style="font-size: 13px; color: #0f172a; display: block; margin-bottom: 4px;">
-              ${props.name || 'HDB Block'}
+              ${blockName}
             </strong>
-            <div style="font-size: 11px; color: #059669; font-weight: 600; background: #ecfdf5; padding: 4px 6px; border-radius: 4px;">
-              ✓ Within Search Radius
+            <div style="font-size: 11px; color: #64748b; margin-bottom: 6px;">
+              ${leaseStr}
+            </div>
+            <div style="font-size: 11px; color: #0284c7; font-weight: 600; background: #e0f2fe; padding: 4px 6px; border-radius: 4px; display: flex; align-items: center; gap: 4px;">
+              📍 Facilities Panel Opened
             </div>
           </div>
         `;
 
-        if (popupRef.current) {
-          popupRef.current.remove();
-        }
-
+        if (popupRef.current) popupRef.current.remove();
         popupRef.current = new maplibregl.Popup({ offset: 12 })
           .setLngLat(coordinates)
           .setHTML(html)
@@ -200,7 +566,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       const src = map.getSource('agent-pois-source') as maplibregl.GeoJSONSource;
       src.setData(wrapFeatureCollection(poisGeoJSONRef.current));
     }
-  }, []);
+  }, [fetchFacilitiesForLocation]);
 
   // Initialize MapLibre Map
   useEffect(() => {
@@ -218,19 +584,10 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       attributionControl: false,
     });
 
-    map.addControl(
-      new maplibregl.AttributionControl({
-        compact: true,
-        customAttribution: '© OneMap SG | SLA',
-      }),
-      'bottom-left'
-    );
-
-    map.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right');
-
     map.on('load', () => {
-      setupLayers(map);
       setMapLoaded(true);
+      setupLayers(map);
+      // Clean initial state: do NOT pre-load random amenities until user searches or clicks
     });
 
     map.on('mousemove', (e: any) => {
@@ -242,9 +599,52 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       }
     });
 
-    map.on('click', (e: any) => {
-      if (onMapClick && e.lngLat) {
-        onMapClick(e.lngLat.lat, e.lngLat.lng);
+    // Interactive Map Click: Click ANY block, street, or building on the map!
+    map.on('click', async (e: any) => {
+      if (!e.lngLat) return;
+      const { lat, lng } = e.lngLat;
+
+      // 1. Notify parent
+      if (onMapClick) {
+        onMapClick(lat, lng);
+      }
+
+      // 2. Reverse inspect the clicked point (detects nearest HDB block or coordinates)
+      try {
+        const res = await fetch(`http://127.0.0.1:8000/api/spatial/inspect_point?lat=${lat}&lng=${lng}`);
+        const data = await res.json();
+
+        const locName = data.name || `Pinned Location (${lat.toFixed(4)}° N, ${lng.toFixed(4)}° E)`;
+        const targetLat = data.lat || lat;
+        const targetLng = data.lng || lng;
+
+        setSelectedBlock({
+          name: locName,
+          lat: targetLat,
+          lng: targetLng,
+          town: data.town,
+          isHdb: data.is_hdb,
+        });
+
+        // 3. Drop Interactive Pin on clicked location
+        if (clickMarkerRef.current) {
+          clickMarkerRef.current.remove();
+        }
+        const el = document.createElement('div');
+        el.className = 'target-center-marker';
+        el.innerHTML = `
+          <div class="target-pin-pulse" style="border-color: #38bdf8; background: rgba(56, 189, 248, 0.25);"></div>
+          <div class="target-pin-core" style="background: #38bdf8; border-color: #ffffff; color: #0a0d14; font-size: 11px; font-weight: 800; box-shadow: 0 0 14px #38bdf8;">📍</div>
+          <div class="target-pin-label" style="background: rgba(15, 23, 42, 0.95); border: 1px solid #38bdf8; color: #38bdf8;">${locName}</div>
+        `;
+        clickMarkerRef.current = new maplibregl.Marker({ element: el })
+          .setLngLat([targetLng, targetLat])
+          .addTo(map);
+
+        setDrawerOpen(true);
+        fetchFacilitiesForLocation(targetLat, targetLng);
+      } catch (err) {
+        console.error('[Map Click Error]', err);
       }
     });
 
@@ -253,7 +653,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     return () => {
       map.remove();
     };
-  }, []);
+  }, [onMapClick, setupLayers, fetchFacilitiesForLocation]);
 
   // Dynamically update basemap when user changes OneMap Theme in dropdown
   useEffect(() => {
@@ -261,10 +661,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     const map = mapRef.current;
     const styleUrl = ONEMAP_THEMES[theme] || ONEMAP_THEMES.Night;
 
-    // Apply new OneMap raster tile style
     map.setStyle(styleUrl);
-
-    // Re-attach custom agent buffer & POI layers once new style has loaded
     map.once('style.load', () => {
       setupLayers(map);
     });
@@ -327,9 +724,254 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     });
   }, [viewport, mapLoaded]);
 
+  // Handler when user clicks any of the top category pills
+  const handlePillClick = (cat: AmenityCategory) => {
+    setSelectedCategory(cat);
+    setDrawerOpen(true);
+
+    let refLat = selectedBlock?.lat;
+    let refLng = selectedBlock?.lng;
+
+    if (!refLat || !refLng) {
+      if (bufferGeoJSON?.properties?.center_lat && bufferGeoJSON?.properties?.center_lng) {
+        refLat = bufferGeoJSON.properties.center_lat;
+        refLng = bufferGeoJSON.properties.center_lng;
+        setSelectedBlock({
+          name: bufferGeoJSON.properties.target_name || 'Target Location',
+          lat: refLat,
+          lng: refLng,
+        });
+      } else if (poisGeoJSON?.features && poisGeoJSON.features.length > 0) {
+        const first = poisGeoJSON.features[0];
+        const [l_lng, l_lat] = (first.geometry as any).coordinates;
+        refLat = l_lat;
+        refLng = l_lng;
+        setSelectedBlock({
+          name: first.properties?.name || 'Candidate Block',
+          lat: refLat,
+          lng: refLng,
+          price: first.properties?.median_resale_price,
+          lease: first.properties?.remaining_lease_years,
+          town: first.properties?.town,
+          isHdb: true,
+        });
+      } else {
+        refLat = viewport.lat;
+        refLng = viewport.lng;
+        setSelectedBlock({
+          name: 'Current Map Area',
+          lat: refLat,
+          lng: refLng,
+        });
+      }
+    }
+
+    if (refLat && refLng) {
+      fetchFacilitiesForLocation(refLat, refLng);
+    }
+  };
+
+  // Helper to fly to a clicked facility and show a marker
+  const handleFacilityClick = (facility: NearbyFacility) => {
+    if (!mapRef.current) return;
+    mapRef.current.flyTo({
+      center: [facility.lng, facility.lat],
+      zoom: 16.5,
+      speed: 1.3,
+    });
+
+    if (facilityMarkerRef.current) {
+      facilityMarkerRef.current.remove();
+    }
+
+    const popup = new maplibregl.Popup({ offset: 12 })
+      .setLngLat([facility.lng, facility.lat])
+      .setHTML(`
+        <div style="font-family: sans-serif; padding: 4px; color: #0f172a;">
+          <div style="font-size: 10px; font-weight: 700; color: #0284c7; text-transform: uppercase; margin-bottom: 2px;">
+            ${facility.rawCategory || facility.category}
+          </div>
+          <strong style="font-size: 13px; color: #0f172a; display: block; margin-bottom: 2px;">
+            ${facility.name}
+          </strong>
+          <span style="font-size: 11px; color: #0284c7; font-weight: 600;">
+            🚶 ${facility.walking_mins} mins walk (${Math.round(facility.distance_meters)}m)
+          </span>
+        </div>
+      `)
+      .addTo(mapRef.current);
+
+    popupRef.current = popup;
+  };
+
+  // Facility category icons mapping
+  const renderCategoryIcon = (cat: string) => {
+    const c = (cat || '').toLowerCase();
+    if (c.includes('mrt') || c.includes('rail') || c.includes('transit')) {
+      return (
+        <div className="pg-icon-circle pg-icon-mrt">
+          <Train size={15} />
+        </div>
+      );
+    }
+    if (c.includes('school')) {
+      return (
+        <div className="pg-icon-circle pg-icon-school">
+          <School size={15} />
+        </div>
+      );
+    }
+    if (c.includes('hawker') || c.includes('food') || c.includes('restaurant') || c.includes('cafe')) {
+      return (
+        <div className="pg-icon-circle pg-icon-hawker">
+          <Utensils size={15} />
+        </div>
+      );
+    }
+    return (
+      <div className="pg-icon-circle pg-icon-supermarket">
+        <ShoppingCart size={15} />
+      </div>
+    );
+  };
+
+  // Intuitive, clean badge label generator
+  const getBadgeLabel = (f: NearbyFacility) => {
+    const cat = (f.category || '').toLowerCase();
+    const raw = (f.rawCategory || '').toLowerCase();
+
+    if (cat.includes('school')) {
+      return f.distance_meters <= 1000 ? '★ MOE Priority 1 (≤ 1km)' : 'PRIMARY SCHOOL';
+    }
+    if (cat.includes('mrt') || cat.includes('transit')) {
+      return 'TRANSIT';
+    }
+    if (cat.includes('supermarket') || cat.includes('grocery')) {
+      return 'GROCERIES';
+    }
+    // Food & Dining category
+    if (raw.includes('cafe')) return 'CAFE';
+    if (raw.includes('bakery')) return 'BAKERY';
+    if (raw.includes('restaurant')) return 'RESTAURANT';
+    if (raw.includes('hawker')) return 'HAWKER';
+    return 'FOOD & DINING';
+  };
+
   return (
     <div className="map-canvas-container">
       <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
+
+      {/* ------------------------------------------------------------------ */}
+      {/* PropertyGuru-Style Category Filter Pill Bar (Top Left)             */}
+      {/* ------------------------------------------------------------------ */}
+      <div className="pg-top-pill-bar">
+        <button
+          className={`pg-pill-btn ${selectedCategory === 'all' ? 'active' : ''}`}
+          onClick={() => handlePillClick('all')}
+        >
+          <Sparkles size={13} />
+          <span>All Amenities {allNearbyFacilities.length > 0 ? `(${categoryCounts.all})` : ''}</span>
+        </button>
+
+        <button
+          className={`pg-pill-btn ${selectedCategory === 'mrt' ? 'active' : ''}`}
+          onClick={() => handlePillClick('mrt')}
+        >
+          <Train size={13} />
+          <span>Transit {allNearbyFacilities.length > 0 ? `(${categoryCounts.mrt})` : ''}</span>
+        </button>
+
+        <button
+          className={`pg-pill-btn ${selectedCategory === 'school' ? 'active' : ''}`}
+          onClick={() => handlePillClick('school')}
+        >
+          <School size={13} />
+          <span>Schools {allNearbyFacilities.length > 0 ? `(${categoryCounts.school})` : ''}</span>
+        </button>
+
+        <button
+          className={`pg-pill-btn ${selectedCategory === 'hawker' ? 'active' : ''}`}
+          onClick={() => handlePillClick('hawker')}
+        >
+          <Utensils size={13} />
+          <span>Food & Dining {allNearbyFacilities.length > 0 ? `(${categoryCounts.hawker})` : ''}</span>
+        </button>
+
+        <button
+          className={`pg-pill-btn ${selectedCategory === 'supermarket' ? 'active' : ''}`}
+          onClick={() => handlePillClick('supermarket')}
+        >
+          <ShoppingCart size={13} />
+          <span>Groceries {allNearbyFacilities.length > 0 ? `(${categoryCounts.supermarket})` : ''}</span>
+        </button>
+      </div>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* PropertyGuru-Style Nearby Facilities Drawer (Floating Left Panel) */}
+      {/* ------------------------------------------------------------------ */}
+      {drawerOpen && selectedBlock && (
+        <div className="pg-facility-drawer">
+          <div className="pg-drawer-header">
+            <div className="pg-drawer-title-area">
+              <span className="pg-block-badge">
+                {selectedBlock.town ? `${selectedBlock.town} RESALE` : selectedBlock.isHdb ? 'HDB BLOCK' : 'PINNED LOCATION'}
+              </span>
+              <h3 className="pg-drawer-title">{selectedBlock.name}</h3>
+              <p className="pg-drawer-meta">
+                {selectedBlock.price
+                  ? `Median $${Number(selectedBlock.price).toLocaleString()} · ${Math.round(selectedBlock.lease || 60)} yrs lease`
+                  : 'Proximity Scan (1.5km Radius)'}
+              </p>
+            </div>
+            <button className="pg-close-btn" onClick={() => setDrawerOpen(false)} title="Close panel">
+              <X size={14} />
+            </button>
+          </div>
+
+          <div className="pg-facility-list">
+            {loadingFacilities ? (
+              <div className="pg-empty-state">
+                <Clock size={18} style={{ animation: 'spin 1.5s linear infinite', margin: '0 auto 6px' }} />
+                <span>Scanning 1.5km radius around block...</span>
+              </div>
+            ) : filteredFacilities.length === 0 ? (
+              <div className="pg-empty-state">
+                <span>No facilities found in this category within 1.5km.</span>
+              </div>
+            ) : (
+              filteredFacilities.map((f, i) => (
+                <div
+                  key={`${f.name}-${i}`}
+                  className="pg-facility-card"
+                  onClick={() => handleFacilityClick(f)}
+                >
+                  <div className="pg-facility-left">
+                    {renderCategoryIcon(f.category)}
+                    <div className="pg-facility-info">
+                      <div className="pg-facility-name" title={f.name}>
+                        {f.name}
+                      </div>
+                      <div className="pg-facility-sub">
+                        <span className={f.category.toLowerCase().includes('school') && f.distance_meters <= 1000 ? 'pg-priority-tag' : ''}>
+                          {getBadgeLabel(f)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pg-facility-right">
+                    <span className="pg-walk-time">
+                      <Clock size={10} />
+                      {f.walking_mins} min
+                    </span>
+                    <span className="pg-walk-dist">{Math.round(f.distance_meters)} m</span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Floating Basemap Theme Switcher */}
       <div className="map-floating-overlay">
@@ -364,8 +1006,20 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
           <span>Candidate Resale Blocks</span>
         </div>
         <div className="legend-item">
-          <span className="legend-dot" style={{ background: '#a855f7', boxShadow: '0 0 6px #a855f7' }} />
-          <span>Transit & Amenities</span>
+          <span className="legend-dot" style={{ background: '#0ea5e9', boxShadow: '0 0 6px #0ea5e9' }} />
+          <span>Transit Stations</span>
+        </div>
+        <div className="legend-item">
+          <span className="legend-dot" style={{ background: '#f59e0b', boxShadow: '0 0 6px #f59e0b' }} />
+          <span>Primary Schools</span>
+        </div>
+        <div className="legend-item">
+          <span className="legend-dot" style={{ background: '#f43f5e', boxShadow: '0 0 6px #f43f5e' }} />
+          <span>Food & Dining</span>
+        </div>
+        <div className="legend-item">
+          <span className="legend-dot" style={{ background: '#34d399', boxShadow: '0 0 6px #34d399' }} />
+          <span>Groceries</span>
         </div>
       </div>
 

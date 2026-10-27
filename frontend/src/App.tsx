@@ -237,10 +237,15 @@ export function App() {
     );
   };
 
+  const [selectedBlockHighlight, setSelectedBlockHighlight] = useState<string | null>(null);
+  const [clearTrigger, setClearTrigger] = useState<number>(0);
+
   const handleClear = () => {
     setMessages(INITIAL_MESSAGES);
     setBufferGeoJSON(null);
     setPoisGeoJSON(null);
+    setSelectedBlockHighlight(null);
+    setClearTrigger((prev) => prev + 1);
     currentMsgIdRef.current = null;
     setAgentStatus('READY');
   };
@@ -254,6 +259,7 @@ export function App() {
           wsConnected={wsConnected}
           onSendQuery={handleSendQuery}
           onClear={handleClear}
+          onSelectBlock={(blockName) => setSelectedBlockHighlight(blockName)}
         />
       }
       rightContent={
@@ -263,6 +269,8 @@ export function App() {
           viewport={viewport}
           theme={theme}
           onThemeChange={setTheme}
+          selectedBlockHighlight={selectedBlockHighlight}
+          clearTrigger={clearTrigger}
         />
       }
     />
