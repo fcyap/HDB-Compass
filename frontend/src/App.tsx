@@ -241,6 +241,10 @@ export function App() {
   const [clearTrigger, setClearTrigger] = useState<number>(0);
 
   const handleClear = () => {
+    // start a fresh conversation: the backend forgets the previous request and any open follow-up question
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ reset: true }));
+    }
     setMessages(INITIAL_MESSAGES);
     setBufferGeoJSON(null);
     setPoisGeoJSON(null);

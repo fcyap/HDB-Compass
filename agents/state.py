@@ -49,3 +49,8 @@ class HDBCompassState(TypedDict, total=False):
     variant: str                                                   # "A" | "B" | "C" — which architecture produced this run
     errors: Annotated[List[str], operator.add]                     # non-fatal sub-agent errors surfaced to the UI/eval
     subagent_notes: Annotated[List[Dict[str, Any]], operator.add]  # {"agent", "text"}: each sub-agent's own final summary
+    # Follow-up flow for missing financial facts (Member 4). clarification: what this turn asks the user for;
+    # prior_constraints / pending_clarification: carried in from the previous turn by initial_state(previous=...).
+    clarification: Optional[Dict[str, Any]]          # {"needed": [calculator fields], "question": str}
+    prior_constraints: Optional[Dict[str, Any]]
+    pending_clarification: Optional[Dict[str, Any]]

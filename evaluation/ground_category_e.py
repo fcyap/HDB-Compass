@@ -47,7 +47,7 @@ HOUSEHOLDS: Dict[str, Dict[str, Any]] = {
     "sc_pr_34_33": dict(text="We are a married couple aged 34 and 33, one Singapore citizen and one permanent resident, "
                              "both first-timers with no children",
                         pair="SC_PR", ages=(34, 33), income=7800, cpf=80000, cash=25000),
-    "single_38": dict(text="I am a single Singapore citizen aged 38, a first-timer",
+    "single_38": dict(text="I am a single Singapore citizen aged 38, a first-timer with no children",
                       pair="SC_Single", ages=(38, 38), income=5500, cpf=110000, cash=50000),
     "sc_sc_31_29": dict(text="We are a married Singapore citizen couple aged 31 and 29, both first-timers with no children",
                         pair="SC_SC", ages=(31, 29), income=11000, cpf=150000, cash=60000),
@@ -277,6 +277,19 @@ def ground(spec: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
             problems.append("no single relaxation step unlocks a block")
         behaviour = ("Say that no block meets every constraint, present nothing as a match, and offer the single change that "
                      "unlocks blocks with its number.")
+    if omit:
+        # The second turn: the user answers the follow-up question; ground truth after it uses the complete facts.
+        h = HOUSEHOLDS[spec["hh"]]
+        answer = " ".join(([f"We have ${h['cash']:,} in cash savings."] if "cash" in omit else [])
+                          + ([f"We are aged {h['ages'][0]} and {h['ages'][1]}."] if "ages" in omit else []))
+        full, full_problems = ground({k: v for k, v in spec.items() if k != "omit"})
+        problems += [f"follow-up: {p}" for p in full_problems]
+        full_truth = full["ground_truth_facts"]
+        item_follow_up = {"answer": answer, "financial_inputs": full["financial_inputs"],
+                          "ground_truth_facts": {k: full_truth[k] for k in ("matching_block_keys", "affordability_cap",
+                                                                            "financial", "data")},
+                          "expected_behaviour": "Keep the earlier search, complete the grant and budget estimate with the "
+                                                "answer, and recommend exactly the matching blocks within the new cap."}
     agents, calls = expected_calls(spec, facts)
     item = {"id": spec["id"], "category": "E", "sub_use_case": spec["sub"], "query": text, "initial_map_state": None,
             "stated_constraints": {"towns": [spec["town"]], "flat_types": [spec["ft"]], "max_budget_sgd": float(spec["budget"]),
@@ -284,6 +297,8 @@ def ground(spec: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
             "financial_inputs": facts, "omitted_financial_facts": omit or None,
             "expected_agents": agents, "expected_mcp_calls": calls, "expected_behaviour": behaviour,
             "ground_truth_facts": truth}
+    if omit:
+        item["follow_up"] = item_follow_up
     return item, problems
 
 
@@ -304,6 +319,11 @@ def main() -> None:
               f"(price {t['price_query_blocks']}, distance {t['distance_filter_blocks']}, cap {t['affordability_cap']}){extra}")
         for p in problems:
             print(f"       - {p}")
+        if item.get("follow_up"):
+            fu = item["follow_up"]["ground_truth_facts"]
+            fa = fu["financial"]["calculate_maximum_affordability"]
+            print(f"       follow-up \"{item['follow_up']['answer']}\" -> matches={len(fu['matching_block_keys'])} "
+                  f"cap {fu['affordability_cap']} | afford {fa['status']} {fa['max_purchase_price']}")
         failed += bool(problems)
         items.append(item)
     if failed:

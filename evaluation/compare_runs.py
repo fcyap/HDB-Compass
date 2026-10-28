@@ -1,0 +1,84 @@
+"""
+Ground-truth results across several Category E runs (evaluation/compare_runs.py). Member 4.
+
+One run per question and variant can be luck; this puts repeated runs side by side with the mean and range, so a
+claim such as "C answers most questions fully right" carries its spread. Rows that never reached the model
+(status model_unreachable) are left out and counted.
+
+    .venv/bin/python -m evaluation.compare_runs rep1 rep2 rep3          # results tags
+    .venv/bin/python -m evaluation.compare_runs evaluation/results/prelim_vllm_..._rep1.jsonl ...
+"""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from statistics import mean
+from typing import Any, Dict, List
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+RESULTS = PROJECT_ROOT / "evaluation" / "results"
+MEASURES = [("fully right", lambda gt: gt.get("success")),
+            ("exact blocks", lambda gt: gt.get("blocks_exact")),
+            ("E1 grants and max price", lambda gt: gt.get("grants_correct") and gt.get("max_price_correct")
+             if "grants_correct" in gt else None)]
+
+
+def resolve(arg: str) -> Path:
+    p = Path(arg)
+    if p.suffix == ".jsonl":
+        return p if p.is_absolute() else (Path.cwd() / p)
+    hits = sorted(RESULTS.glob(f"prelim_*_{arg}.jsonl"))
+    if len(hits) != 1:
+        sys.exit(f"tag {arg!r} matches {len(hits)} result files in {RESULTS}")
+    return hits[0]
+
+
+def load(path: Path) -> List[Dict[str, Any]]:
+    latest: Dict[tuple, Dict[str, Any]] = {}
+    for line in path.read_text().splitlines():
+        if line.strip():
+            r = json.loads(line)
+            latest[(r["variant"], r["id"])] = r     # a resumed row replaces the earlier attempt
+    return list(latest.values())
+
+
+def counts(rows: List[Dict[str, Any]], variant: str) -> Dict[str, Any]:
+    ok = [r for r in rows if r["variant"] == variant and r.get("status") == "ok"]
+    out: Dict[str, Any] = {"runs": len(ok),
+                           "unreachable": sum(r["variant"] == variant and r.get("status") == "model_unreachable" for r in rows)}
+    for name, f in MEASURES:
+        vals = [f((r.get("scores") or {}).get("ground_truth") or {}) for r in ok]
+        vals = [v for v in vals if v is not None]
+        out[name] = (sum(bool(v) for v in vals), len(vals))
+    fus = [r["follow_up"] for r in ok if r.get("follow_up")]
+    fus = [f for f in fus if f.get("status") == "ok"]
+    out["follow-up"] = (sum(bool((f.get("scores") or {}).get("success")) for f in fus), len(fus))
+    return out
+
+
+def main() -> None:
+    paths = [resolve(a) for a in sys.argv[1:]]
+    if not paths:
+        sys.exit(__doc__)
+    runs = {p.stem.rsplit("_", 1)[-1]: load(p) for p in paths}
+    variants = sorted({r["variant"] for rows in runs.values() for r in rows})
+    names = [n for n, _ in MEASURES] + ["follow-up"]
+    print("| Variant | Measure | " + " | ".join(runs) + " | Mean | Range |")
+    print("|---|---|" + "---|" * (len(runs) + 2))
+    for v in variants:
+        per = {tag: counts(rows, v) for tag, rows in runs.items()}
+        for n in names:
+            cells = [f"{per[t][n][0]}/{per[t][n][1]}" if per[t][n][1] else "–" for t in runs]
+            rates = [per[t][n][0] / per[t][n][1] for t in runs if per[t][n][1]]
+            rng = f"{min(rates):.0%}–{max(rates):.0%}" if rates else "–"
+            print(f"| {v} | {n} | " + " | ".join(cells) + f" | {mean(rates):.0%} | {rng} |" if rates else
+                  f"| {v} | {n} | " + " | ".join(cells) + " | – | – |")
+        missing = {t: per[t]["unreachable"] for t in runs if per[t]["unreachable"]}
+        if missing:
+            print(f"| {v} | rows that never reached the model (left out) | " +
+                  " | ".join(str(per[t]['unreachable']) for t in runs) + " | | |")
+
+
+if __name__ == "__main__":
+    main()

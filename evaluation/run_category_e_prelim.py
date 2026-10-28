@@ -69,7 +69,7 @@ def state_excerpt(state: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-RESCORE_KEYS = ["variant", "user_constraints", "active_subagents", "tool_call_log", "sql_market_results",
+RESCORE_KEYS = ["variant", "messages", "clarification", "user_constraints", "active_subagents", "tool_call_log", "sql_market_results",
                 "spatial_block_candidates", "financial_breakdown", "rag_policy_passages",
                 "candidate_blocks_intersection", "relaxation", "map_ui_payload", "draft_response",
                 "auditor_verdict", "errors"]
@@ -108,6 +108,12 @@ def _token_totals(usage: Dict[str, Any]) -> Dict[str, int]:
     return tot
 
 
+def lost_model(state: Dict[str, Any]) -> bool:
+    """True when a model call could not reach the server (the 27 Oct run 4 lost its tunnel mid-run and the nodes fell
+    back to their no-model plans, which score like a perfect run). Such a row is not a model result."""
+    return any("ConnectionError" in str(e) for e in state.get("errors") or [])
+
+
 def run_one(mod, item: Dict[str, Any], variant: str, profile: Dict[str, Any], run_id: str) -> Dict[str, Any]:
     from langchain_core.callbacks import get_usage_metadata_callback
     t0 = time.perf_counter()
@@ -115,15 +121,39 @@ def run_one(mod, item: Dict[str, Any], variant: str, profile: Dict[str, Any], ru
         with get_usage_metadata_callback() as cb:
             state = mod.run(item["query"], item.get("initial_map_state"))
         latency = time.perf_counter() - t0
-        return {"run": run_id, "variant": variant, "id": item["id"], "sub_use_case": item.get("sub_use_case"),
-                "profile": profile["name"], "model": profile.get("model"), "latency_s": round(latency, 2),
-                "tokens": _token_totals(cb.usage_metadata),
-                "status": "ok", "scores": M.score_item(item, state), "state_excerpt": state_excerpt(state),
-                "state": rescore_state(state)}
+        row = {"run": run_id, "variant": variant, "id": item["id"], "sub_use_case": item.get("sub_use_case"),
+               "profile": profile["name"], "model": profile.get("model"), "latency_s": round(latency, 2),
+               "tokens": _token_totals(cb.usage_metadata),
+               "status": "ok", "scores": M.score_item(item, state), "state_excerpt": state_excerpt(state),
+               "state": rescore_state(state)}
+        if item.get("follow_up"):
+            row["follow_up"] = run_follow_up(mod, item, state)
+        if lost_model(state) or (row.get("follow_up") or {}).get("status") == "model_unreachable":
+            row["status"] = "model_unreachable"  # not a result: resume runs it again
+        return row
     except Exception as e:  # noqa: BLE001 — a crash is a data point, not the end of the run
         return {"run": run_id, "variant": variant, "id": item["id"], "sub_use_case": item.get("sub_use_case"),
                 "profile": profile["name"], "model": profile.get("model"), "latency_s": round(time.perf_counter() - t0, 2),
                 "status": "error", "error": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc()[-2000:]}
+
+
+def follow_up_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    return {"id": item["id"], "sub_use_case": "E1", "ground_truth_facts": item["follow_up"]["ground_truth_facts"]}
+
+
+def run_follow_up(mod, item: Dict[str, Any], first_state: Dict[str, Any]) -> Dict[str, Any]:
+    """Second turn: the user answers the follow-up question; scored against the complete-facts ground truth."""
+    from langchain_core.callbacks import get_usage_metadata_callback
+    t0 = time.perf_counter()
+    try:
+        with get_usage_metadata_callback() as cb:
+            state = mod.run(item["follow_up"]["answer"], previous=first_state)
+        return {"status": "model_unreachable" if lost_model(state) else "ok",
+                "latency_s": round(time.perf_counter() - t0, 2), "tokens": _token_totals(cb.usage_metadata),
+                "scores": M.ground_truth_scores(follow_up_item(item), state),
+                "draft_response": (state.get("draft_response") or "")[:4000], "state": rescore_state(state)}
+    except Exception as e:  # noqa: BLE001
+        return {"status": "error", "error": f"{type(e).__name__}: {e}"}
 
 
 def summarise(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -183,6 +213,9 @@ def main() -> None:
         for r in rows:
             if r.get("status") == "ok" and r.get("state"):
                 r["scores"] = M.score_item(items_by_id[r["id"]], r["state"]); n += 1
+                fu = r.get("follow_up") or {}
+                if fu.get("status") == "ok" and fu.get("state") and items_by_id[r["id"]].get("follow_up"):
+                    fu["scores"] = M.ground_truth_scores(follow_up_item(items_by_id[r["id"]]), fu["state"])
         path.rename(path.with_suffix(f".{datetime.now().strftime('%Y%m%d-%H%M%S')}.prescore.bak"))
         path.write_text("".join(json.dumps(r, default=str) + "\n" for r in rows))
         print(f"rescored {n} rows in {path}")
@@ -204,8 +237,12 @@ def main() -> None:
     print(f"profile={profile['name']} model={profile.get('model')} results={path}")
     print(f"{len(done)} rows already done, {len(todo)} to run")
 
+    unreachable = 0
     with path.open("a", encoding="utf-8") as f:
         for n, (v, it) in enumerate(todo, 1):
+            if unreachable >= 2:  # the server or tunnel is gone: every further row would fail the same way
+                print(f"MODEL_UNREACHABLE: stopped after {n - 1}/{len(todo)}; run the same command again to resume")
+                break
             mod = load_variant(v)
             print(f"[{n}/{len(todo)}] variant {v} {it['id']} ...", end="", flush=True)
             row = run_one(mod, it, v, profile, run_id)
@@ -217,7 +254,8 @@ def main() -> None:
                 print(f" {row['latency_s']}s f1={s['tool_selection']['f1']:.2f} em={s['parameter_em']['rate']} "
                       f"cands={row['state_excerpt']['n_candidates']} errs={len(row['state_excerpt']['errors'] or [])}")
             else:
-                print(f" ERROR {row['error']}")
+                print(f" {row['status'].upper()} {row.get('error', '')}")
+            unreachable = unreachable + 1 if row["status"] == "model_unreachable" else 0
 
     rows = list(load_done(path).values())
     agg = summarise(rows)
