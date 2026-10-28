@@ -126,19 +126,17 @@ export const AgentChat: React.FC<AgentChatProps> = ({
         {/* If only 1 message (welcome), show elegant prompt suggestion cards inside welcome */}
         {messages.length <= 1 && (
           <div className="welcome-hero-card">
-            <div className="welcome-mascot-row">
-              <Mascot3D size={112} mood="wave" />
-              <div>
-                <div className="welcome-header">
-                  <Sparkles size={16} color="#38bdf8" />
-                  <span>Explore Singapore Public Housing</span>
-                </div>
-                <p className="welcome-desc">
-                  Hi, I'm your HDB-Compass home guide. Ask about MOE Primary 1 registration priority distances, walking
-                  commute to MRT stations, or amenity filters.
-                </p>
-              </div>
+            <div className="welcome-mascot-stage">
+              <Mascot3D size={150} mood="wave" />
             </div>
+            <div className="welcome-header">
+              <Sparkles size={16} color="#008F8A" />
+              <span>Explore Singapore Public Housing</span>
+            </div>
+            <p className="welcome-desc">
+              Hi, I'm your HDB-Compass home guide. Ask about MOE Primary 1 registration priority distances, walking
+              commute to MRT stations, or amenity filters.
+            </p>
             <div className="welcome-prompts-grid">
               <button
                 className="welcome-prompt-card"
@@ -208,7 +206,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                 {/* Agent Header */}
                 <div className="agent-card-header">
                   <div className="agent-avatar mascot">
-                    <MascotAvatar size={24} fallback={<Compass size={14} color="#38bdf8" />} />
+                    <MascotAvatar size={24} fallback={<Compass size={14} color="#008F8A" />} />
                   </div>
                   <div className="agent-title-group">
                     <span className="agent-name">HDB-Compass Assistant</span>
@@ -259,7 +257,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                     <div className="candidate-blocks-section">
                       <div className="section-title-bar">
                         <span className="section-title">
-                          <CheckCircle2 size={13} color="#10b981" />
+                          <CheckCircle2 size={13} color="#008F8A" />
                           Matching HDB Resale Blocks ({msg.structuredData.total_blocks_found || msg.structuredData.qualifying_blocks.length}):
                         </span>
                         <span className="section-subtext">Click any pin on map</span>
@@ -283,7 +281,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                                 <span className="block-distance-badge">{dist}</span>
                               </div>
                               <div className="block-meta">
-                                <Clock size={10} color="#94a3b8" />
+                                <Clock size={10} color="#6E8F8C" />
                                 <span>~{walkMins} min walk</span>
                                 <span className="block-tag">Inside 1km</span>
                               </div>
@@ -297,7 +295,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                   {/* Nearest Transit & Amenities Pill */}
                   {msg.structuredData?.nearby_amenities && msg.structuredData.nearby_amenities.length > 0 && (
                     <div className="amenities-summary-badge">
-                      <Zap size={12} color="#10b981" />
+                      <Zap size={12} color="#F36550" />
                       <span>
                         Nearest Transit: <strong>{msg.structuredData.nearby_amenities[0].name}</strong> at{' '}
                         <strong>{msg.structuredData.nearby_amenities[0].distance_meters?.toFixed(0)}m</strong>
@@ -313,7 +311,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                         onClick={() => toggleTrace(msg.id)}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <Terminal size={12} color="#64748b" />
+                          <Terminal size={12} color="#6E8F8C" />
                           <span>View Execution Steps ({msg.stepLogs.length})</span>
                         </div>
                         {expandedTraceIds[msg.id] ? (

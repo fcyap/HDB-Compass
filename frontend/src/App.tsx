@@ -30,7 +30,7 @@ export function App() {
     lng: 103.8481,
     zoom: 13.5,
   });
-  const [theme, setTheme] = useState<string>('Night');
+  const [theme, setTheme] = useState<string>('Default');
   const [agentStatus, setAgentStatus] = useState<string>('READY');
   const [wsConnected, setWsConnected] = useState<boolean>(false);
   const wsRef = useRef<WebSocket | null>(null);
