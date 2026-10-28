@@ -509,9 +509,10 @@ html, body, #root {
 
 /* Welcome Hero Card & Embedded Prompt Cards */
 .welcome-hero-card {
-  /* no card: the mascot, text and prompts sit straight on the panel */
-  padding: 8px 4px 0;
-  margin-bottom: 8px;
+  /* no card: the mascot, text and prompts sit straight on the panel, centred vertically in the chat area
+     (auto margins in the flex column; on a short window they shrink to zero and the panel scrolls) */
+  padding: 8px 4px;
+  margin: auto 0;
 }
 
 .welcome-header {
