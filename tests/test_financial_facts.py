@@ -110,3 +110,34 @@ def test_writer_is_told_to_list_every_match():
     assert "List all 8 blocks" in rule
     _, rule = sv.synthesis_evidence({"variant": "C", "candidate_blocks_intersection": []})
     assert "List all" not in rule
+
+
+def test_amounts_without_a_dollar_sign_are_read():
+    q = ("we are a couple that's not married and one of us is a uni student while another is working full time for "
+         "2 years. We are looking to apply for 4 room btos. We have a combined savings of around 150k cash and cpf of ard 40k sgd")
+    assert sv.stated_financial_inputs(q)["affordability"] == {"cpf_oa_balance": 40000.0, "cash_savings": 150000.0}
+    both = sv.stated_financial_inputs("we have $90,000 in CPF OA we can use, plus $40,000 in cash savings")["affordability"]
+    assert both["cpf_oa_balance"] == 90000.0 and both["cash_savings"] == 40000.0
+
+
+def test_zero_distance_limits_are_not_constraints():
+    from unittest.mock import patch
+
+    class Stub:
+        def with_structured_output(self, schema, method=None):
+            return self
+
+        def invoke(self, _msgs):
+            from agents.schemas import ExtractedConstraints
+            return ExtractedConstraints(amenity_radii_meters={"mrt": 0, "hawker": 0, "park": 400})
+
+    with patch.object(sv, "get_llm", return_value=Stub()):
+        out = sv.extract_constraints_node({"messages": [{"role": "user", "content": "Can we apply for a BTO?"}]})
+    assert out["user_constraints"]["amenity_radii_meters"] == {"park": 400}
+
+
+def test_never_ask_the_user_for_the_grant_total():
+    clar = sv.clarification_needed({"financial_breakdown": {
+        "calculate_cpf_housing_grants": {"status": "needs_information", "missing_inputs": ["citizenship_pair"]},
+        "calculate_maximum_affordability": {"status": "needs_information", "missing_inputs": ["total_grants", "cash_savings"]}}})
+    assert "total_grants" not in clar["needed"] and {"citizenship_pair", "cash_savings"} <= set(clar["needed"])

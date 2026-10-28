@@ -192,3 +192,9 @@ def test_b_synthesis_gets_its_own_reconciliation_and_the_distance_results():
 def test_plus_in_an_amount_is_not_a_policy_question():
     assert sv.rule_based_extract("We have $90,000 in CPF OA, plus $40,000 in cash savings.").policy_question is None
     assert sv.rule_based_extract("Compare a Prime BTO with a Plus resale flat.").policy_question is not None
+
+
+def test_eligibility_questions_go_to_the_policy_agent():
+    q = "we are a couple that's not married. We are looking to apply for 4 room btos."
+    assert sv.rule_based_extract(q).policy_question == q
+    assert sv.rule_based_extract("Find 4-room resale flats in Bishan under $600k").policy_question is None
