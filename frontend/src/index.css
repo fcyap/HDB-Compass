@@ -509,12 +509,9 @@ html, body, #root {
 
 /* Welcome Hero Card & Embedded Prompt Cards */
 .welcome-hero-card {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(248, 239, 220, 0.6) 100%);
-  border: 1px solid rgba(0, 143, 138, 0.2);
-  border-radius: var(--radius-lg);
-  padding: 16px 18px;
+  /* no card: the mascot, text and prompts sit straight on the panel */
+  padding: 8px 4px 0;
   margin-bottom: 8px;
-  box-shadow: 0 8px 24px rgba(7, 62, 64, 0.18);
 }
 
 .welcome-header {

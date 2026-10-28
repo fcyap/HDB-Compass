@@ -5,21 +5,8 @@ import { InteractiveMap, MapViewport } from './components/InteractiveMap';
 
 const WS_URL = 'ws://localhost:8000/ws';
 
-const INITIAL_MESSAGES: ChatMessage[] = [
-  {
-    id: 'welcome-1',
-    sender: 'agent',
-    text: `**Welcome to HDB-Compass**
-Your AI assistant for Singapore public housing decisions:
-- **School Priority:** Check 1km and 1–2km MOE Primary 1 registration boundaries.
-- **Lifestyle & Proximity:** Search within walking distance of MRT exits, hawkers, and amenities.
-- **Candidate Flats:** Inspect matching resale blocks with real-time map synchronization.
-
-Choose a suggestion above or type a query to begin.`,
-    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    status: 'completed',
-  },
-];
+// The chat opens on the mascot welcome (AgentChat) with no message; Clear returns to it.
+const INITIAL_MESSAGES: ChatMessage[] = [];
 
 export function App() {
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);

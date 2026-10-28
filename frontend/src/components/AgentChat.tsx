@@ -123,8 +123,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({
 
       {/* Conversational Chat Thread */}
       <div className="chat-container">
-        {/* If only 1 message (welcome), show elegant prompt suggestion cards inside welcome */}
-        {messages.length <= 1 && (
+        {/* Before the first question, show the mascot welcome with suggested prompts */}
+        {messages.length === 0 && (
           <div className="welcome-hero-card">
             <div className="welcome-mascot-stage">
               <Mascot3D size={150} mood="wave" />
