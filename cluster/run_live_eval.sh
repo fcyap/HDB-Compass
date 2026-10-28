@@ -67,6 +67,6 @@ if [[ "$TOOL_CHECK" == "--tool-check" ]]; then
 fi
 for TAG in ${TAGS//,/ }; do
   .venv/bin/python evaluation/run_category_e_prelim.py --tag "$TAG" --variants "$VARIANTS" 2>&1 \
-    | grep -E "^\[|already done|ERROR|Traceback|^variant|^[ABC] "
+    | grep -E "^\[|already done|ERROR|UNREACHABLE|Traceback|^variant|^[ABC] "
   echo "RUN_DONE $TAG"
 done

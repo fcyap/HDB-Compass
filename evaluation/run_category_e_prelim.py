@@ -237,8 +237,12 @@ def main() -> None:
     print(f"profile={profile['name']} model={profile.get('model')} results={path}")
     print(f"{len(done)} rows already done, {len(todo)} to run")
 
+    unreachable = 0
     with path.open("a", encoding="utf-8") as f:
         for n, (v, it) in enumerate(todo, 1):
+            if unreachable >= 2:  # the server or tunnel is gone: every further row would fail the same way
+                print(f"MODEL_UNREACHABLE: stopped after {n - 1}/{len(todo)}; run the same command again to resume")
+                break
             mod = load_variant(v)
             print(f"[{n}/{len(todo)}] variant {v} {it['id']} ...", end="", flush=True)
             row = run_one(mod, it, v, profile, run_id)
@@ -250,7 +254,8 @@ def main() -> None:
                 print(f" {row['latency_s']}s f1={s['tool_selection']['f1']:.2f} em={s['parameter_em']['rate']} "
                       f"cands={row['state_excerpt']['n_candidates']} errs={len(row['state_excerpt']['errors'] or [])}")
             else:
-                print(f" ERROR {row['error']}")
+                print(f" {row['status'].upper()} {row.get('error', '')}")
+            unreachable = unreachable + 1 if row["status"] == "model_unreachable" else 0
 
     rows = list(load_done(path).values())
     agg = summarise(rows)
