@@ -8,11 +8,12 @@ import {
   CheckCircle2,
   Clock,
   Navigation,
-  Send,
   Zap,
   RotateCcw,
   Terminal,
   Sparkles,
+  ArrowUp,
+  MapPin,
 } from 'lucide-react';
 import { Mascot3D, MascotAvatar, useMascotFavicon } from './Mascot';
 
@@ -65,6 +66,23 @@ export const AgentChat: React.FC<AgentChatProps> = ({
   onSelectBlock,
 }) => {
   const [inputValue, setInputValue] = useState('');
+  const [showPinHint, setShowPinHint] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const busy = agentStatus === 'SEARCHING';   // one answer at a time: the app tracks a single running reply
+
+  // the composer grows with the text, up to about six lines, like Grok's
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
+  }, [inputValue]);
+
+  useEffect(() => {
+    if (!showPinHint) return;
+    const t = setTimeout(() => setShowPinHint(false), 6000);
+    return () => clearTimeout(t);
+  }, [showPinHint]);
   const [expandedTraceIds, setExpandedTraceIds] = useState<Record<string, boolean>>({});
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -77,9 +95,9 @@ export const AgentChat: React.FC<AgentChatProps> = ({
     setExpandedTraceIds((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputValue.trim() || !wsConnected) return;
+  const handleSubmit = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!inputValue.trim() || !wsConnected || busy) return;
     onSendQuery(inputValue.trim());
     setInputValue('');
   };
@@ -344,29 +362,51 @@ export const AgentChat: React.FC<AgentChatProps> = ({
         <div ref={chatEndRef} />
       </div>
 
-      {/* Clean Bottom Prompt Input Bar */}
+      {/* Composer, after Grok's: one floating pill with a helper button on the left and a round send button on the
+          right. Only controls that work here: no mic or model picker. */}
       <footer className="chat-input-bar">
-        <form onSubmit={handleSubmit} className="input-form">
-          <input
-            type="text"
-            className="chat-input-field"
-            placeholder="Ask about schools, MRT distance, or click anywhere on the map..."
+        {showPinHint && (
+          <div className="composer-hint" role="status">
+            <MapPin size={13} /> Click anywhere on the map to pin a spot and see what's nearby.
+          </div>
+        )}
+        <form onSubmit={handleSubmit} className={`composer${wsConnected ? '' : ' offline'}`}>
+          <button
+            type="button"
+            className="composer-icon-btn"
+            onClick={() => setShowPinHint((v) => !v)}
+            aria-label="How to pin a location on the map"
+            title="Pin a location on the map"
+          >
+            <MapPin size={17} />
+          </button>
+          <textarea
+            ref={inputRef}
+            rows={1}
+            className="composer-input"
+            placeholder={wsConnected ? 'Ask anything about HDB flats…' : 'Connecting to HDB-Compass…'}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter sends, Shift+Enter adds a line; never while an input method is composing text
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                handleSubmit();
+              }
+            }}
             disabled={!wsConnected}
+            aria-label="Message HDB-Compass"
           />
           <button
             type="submit"
-            className="send-btn"
-            disabled={!wsConnected || !inputValue.trim()}
+            className={`composer-send${busy ? ' busy' : ''}`}
+            disabled={!wsConnected || busy || !inputValue.trim()}
+            aria-label={busy ? 'Working on your question' : 'Send'}
+            title={busy ? 'Working on your question…' : 'Send (Enter)'}
           >
-            <Send size={14} />
-            <span>Send</span>
+            {busy ? <span className="composer-spinner" /> : <ArrowUp size={18} strokeWidth={2.4} />}
           </button>
         </form>
-        <div className="input-hint">
-          <span>💡 Tip: Click anywhere on the map to pin exact coordinates</span>
-        </div>
       </footer>
     </aside>
   );

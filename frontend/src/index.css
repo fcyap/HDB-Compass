@@ -238,6 +238,7 @@ html, body, #root {
 .chat-container {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;   /* a wide row of block cards must not add a sideways scrollbar above the composer */
   padding: 16px 20px;
   display: flex;
   flex-direction: column;
@@ -624,13 +625,6 @@ html, body, #root {
   letter-spacing: 0.02em;
 }
 
-.input-hint {
-  font-size: 0.68rem;
-  color: var(--text-dim);
-  margin-top: 6px;
-  text-align: center;
-}
-
 /* Chat Message Rows */
 .chat-message-row {
   display: flex;
@@ -961,57 +955,133 @@ html, body, #root {
 
 /* Chat Input Bar */
 .chat-input-bar {
-  padding: 12px 16px;
-  border-top: 1px solid var(--border-subtle);
-  background: rgba(255, 252, 245, 0.95);
+  /* the composer floats over the bottom of the conversation, which fades out behind it */
+  position: relative;
+  padding: 10px 16px 18px;
+  background: linear-gradient(to top, var(--bg-secondary) 72%, rgba(248, 239, 220, 0));
 }
 
-.input-form {
+/* Composer pill, after Grok's (Mobbin: Grok web chat) */
+.composer {
   display: flex;
-  gap: 8px;
-}
-
-.chat-input-field {
-  flex: 1;
-  background: rgba(7, 62, 64, 0.05);
+  align-items: flex-end;
+  gap: 4px;
+  padding: 6px;
+  background: #FFFFFF;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: 10px 14px;
-  color: var(--text-main);
-  font-size: 0.82rem;
-  outline: none;
-  transition: all 0.2s ease;
+  border-radius: 26px;
+  box-shadow: 0 6px 24px rgba(7, 62, 64, 0.1), 0 1px 2px rgba(7, 62, 64, 0.06);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.chat-input-field:focus {
-  border-color: var(--accent-cyan);
-  background: rgba(0, 143, 138, 0.04);
-  box-shadow: 0 0 0 2px rgba(0, 143, 138, 0.15);
+.composer:focus-within {
+  border-color: rgba(0, 143, 138, 0.45);
+  box-shadow: 0 6px 24px rgba(7, 62, 64, 0.1), 0 0 0 3px rgba(0, 143, 138, 0.12);
 }
 
-.send-btn {
-  background: linear-gradient(135deg, #0FA39C 0%, #006865 100%);
-  color: white;
+.composer.offline {
+  opacity: 0.7;
+}
+
+.composer-icon-btn {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
   border: none;
-  border-radius: var(--radius-md);
-  padding: 0 16px;
-  font-size: 0.8rem;
-  font-weight: 600;
+  background: transparent;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.composer-icon-btn:hover {
+  background: rgba(7, 62, 64, 0.06);
+  color: var(--mascot-ink);
+}
+
+.composer-input {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  padding: 8px 4px;
+  max-height: 150px;
+}
+
+.composer-input::placeholder {
+  color: var(--text-dim);
+}
+
+.composer-send {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: var(--mascot-ink);
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
+}
+
+.composer-send:hover:not(:disabled) {
+  background: var(--mascot-teal-dark);
+  transform: scale(1.05);
+}
+
+.composer-send:disabled {
+  background: rgba(7, 62, 64, 0.18);
+  cursor: default;
+}
+
+.composer-send.busy:disabled {
+  background: var(--mascot-ink);
+}
+
+.composer-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #FFFFFF;
+  animation: composerSpin 0.8s linear infinite;
+}
+
+@keyframes composerSpin {
+  to { transform: rotate(360deg); }
+}
+
+.composer-hint {
   display: flex;
   align-items: center;
   gap: 6px;
-  transition: all 0.2s ease;
+  margin: 0 auto 8px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 6px 12px;
+  border-radius: 9999px;
+  background: #FFFFFF;
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 2px 8px rgba(7, 62, 64, 0.08);
+  color: var(--text-muted);
+  font-size: 0.74rem;
 }
 
-.send-btn:hover:not(:disabled) {
-  opacity: 0.92;
-  transform: translateY(-1px);
-}
-
-.send-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+@media (prefers-reduced-motion: reduce) {
+  .composer-spinner { animation-duration: 2.4s; }
 }
 
 .input-footer-meta {
