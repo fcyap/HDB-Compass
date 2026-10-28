@@ -15,8 +15,8 @@
   --mascot-teal-dark: #006865;
   --mascot-ink: #073E40;
 
-  --bg-primary: #FBF6EC;
-  --bg-secondary: #F8EFDC;
+  --bg-primary: #EFE6D3;     /* page behind the floating chat panel: a deeper cream so the card stands out */
+  --bg-secondary: #FCF8F0;   /* the chat panel card */
   --bg-card: rgba(255, 255, 255, 0.92);
   --bg-card-hover: #FFFFFF;
   --bg-glass: rgba(255, 252, 245, 0.9);
@@ -75,17 +75,21 @@ html, body, #root {
 }
 
 .left-panel {
+  /* a floating card: inset from the top, bottom and left, with rounded corners and a soft shadow */
+  --panel-gap: 16px;
   width: 42%;
   min-width: 380px;
   max-width: 580px;
-  height: 100%;
+  height: calc(100% - 2 * var(--panel-gap));
+  margin: var(--panel-gap) var(--panel-gap) var(--panel-gap) var(--panel-gap);
   background: var(--bg-secondary);
-  border-right: 1px solid var(--border-subtle);
+  border: 1px solid rgba(7, 62, 64, 0.08);
+  border-radius: 24px;
+  overflow: hidden;   /* clips the header and composer to the rounded corners */
   display: flex;
   flex-direction: column;
   z-index: 10;
-  box-shadow: 4px 0 24px rgba(7, 62, 64, 0.18);
-  backdrop-filter: blur(12px);
+  box-shadow: 0 18px 48px rgba(7, 62, 64, 0.14), 0 2px 8px rgba(7, 62, 64, 0.06);
 }
 
 .right-panel {
@@ -958,7 +962,7 @@ html, body, #root {
   /* the composer floats over the bottom of the conversation, which fades out behind it */
   position: relative;
   padding: 10px 16px 18px;
-  background: linear-gradient(to top, var(--bg-secondary) 72%, rgba(248, 239, 220, 0));
+  background: linear-gradient(to top, var(--bg-secondary) 72%, rgba(252, 248, 240, 0));
 }
 
 /* Composer pill, after Grok's (Mobbin: Grok web chat) */
@@ -1474,8 +1478,6 @@ html, body, #root {
   width: 168px;
   height: 168px;
   align-items: center;
-  border-radius: 50%;
-  background: radial-gradient(circle at 50% 55%, #FFFFFF 0%, var(--mascot-cream) 62%, rgba(248, 239, 220, 0) 72%);
 }
 
 .welcome-hero-card .welcome-header {
