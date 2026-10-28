@@ -14,6 +14,7 @@ import {
   Terminal,
   Sparkles,
 } from 'lucide-react';
+import { Mascot3D, MascotAvatar, useMascotFavicon } from './Mascot';
 
 export interface LogMessage {
   id: string;
@@ -87,13 +88,15 @@ export const AgentChat: React.FC<AgentChatProps> = ({
     onSendQuery(prompt);
   };
 
+  useMascotFavicon();
+
   return (
     <aside className="left-panel">
       {/* Sleek Minimal Header */}
       <header className="header-bar">
         <div className="brand-badge">
-          <div className="brand-icon">
-            <Compass size={18} />
+          <div className="brand-icon mascot">
+            <MascotAvatar size={32} fallback={<Compass size={18} />} />
           </div>
           <div>
             <h1 className="brand-title">HDB-Compass</h1>
@@ -123,13 +126,19 @@ export const AgentChat: React.FC<AgentChatProps> = ({
         {/* If only 1 message (welcome), show elegant prompt suggestion cards inside welcome */}
         {messages.length <= 1 && (
           <div className="welcome-hero-card">
-            <div className="welcome-header">
-              <Sparkles size={16} color="#38bdf8" />
-              <span>Explore Singapore Public Housing</span>
+            <div className="welcome-mascot-row">
+              <Mascot3D size={112} mood="wave" />
+              <div>
+                <div className="welcome-header">
+                  <Sparkles size={16} color="#38bdf8" />
+                  <span>Explore Singapore Public Housing</span>
+                </div>
+                <p className="welcome-desc">
+                  Hi, I'm your HDB-Compass home guide. Ask about MOE Primary 1 registration priority distances, walking
+                  commute to MRT stations, or amenity filters.
+                </p>
+              </div>
             </div>
-            <p className="welcome-desc">
-              Ask about MOE Primary 1 registration priority distances, walking commute to MRT stations, or amenity filters.
-            </p>
             <div className="welcome-prompts-grid">
               <button
                 className="welcome-prompt-card"
@@ -198,8 +207,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({
               <div className="agent-message-card">
                 {/* Agent Header */}
                 <div className="agent-card-header">
-                  <div className="agent-avatar">
-                    <Compass size={14} color="#38bdf8" />
+                  <div className="agent-avatar mascot">
+                    <MascotAvatar size={24} fallback={<Compass size={14} color="#38bdf8" />} />
                   </div>
                   <div className="agent-title-group">
                     <span className="agent-name">HDB-Compass Assistant</span>
@@ -213,7 +222,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                 {/* Loading indicator */}
                 {msg.status === 'running' && (
                   <div className="agent-running-banner">
-                    <div className="spinner-ring" />
+                    <Mascot3D size={40} mood="thinking" framing="portrait" />
                     <span>Querying SVY21 spatial index and government APIs...</span>
                   </div>
                 )}

@@ -1374,3 +1374,34 @@ html, body, #root {
 }
 
 
+
+/* HDB-Compass mascot (components/Mascot.tsx) */
+.brand-icon.mascot {
+  background: linear-gradient(135deg, #0f3f3e, #0f766e);
+  overflow: hidden;
+  padding: 0;
+}
+
+.agent-avatar.mascot {
+  background: rgba(15, 118, 110, 0.18);
+  border-color: #2dd4bf;
+  overflow: hidden;
+}
+
+.welcome-mascot-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.welcome-mascot-row .welcome-desc {
+  margin-bottom: 0;
+}
+
+@media (max-width: 420px) {
+  .welcome-mascot-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
