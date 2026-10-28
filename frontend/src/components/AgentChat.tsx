@@ -8,12 +8,14 @@ import {
   CheckCircle2,
   Clock,
   Navigation,
-  Send,
   Zap,
   RotateCcw,
   Terminal,
   Sparkles,
+  ArrowUp,
+  MapPin,
 } from 'lucide-react';
+import { Mascot3D, MascotAvatar, useMascotFavicon } from './Mascot';
 
 export interface LogMessage {
   id: string;
@@ -64,6 +66,23 @@ export const AgentChat: React.FC<AgentChatProps> = ({
   onSelectBlock,
 }) => {
   const [inputValue, setInputValue] = useState('');
+  const [showPinHint, setShowPinHint] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const busy = agentStatus === 'SEARCHING';   // one answer at a time: the app tracks a single running reply
+
+  // the composer grows with the text, up to about six lines, like Grok's
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
+  }, [inputValue]);
+
+  useEffect(() => {
+    if (!showPinHint) return;
+    const t = setTimeout(() => setShowPinHint(false), 6000);
+    return () => clearTimeout(t);
+  }, [showPinHint]);
   const [expandedTraceIds, setExpandedTraceIds] = useState<Record<string, boolean>>({});
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -76,9 +95,9 @@ export const AgentChat: React.FC<AgentChatProps> = ({
     setExpandedTraceIds((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputValue.trim() || !wsConnected) return;
+  const handleSubmit = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!inputValue.trim() || !wsConnected || busy) return;
     onSendQuery(inputValue.trim());
     setInputValue('');
   };
@@ -87,13 +106,15 @@ export const AgentChat: React.FC<AgentChatProps> = ({
     onSendQuery(prompt);
   };
 
+  useMascotFavicon();
+
   return (
     <aside className="left-panel">
       {/* Sleek Minimal Header */}
       <header className="header-bar">
         <div className="brand-badge">
-          <div className="brand-icon">
-            <Compass size={18} />
+          <div className="brand-icon mascot">
+            <MascotAvatar size={32} fallback={<Compass size={18} />} />
           </div>
           <div>
             <h1 className="brand-title">HDB-Compass</h1>
@@ -120,15 +141,19 @@ export const AgentChat: React.FC<AgentChatProps> = ({
 
       {/* Conversational Chat Thread */}
       <div className="chat-container">
-        {/* If only 1 message (welcome), show elegant prompt suggestion cards inside welcome */}
-        {messages.length <= 1 && (
+        {/* Before the first question, show the mascot welcome with suggested prompts */}
+        {messages.length === 0 && (
           <div className="welcome-hero-card">
+            <div className="welcome-mascot-stage">
+              <Mascot3D size={150} mood="wave" />
+            </div>
             <div className="welcome-header">
-              <Sparkles size={16} color="#38bdf8" />
+              <Sparkles size={16} color="#008F8A" />
               <span>Explore Singapore Public Housing</span>
             </div>
             <p className="welcome-desc">
-              Ask about MOE Primary 1 registration priority distances, walking commute to MRT stations, or amenity filters.
+              Hi, I'm your HDB-Compass home guide. Ask about MOE Primary 1 registration priority distances, walking
+              commute to MRT stations, or amenity filters.
             </p>
             <div className="welcome-prompts-grid">
               <button
@@ -198,8 +223,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({
               <div className="agent-message-card">
                 {/* Agent Header */}
                 <div className="agent-card-header">
-                  <div className="agent-avatar">
-                    <Compass size={14} color="#38bdf8" />
+                  <div className="agent-avatar mascot">
+                    <MascotAvatar size={24} fallback={<Compass size={14} color="#008F8A" />} />
                   </div>
                   <div className="agent-title-group">
                     <span className="agent-name">HDB-Compass Assistant</span>
@@ -213,7 +238,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                 {/* Loading indicator */}
                 {msg.status === 'running' && (
                   <div className="agent-running-banner">
-                    <div className="spinner-ring" />
+                    <Mascot3D size={40} mood="thinking" framing="portrait" />
                     <span>Querying SVY21 spatial index and government APIs...</span>
                   </div>
                 )}
@@ -250,7 +275,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                     <div className="candidate-blocks-section">
                       <div className="section-title-bar">
                         <span className="section-title">
-                          <CheckCircle2 size={13} color="#10b981" />
+                          <CheckCircle2 size={13} color="#008F8A" />
                           Matching HDB Resale Blocks ({msg.structuredData.total_blocks_found || msg.structuredData.qualifying_blocks.length}):
                         </span>
                         <span className="section-subtext">Click any pin on map</span>
@@ -274,7 +299,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                                 <span className="block-distance-badge">{dist}</span>
                               </div>
                               <div className="block-meta">
-                                <Clock size={10} color="#94a3b8" />
+                                <Clock size={10} color="#6E8F8C" />
                                 <span>~{walkMins} min walk</span>
                                 <span className="block-tag">Inside 1km</span>
                               </div>
@@ -288,7 +313,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                   {/* Nearest Transit & Amenities Pill */}
                   {msg.structuredData?.nearby_amenities && msg.structuredData.nearby_amenities.length > 0 && (
                     <div className="amenities-summary-badge">
-                      <Zap size={12} color="#10b981" />
+                      <Zap size={12} color="#F36550" />
                       <span>
                         Nearest Transit: <strong>{msg.structuredData.nearby_amenities[0].name}</strong> at{' '}
                         <strong>{msg.structuredData.nearby_amenities[0].distance_meters?.toFixed(0)}m</strong>
@@ -304,7 +329,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                         onClick={() => toggleTrace(msg.id)}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <Terminal size={12} color="#64748b" />
+                          <Terminal size={12} color="#6E8F8C" />
                           <span>View Execution Steps ({msg.stepLogs.length})</span>
                         </div>
                         {expandedTraceIds[msg.id] ? (
@@ -337,29 +362,51 @@ export const AgentChat: React.FC<AgentChatProps> = ({
         <div ref={chatEndRef} />
       </div>
 
-      {/* Clean Bottom Prompt Input Bar */}
+      {/* Composer, after Grok's: one floating pill with a helper button on the left and a round send button on the
+          right. Only controls that work here: no mic or model picker. */}
       <footer className="chat-input-bar">
-        <form onSubmit={handleSubmit} className="input-form">
-          <input
-            type="text"
-            className="chat-input-field"
-            placeholder="Ask about schools, MRT distance, or click anywhere on the map..."
+        {showPinHint && (
+          <div className="composer-hint" role="status">
+            <MapPin size={13} /> Click anywhere on the map to pin a spot and see what's nearby.
+          </div>
+        )}
+        <form onSubmit={handleSubmit} className={`composer${wsConnected ? '' : ' offline'}`}>
+          <button
+            type="button"
+            className="composer-icon-btn"
+            onClick={() => setShowPinHint((v) => !v)}
+            aria-label="How to pin a location on the map"
+            title="Pin a location on the map"
+          >
+            <MapPin size={17} />
+          </button>
+          <textarea
+            ref={inputRef}
+            rows={1}
+            className="composer-input"
+            placeholder={wsConnected ? 'Ask anything about HDB flats…' : 'Connecting to HDB-Compass…'}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter sends, Shift+Enter adds a line; never while an input method is composing text
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                handleSubmit();
+              }
+            }}
             disabled={!wsConnected}
+            aria-label="Message HDB-Compass"
           />
           <button
             type="submit"
-            className="send-btn"
-            disabled={!wsConnected || !inputValue.trim()}
+            className={`composer-send${busy ? ' busy' : ''}`}
+            disabled={!wsConnected || busy || !inputValue.trim()}
+            aria-label={busy ? 'Working on your question' : 'Send'}
+            title={busy ? 'Working on your question…' : 'Send (Enter)'}
           >
-            <Send size={14} />
-            <span>Send</span>
+            {busy ? <span className="composer-spinner" /> : <ArrowUp size={18} strokeWidth={2.4} />}
           </button>
         </form>
-        <div className="input-hint">
-          <span>💡 Tip: Click anywhere on the map to pin exact coordinates</span>
-        </div>
       </footer>
     </aside>
   );

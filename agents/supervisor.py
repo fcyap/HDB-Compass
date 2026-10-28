@@ -171,7 +171,8 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
 
     policy = None
     # "plus" only in the Plus-classification sense: "plus $30,000 in cash" is not a policy question.
-    if re.search(r"\b(mop|minimum occupation|prime|plus (?:flats?|models?|bto|resale|classification)|standard flat|clawback|subsidy recovery|eip|ethnic|quota|wait[- ]out|eligib|scheme|rental restriction|exempt)\b", q, re.I):
+    if re.search(r"\b(mop|minimum occupation|prime|plus (?:flats?|models?|bto|resale|classification)|standard flat|clawback|subsidy recovery|eip|ethnic|quota|wait[- ]out|eligib|scheme|rental restriction|exempt"
+                 r"|not married|unmarried|fianc[eé]e?s?|apply(?:ing)? for (?:an? )?(?:[2-5][- ]room )?btos?|can (?:we|i) (?:buy|apply))\b", q, re.I):
         policy = q
 
     return ExtractedConstraints(
@@ -224,7 +225,16 @@ def merge_constraints(prior: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, A
 
 
 _AGES_RE = re.compile(r"\b(?:aged?|are|am)\s+(\d{2})(?:\s*(?:and|&|,)\s*(\d{2}))?\b", re.I)
-_CASH_RE = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)\s*(k)?\s*(?:in\s+)?(?:cash|savings)|(?:cash|savings)[^$\n]{0,25}\$\s?(\d[\d,]*(?:\.\d+)?)\s*(k)?", re.I)
+_CASH_RE = re.compile(r"\$?\s?(\d[\d,]*(?:\.\d+)?)\s*(k)?\s*(?:sgd\s*)?(?:in\s+)?(?:cash|savings)\b"
+                      r"|\b(?:cash|savings)\b[^\d\n,;.]{0,20}?\$?\s?(\d[\d,]*(?:\.\d+)?)\s*(k)?", re.I)
+# "$90,000 in CPF OA", "40k cpf", "cpf of ard 40k"; a comma or full stop in between ends the match
+_CPF_RE = re.compile(r"\$?\s?(\d[\d,]*(?:\.\d+)?)\s*(k)?\s*(?:sgd\s*)?(?:in\s+)?(?:(?:my|our)\s+)?(?:cpf|oa)\b"
+                     r"|\b(?:cpf|oa)\b[^\d\n,;.]{0,20}?\$?\s?(\d[\d,]*(?:\.\d+)?)\s*(k)?", re.I)
+
+
+def _re_amount(m: re.Match) -> float:
+    amount, k = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+    return float(amount.replace(",", "")) * (1000 if k else 1)
 
 
 def parse_clarification_answer(text: str, needed: List[str], conversation: str = "") -> Dict[str, Dict[str, Any]]:
@@ -294,17 +304,20 @@ def stated_financial_inputs(text: str) -> Dict[str, Dict[str, Any]]:
     rb = rule_based_extract(t)
     if rb.household_income is not None:
         f["monthly_income"] = rb.household_income
-    if rb.cpf_oa_balance is not None:
+    m = _CPF_RE.search(t)
+    if m:
+        f["cpf_oa_balance"] = _re_amount(m)
+    elif rb.cpf_oa_balance is not None:
         f["cpf_oa_balance"] = rb.cpf_oa_balance
     m = _CASH_RE.search(t)
     if m:
-        amount, k = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
-        f["cash_savings"] = float(amount.replace(",", "")) * (1000 if k else 1)
+        f["cash_savings"] = _re_amount(m)
     if re.search(r"\bno (?:other )?(?:debts?|loans?|monthly (?:debt|loan) (?:payments|obligations))\b", t, re.I):
         f["monthly_debt_obligations"] = 0.0
     if re.search(r"(?:continuously employed|employed continuously).{0,30}\b12 months\b", t, re.I):
         f["continuous_employment_12_months"] = True
-    if re.search(r"eligibility for (?:the )?grants?.{0,40}\bconfirmed\b|grant eligibility (?:is |has been )?confirmed", t, re.I):
+    if re.search(r"eligibility for (?:the )?grants?.{0,40}\bconfirmed\b"
+                 r"|grants?(?: and (?:an? )?(?:HDB |bank )?loan)? eligibility (?:is |are |has been |have been )?confirmed", t, re.I):
         f["eligibility_confirmed"] = True
     if re.search(r"eligibility for .{0,30}\b(?:HDB|bank) loan (?:is |has been )?confirmed|\b(?:HDB|bank) loan(?: eligibility)? (?:is |has been )?confirmed", t, re.I):
         f["loan_eligibility_confirmed"] = True
@@ -435,6 +448,10 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
     # calculator facts come from the user's own words in every turn so far, never from the model's reading of them
     users = " ".join(m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user")
     constraints["financial_inputs"] = trusted_financial_inputs(constraints.get("financial_inputs"), stated_financial_inputs(users or query))
+    # a distance limit of 0 m is not a constraint: the model filled every amenity with 0 for an eligibility question,
+    # which routed it to the map agent and produced "relax from 0 m to 150 m" suggestions
+    constraints["amenity_radii_meters"] = {k: v for k, v in (constraints.get("amenity_radii_meters") or {}).items()
+                                           if v is not None and v > 0}
     if pending:
         conversation = " ".join(m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict))
         answers = parse_clarification_answer(query, pending["needed"], conversation)
@@ -1056,8 +1073,8 @@ def clarification_needed(state: HDBCompassState) -> Optional[Dict[str, Any]]:
         v = fin.get(name)
         if isinstance(v, dict) and v.get("status") == "needs_information":
             needed += v.get("missing_inputs") or []
-    if (fin.get("calculate_cpf_housing_grants") or {}).get("status") == "ok":
-        needed = [n for n in needed if n != "total_grants"]   # the grant result supplies it
+    if "calculate_cpf_housing_grants" in fin:
+        needed = [n for n in needed if n != "total_grants"]   # the grant calculator supplies it once its facts are known
     needed = list(dict.fromkeys(needed))
     if not needed:
         return None

@@ -74,7 +74,9 @@ def test_two_turn_conversation_reaches_the_ground_truth(qid):
     first = C.graph.invoke({**sv.initial_state(item["query"], "C"),
                             "prior_constraints": {**item["stated_constraints"], "financial_inputs": item["financial_inputs"]}})
     clar = first["clarification"]
-    assert clar and set(item["ground_truth_facts"]["missing_financial_inputs"]) <= set(clar["needed"])
+    # every missing fact the user can supply is asked for; the grant total is the grant calculator's job
+    askable = set(item["ground_truth_facts"]["missing_financial_inputs"]) - {"total_grants"}
+    assert clar and askable <= set(clar["needed"]) and "total_grants" not in clar["needed"]
     assert M.ground_truth_scores(item, first)["success"]          # asks, names the true blocks, invents no budget
     # Turn 2: the user answers; the earlier request and facts carry over.
     second = C.run(item["follow_up"]["answer"], previous=first)
