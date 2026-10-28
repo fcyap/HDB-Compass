@@ -253,10 +253,16 @@ def inspect_point(lat: float, lng: float):
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     print("[WebSocket] Client connected to HDB-Compass Live Sync.")
+    # The last finished state on this connection, passed back on the next message so a reply such as
+    # "we have $25,000 in cash" completes the earlier request (docs/INTERFACES.md §7). Clear resets it.
+    previous: Optional[Dict[str, Any]] = None
     try:
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
+            if message.get("reset"):
+                previous = None
+                continue
             query_text = message.get("query", "").strip()
             pinned_lat = message.get("lat")
             pinned_lng = message.get("lng")
@@ -277,7 +283,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         map_state["center"] = [float(pinned_lat), float(pinned_lng)]
                         map_state["radius_meters"] = radius
 
-                    st = sv.initial_state(query=query_text, variant="C", map_state=map_state)
+                    st = sv.initial_state(query=query_text, variant="C", map_state=map_state, previous=previous)
 
                     current_buffer = None
                     current_markers = None
@@ -286,7 +292,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     current_qualifying: List[str] = []
                     active_agents: List[str] = []
 
-                    async for chunk in specialist_5agent_graph.astream(st):
+                    final_state: Optional[Dict[str, Any]] = None
+                    async for mode, chunk in specialist_5agent_graph.astream(st, stream_mode=["updates", "values"]):
+                        if mode == "values":
+                            final_state = chunk  # the full state after each step; the last one is the answer's
+                            continue
                         for node_name, node_output in chunk.items():
                             if not isinstance(node_output, dict):
                                 continue
@@ -374,6 +384,8 @@ async def websocket_endpoint(websocket: WebSocket):
                                 "qualifying_blocks": current_qualifying if current_qualifying else None,
                             })
                             await asyncio.sleep(0.04)
+                    if final_state is not None:
+                        previous = final_state
 
                 # -------------------------------------------------------------
                 # 2. Solo Spatial Fallback (Direct Map Click / Pin)
