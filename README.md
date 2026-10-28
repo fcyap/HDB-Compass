@@ -271,6 +271,33 @@ To rebuild spatial data, configure OneMap credentials and run
 `python data/build_spatial_index.py`. Rebuild the market database afterwards to
 pick up coordinate changes.
 
+### Demo day (one command)
+
+`cluster/demo_start.sh` runs the web app on the presenting laptop with the model on
+the SMU cluster GPU (about 25 s per answer). A laptop CPU or the cluster CPU is far
+too slow for Variant C (minutes per answer).
+
+```bash
+# once, on the VPN, in your own terminal (asks for your password)
+ssh -M -S ~/.ssh/hdb-cluster.sock -o ControlPersist=8h -o ServerAliveInterval=30 -fN "$CLUSTER_LOGIN"
+bash cluster/demo_start.sh             # GPU job, tunnel, model check, backend, frontend
+bash cluster/demo_start.sh --offline   # fallback: no model, template answers, starts in seconds
+```
+
+Ctrl-C stops everything and cancels the GPU job (`--keep-job` leaves it running).
+If the terminal prints a model warning during the demo, press Ctrl-C and restart
+with `--offline`. Logs are in `data/local/demo_logs/`.
+
+Dry-run checklist (in the demo room, on its network, a day before):
+
+- [ ] VPN connects and the shared session opens; `squeue --me` works through it
+- [ ] `bash cluster/demo_start.sh` reaches "HDB-Compass is running" (job queue + model load ≈ 5–10 min)
+- [ ] One flat-search question and one follow-up answer correctly within ~30 s each
+- [ ] Ctrl-C, then `--offline` starts in under a minute and answers
+- [ ] Node 20.19+ or 22 installed (`node -v`); `frontend/node_modules` present
+- [ ] Laptop on power, sleep disabled; on the day, start 30–45 min before presenting
+- [ ] Demo questions chosen from flat search, grants and budget (policy search is still a stand-in)
+
 ### Troubleshooting
 
 | Problem | Action |

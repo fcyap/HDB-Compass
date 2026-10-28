@@ -141,3 +141,8 @@ def test_never_ask_the_user_for_the_grant_total():
         "calculate_cpf_housing_grants": {"status": "needs_information", "missing_inputs": ["citizenship_pair"]},
         "calculate_maximum_affordability": {"status": "needs_information", "missing_inputs": ["total_grants", "cash_savings"]}}})
     assert "total_grants" not in clar["needed"] and {"citizenship_pair", "cash_savings"} <= set(clar["needed"])
+
+
+def test_short_eligibility_phrasing_is_read():
+    got = sv.stated_financial_inputs("We have $9,000 a month income and our grant and HDB loan eligibility is confirmed.")
+    assert got["grants"]["eligibility_confirmed"] is True and got["affordability"]["loan_eligibility_confirmed"] is True

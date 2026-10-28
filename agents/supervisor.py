@@ -316,7 +316,8 @@ def stated_financial_inputs(text: str) -> Dict[str, Dict[str, Any]]:
         f["monthly_debt_obligations"] = 0.0
     if re.search(r"(?:continuously employed|employed continuously).{0,30}\b12 months\b", t, re.I):
         f["continuous_employment_12_months"] = True
-    if re.search(r"eligibility for (?:the )?grants?.{0,40}\bconfirmed\b|grant eligibility (?:is |has been )?confirmed", t, re.I):
+    if re.search(r"eligibility for (?:the )?grants?.{0,40}\bconfirmed\b"
+                 r"|grants?(?: and (?:an? )?(?:HDB |bank )?loan)? eligibility (?:is |are |has been |have been )?confirmed", t, re.I):
         f["eligibility_confirmed"] = True
     if re.search(r"eligibility for .{0,30}\b(?:HDB|bank) loan (?:is |has been )?confirmed|\b(?:HDB|bank) loan(?: eligibility)? (?:is |has been )?confirmed", t, re.I):
         f["loan_eligibility_confirmed"] = True

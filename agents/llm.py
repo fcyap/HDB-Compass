@@ -73,8 +73,9 @@ def get_llm(**overrides: Any):
         temperature=cfg["global"]["temperature"],
         seed=cfg["global"]["seed"],
         max_tokens=p.get("max_tokens", 2048),
-        timeout=p.get("timeout_s", 120),
-        max_retries=2,
+        # LLM_TIMEOUT_S / LLM_MAX_RETRIES: the live demo lowers these so a stalled server fails over in seconds
+        timeout=float(os.getenv("LLM_TIMEOUT_S", p.get("timeout_s", 120))),
+        max_retries=int(os.getenv("LLM_MAX_RETRIES", 2)),
     )
     if p.get("extra_body"):
         kwargs["extra_body"] = p["extra_body"]
