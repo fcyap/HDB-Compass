@@ -38,6 +38,11 @@
   --accent-amber: #E39B2B;
   --accent-rose: #D94D3F;
 
+  /* layout: the map fills the window and the chat card floats over its left side */
+  --panel-gap: 16px;
+  --chat-panel-width: clamp(380px, 42vw, 580px);
+  --map-left-inset: calc(var(--chat-panel-width) + 2 * var(--panel-gap));   /* where the visible map begins */
+
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 16px;
@@ -75,13 +80,12 @@ html, body, #root {
 }
 
 .left-panel {
-  /* a floating card: inset from the top, bottom and left, with rounded corners and a soft shadow */
-  --panel-gap: 16px;
-  width: 42%;
-  min-width: 380px;
-  max-width: 580px;
-  height: calc(100% - 2 * var(--panel-gap));
-  margin: var(--panel-gap) var(--panel-gap) var(--panel-gap) var(--panel-gap);
+  /* a floating card over the map: inset from the top, bottom and left, with rounded corners and a soft shadow */
+  position: absolute;
+  top: var(--panel-gap);
+  bottom: var(--panel-gap);
+  left: var(--panel-gap);
+  width: var(--chat-panel-width);
   background: var(--bg-secondary);
   border: 1px solid rgba(7, 62, 64, 0.08);
   border-radius: 24px;
@@ -93,9 +97,9 @@ html, body, #root {
 }
 
 .right-panel {
-  flex: 1;
-  height: 100%;
-  position: relative;
+  /* the map fills the whole window, behind the chat card */
+  position: absolute;
+  inset: 0;
   background: #FBF6EC;
 }
 
@@ -1207,7 +1211,7 @@ html, body, #root {
 .pg-top-pill-bar {
   position: absolute;
   top: 16px;
-  left: 20px;
+  left: calc(var(--map-left-inset) + 4px);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1251,7 +1255,7 @@ html, body, #root {
 .pg-facility-drawer {
   position: absolute;
   top: 64px;
-  left: 20px;
+  left: calc(var(--map-left-inset) + 4px);
   width: 350px;
   max-height: calc(100vh - 110px);
   background: rgba(255, 255, 255, 0.95);
@@ -1489,4 +1493,24 @@ html, body, #root {
   max-width: 34ch;
   margin-left: auto;
   margin-right: auto;
+}
+
+/* cursor coordinates, bottom-left of the visible map (to the right of the chat card) */
+.coords-readout {
+  position: absolute;
+  bottom: 14px;
+  left: calc(var(--map-left-inset) + 4px);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 2px 8px rgba(7, 62, 64, 0.08);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  pointer-events: none;
 }

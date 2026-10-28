@@ -584,6 +584,17 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       attributionControl: false,
     });
 
+    // The chat card floats over the left of the map. Camera padding makes centring, flyTo and fitting use the
+    // visible part of the map to the right of the card, so results never land underneath it.
+    const applyPanelPadding = () => {
+      const panel = document.querySelector('.left-panel');
+      const left = panel ? Math.round(panel.getBoundingClientRect().right) : 0;
+      map.setPadding({ left, top: 0, right: 0, bottom: 0 });
+    };
+    applyPanelPadding();
+    window.addEventListener('resize', applyPanelPadding);
+    map.once('remove', () => window.removeEventListener('resize', applyPanelPadding));
+
     map.on('load', () => {
       setMapLoaded(true);
       setupLayers(map);
