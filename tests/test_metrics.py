@@ -157,3 +157,60 @@ def test_task_success_rules():
 def test_trade_off_advice_is_recognised_in_plain_text():
     assert M.relaxation_offered({"draft_response": "Consider increasing your budget to $660k to unlock two blocks."})
     assert not M.relaxation_offered({"draft_response": "No properties met the lease requirement."})
+
+
+# ---- ground-truth scoring -------------------------------------------------------------------------
+_TRUTH_E1 = {"matching_block_keys": ["228 JURONG EAST ST 21", "266 TOH GUAN RD"],
+             "financial": {"calculate_cpf_housing_grants": {"total_grants": 90000.0},
+                           "calculate_maximum_affordability": {"max_purchase_price": 777734.95}}}
+
+
+def _gt(item_extra, draft):
+    item = {"id": "t", "sub_use_case": item_extra.pop("sub"), **item_extra}
+    return M.ground_truth_scores(item, {"draft_response": draft})
+
+
+def test_e1_complete_needs_exact_blocks_and_both_numbers():
+    good = ("Blocks that meet everything:\n- Block 228 Jurong East St 21\n- Block 266 Toh Guan Rd\n"
+            "Your grants total $90,000 and your maximum purchase price is $777,735.")
+    assert _gt({"sub": "E1", "ground_truth_facts": _TRUTH_E1}, good)["success"]
+    extra_block = good.replace("- Block 266 Toh Guan Rd", "- Block 266 Toh Guan Rd\n- Block 301 Jurong East St 32")
+    assert not _gt({"sub": "E1", "ground_truth_facts": _TRUTH_E1}, extra_block)["success"]
+    wrong_grant = good.replace("$90,000", "$85,000")
+    r = _gt({"sub": "E1", "ground_truth_facts": _TRUTH_E1}, wrong_grant)
+    assert r["blocks_exact"] and not r["grants_correct"] and not r["success"]
+
+
+def test_e1_missing_fact_needs_a_question_and_no_invented_budget():
+    truth = {**_TRUTH_E1, "missing_financial_inputs": ["cash_savings"]}
+    item = {"sub": "E1", "ground_truth_facts": truth, "omitted_financial_facts": ["cash"]}
+    asks = "Block 228 Jurong East St 21 and Block 266 Toh Guan Rd match. How much cash savings do you have?"
+    assert _gt(dict(item), asks)["success"]
+    guesses = asks + " Your maximum budget is $700,000."
+    r = _gt(dict(item), guesses)
+    assert r["invented_budget"] and not r["success"]
+    silent = "Block 228 Jurong East St 21 and Block 266 Toh Guan Rd match."
+    assert not _gt(dict(item), silent)["asked_for_missing"]
+
+
+def test_e2_needs_no_match_and_the_unlocking_number():
+    truth = {"matching_block_keys": [], "best_single_change": {"constraint": "amenity_radii_meters.mrt", "relaxed": 550}}
+    ok = "No block meets every constraint. Widening the MRT distance to 550m unlocks 1 block."
+    assert _gt({"sub": "E2", "ground_truth_facts": truth}, ok)["success"]
+    assert not _gt({"sub": "E2", "ground_truth_facts": truth}, "No block meets every constraint.")["success"]
+    assert not _gt({"sub": "E2", "ground_truth_facts": truth}, ok + "\nBlock 12 Kim Tian Rd is close.")["success"]
+
+
+def test_numbers_are_read_with_commas_decimals_and_k():
+    assert M.numbers_in("$777,734.95, $90k and 550m") == [777734.95, 90000.0, 550.0]
+
+
+def test_bold_block_label_is_read():
+    assert M.recommended_block_numbers("### Blocks Meeting All Constraints\n- **Block**: 62\n  - **Price**: 590000") == ["62"]
+
+
+def test_rows_that_lost_the_model_are_not_results():
+    from evaluation.run_category_e_prelim import lost_model
+    assert lost_model({"errors": ["extract_constraints[json_schema] failed: OpenAIConnectionError: Connection error."]})
+    assert not lost_model({"errors": ["spatial: no valid tool call from model; deterministic plan used"]})
+    assert not lost_model({})

@@ -76,6 +76,31 @@ def variant_table(rows: List[Dict[str, Any]]) -> str:
     return "\n".join(out)
 
 
+def ground_truth_table(rows: List[Dict[str, Any]]) -> str:
+    """Answers checked against each question's stored ground truth (grounded questions only)."""
+    out = ["| Variant | Answers fully right | Exact blocks | E1 grant and max price right | E1 asked for the missing fact | "
+           "E1 invented a budget | E2 named the unlocking change | Follow-up completed right |", "|---|---|---|---|---|---|---|---|"]
+    for v in sorted({r["variant"] for r in rows}):
+        gts = [(r, r["scores"].get("ground_truth")) for r in rows if r["variant"] == v and r.get("status") == "ok"]
+        gts = [(r, g) for r, g in gts if g]
+        if not gts:
+            continue
+        def frac(pred, pool):
+            pool = [g for r, g in gts if pool(r, g)]
+            return f"{sum(1 for g in pool if pred(g))}/{len(pool)}" if pool else "–"
+        e1_full = lambda r, g: r["sub_use_case"] == "E1" and "grants_correct" in g
+        e1_miss = lambda r, g: r["sub_use_case"] == "E1" and "asked_for_missing" in g
+        out.append("| " + " | ".join([
+            v, frac(lambda g: g["success"], lambda r, g: True), frac(lambda g: g["blocks_exact"], lambda r, g: True),
+            frac(lambda g: g["grants_correct"] and g["max_price_correct"], e1_full),
+            frac(lambda g: g["asked_for_missing"], e1_miss), frac(lambda g: g["invented_budget"], e1_miss),
+            frac(lambda g: g["best_change_mentioned"], lambda r, g: r["sub_use_case"] == "E2"),
+            (lambda fus: f"{sum(1 for f in fus if (f.get('scores') or {}).get('success'))}/{len(fus)}" if fus else "–")(
+                [r["follow_up"] for r, g in gts if r.get("follow_up")]),
+        ]) + " |")
+    return "\n".join(out) if len(out) > 2 else "_No ground truth in these questions._"
+
+
 def subcase_table(rows: List[Dict[str, Any]]) -> str:
     out = ["| Sub-use case | Variant | Task success | Tool F1 | Param EM | CSR | Mean latency (s) |", "|---|---|---|---|---|---|---|"]
     for sub in ("E1", "E2"):
@@ -165,6 +190,15 @@ def pick_traces(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return uniq
 
 
+def tool_wiring() -> str:
+    """Which tools ran real or mocked, read from the config the run used (tools.use_mock)."""
+    from agents.supervisor import load_config
+    wiring = load_config().get("tools", {}).get("use_mock", {})
+    mocked = sorted(t for t, v in wiring.items() if v == "mock")
+    return (f"Real tools: {len(wiring) - len(mocked)} of {len(wiring)}; mocked: {', '.join(mocked) or 'none'}. "
+            "Market data from Member 1's DuckDB snapshot, spatial from Member 2's index.")
+
+
 def main() -> None:
     path = Path(sys.argv[1]).resolve()
     rows = load(path)
@@ -175,8 +209,7 @@ def main() -> None:
     out = out_dir / (path.stem + ".md")
     md = [f"# Experiment 1, preliminary: Category E ({len(ITEMS)} queries)", "",
           f"Model `{model}` via profile `{profile}`; {len(rows)} runs; source `{path.relative_to(PROJECT_ROOT)}`. "
-          "SQL, financial and policy tools are deterministic mocks; spatial tools are real (Member 2's index). "
-          "No runtime auditor yet (Member 5): Variant C runs with a pass-through auditor.", "",
+          f"{tool_wiring()} No runtime auditor yet (Member 5): Variant C runs with a pass-through auditor.", "",
           f"![Accuracy and latency by architecture]({path.stem}_accuracy_latency.svg)", "",
           "## Per variant", "", variant_table(rows), "",
           "CSR = share of the blocks an answer presents as matches that satisfy every stated constraint, judged on the evidence "
@@ -185,6 +218,11 @@ def main() -> None:
           "tool, which is scored by the map columns instead. Task success: an E1 answer recommends at least one block and every "
           "recommended block satisfies every constraint with none fabricated; an E2 answer presents nothing as a match and "
           "offers a concrete trade-off (C's structured relaxation, or the same advice in any variant's text).", "",
+          "## Checked against the ground truth", "", ground_truth_table(rows), "",
+          "Fully right: E1 names exactly the true blocks and the calculators' grant total and maximum price (within $1), or, "
+          "where a fact was left out, asks for it without inventing a budget; E2 presents no match and names the number "
+          "of the single change that unlocks blocks. Follow-up: after the user supplies the missing fact, the second answer "
+          "names exactly the true blocks within the new affordability cap and the correct grant total and maximum price.", "",
           "## E1 (full-stack synthesis) vs E2 (zero-result relaxation)", "", subcase_table(rows), "",
           "## Tool-selection errors", "", taxonomy(rows), "",
           "## Per query", "", per_query(rows), "",

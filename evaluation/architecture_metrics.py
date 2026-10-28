@@ -90,7 +90,7 @@ def constraint_satisfaction_rate(user_constraints: Dict[str, Any], blocks: Itera
 
 import re as _re
 
-_BLOCK_RE = _re.compile(r"\b(?:Blk|Block)\s*[#:]?\s*\**\s*([0-9]{1,4}[A-Z]?)\b", _re.I)
+_BLOCK_RE = _re.compile(r"\b(?:Blk|Block)\s*\**\s*[#:]?\s*\**\s*([0-9]{1,4}[A-Z]?)\b", _re.I)  # also "**Block**: 62"
 _HEADING_RE = _re.compile(r"^\s*(#{1,6})\s+(.*)$")
 _PSEUDO_HEADING_RE = _re.compile(r"^\s*\*\*([^*]+)\*\*:?\s*$")
 # words that mark a section or line as NOT a recommendation (near misses, exclusions, alternatives)
@@ -226,6 +226,74 @@ def task_success(sub_use_case: str, csr: Dict[str, Any], fabricated: int, relaxe
     return False
 
 
+# ---------------------------------------------------------------------------
+# Ground-truth scoring (grounded questions carry ground_truth_facts; see evaluation/ground_category_e.py)
+# ---------------------------------------------------------------------------
+_NUM_RE = _re.compile(r"(?<![\w.])\$?\s?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(\s*k\b)?", _re.I)
+_ASK_CUE = _re.compile(r"\?|\b(please|could you|can you|let (?:me|us) know|share|provide|tell (?:me|us)|confirm)\b", _re.I)
+_BUDGET_CLAIM = _re.compile(r"\b(?:maximum|max\.?)\s+(?:purchase\s+price|budget|price|loan(?:\s+amount)?)\b[^.\n]{0,40}?\$\s?\d", _re.I)
+# A missing calculator input counts as asked for when the answer names it in plain words.
+_MISSING_WORDS = {
+    "cash_savings": ("cash", "saving"), "cpf_oa_balance": ("cpf",), "monthly_income": ("income",),
+    "monthly_debt_obligations": ("debt",), "remaining_lease_years": ("lease",),
+    "youngest_buyer_age": ("age",), "oldest_buyer_age": ("age",), "average_applicant_age": ("age",),
+    "youngest_core_member_age": ("age",), "loan_eligibility_confirmed": ("loan",), "eligibility_confirmed": ("eligib",),
+    "continuous_employment_12_months": ("employ",), "total_grants": ("grant",),
+}
+
+
+def numbers_in(text: str) -> List[float]:
+    out = []
+    for whole, frac, k in _NUM_RE.findall(text or ""):
+        v = float(whole.replace(",", "") + (frac or ""))
+        out.append(v * 1000 if k else v)
+    return out
+
+
+def mentions_amount(text: str, value: Optional[float], tol: float = 1.0) -> bool:
+    return value is not None and any(abs(n - float(value)) <= tol for n in numbers_in(text))
+
+
+def asked_for_missing(draft: str, missing: List[str]) -> bool:
+    low = (draft or "").lower()
+    named = all(any(w in low for w in _MISSING_WORDS.get(m, (m.replace("_", " "),))) for m in missing)
+    return named and bool(_ASK_CUE.search(draft or ""))
+
+
+def ground_truth_scores(item: Dict[str, Any], state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Compare an answer with the question's stored ground truth. None for questions without ground truth."""
+    truth = item.get("ground_truth_facts")
+    if not truth or "matching_block_keys" not in truth:
+        return None
+    draft = state.get("draft_response") or ""
+    rec = set(recommended_block_numbers(draft))
+    true = {str(k).split()[0].upper() for k in truth["matching_block_keys"]}
+    tp = len(rec & true)
+    out: Dict[str, Any] = {
+        "blocks_exact": rec == true,
+        "block_precision": tp / len(rec) if rec else (1.0 if not true else 0.0),
+        "block_recall": tp / len(true) if true else (1.0 if not rec else 0.0),
+    }
+    sub = item.get("sub_use_case")
+    fin = truth.get("financial") or {}
+    if sub == "E1" and fin:
+        if item.get("omitted_financial_facts"):
+            out["asked_for_missing"] = asked_for_missing(draft, truth.get("missing_financial_inputs") or [])
+            out["invented_budget"] = bool(_BUDGET_CLAIM.search(draft))
+            out["success"] = out["blocks_exact"] and out["asked_for_missing"] and not out["invented_budget"]
+        else:
+            out["grants_correct"] = mentions_amount(draft, fin["calculate_cpf_housing_grants"].get("total_grants"))
+            out["max_price_correct"] = mentions_amount(draft, fin["calculate_maximum_affordability"].get("max_purchase_price"))
+            out["success"] = out["blocks_exact"] and out["grants_correct"] and out["max_price_correct"]
+    elif sub == "E1":
+        out["success"] = out["blocks_exact"]
+    elif sub == "E2":
+        best = truth.get("best_single_change") or {}
+        out["best_change_mentioned"] = mentions_amount(draft, best.get("relaxed"), tol=0.5)
+        out["success"] = not rec and out["best_change_mentioned"]
+    return out
+
+
 COARSE_OF = {"market_sql": "data", "spatial": "data", "financial": "data", "policy_rag": "policy"}
 
 
@@ -243,7 +311,7 @@ def score_item(item: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     csr = constraint_satisfaction_rate(state.get("user_constraints", {}), recommended_blocks(state))
     fabricated = sum(1 for b in recommended_blocks(state) if b.get("_fabricated"))
     relaxed = relaxation_offered(state)
-    return {
+    row = {
         "id": item["id"], "variant": variant,
         "tool_selection": tool_selection_prf(item.get("expected_mcp_calls", []), state.get("tool_call_log", [])),
         "parameter_em": parameter_exact_match(item.get("expected_mcp_calls", []), state.get("tool_call_log", [])),
@@ -251,7 +319,8 @@ def score_item(item: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
         "fabricated_blocks": fabricated,
         "map_fabricated": sum(1 for b in map_blocks(state) if b.get("_fabricated")),
         "relaxation_offered": relaxed,
-        "task_success": task_success(item.get("sub_use_case", ""), csr, fabricated, relaxed),
+        "task_success_structural": task_success(item.get("sub_use_case", ""), csr, fabricated, relaxed),
+        "ground_truth": ground_truth_scores(item, state),
         "map": constraint_satisfaction_rate(state.get("user_constraints", {}), map_blocks(state)),
         "routing": routing_accuracy(item.get("expected_agents", []), state.get("active_subagents", []), variant),
         "relaxation_attempted": bool((state.get("relaxation") or {}).get("suggestions")),
@@ -259,6 +328,10 @@ def score_item(item: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
         "n_tool_calls": len(state.get("tool_call_log", [])),
         "n_errors": len(state.get("errors", [])),
     }
+    gt = row["ground_truth"]
+    # With ground truth, success means the answer is right; without it (stand-in questions), the structural rule.
+    row["task_success"] = gt["success"] if gt else row["task_success_structural"]
+    return row
 
 
 def aggregate(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -278,5 +351,7 @@ def aggregate(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
             "fabricated_blocks_total": sum(r.get("fabricated_blocks", 0) for r in rs),
             "map_precision": mean((r.get("map") or {}).get("rate") for r in rs),
             "task_success_rate": mean((1.0 if r.get("task_success") else 0.0) for r in rs),
+            "blocks_exact_rate": mean((1.0 if (r.get("ground_truth") or {}).get("blocks_exact") else 0.0)
+                                      for r in rs if r.get("ground_truth")),
         }
     return out

@@ -201,16 +201,221 @@ EXTRACT_SYSTEM = (
 )
 
 
+FIN_SECTIONS = {"grants": "calculate_cpf_housing_grants", "affordability": "calculate_maximum_affordability"}
+
+
+def _section_fields(section: str) -> set:
+    from agents.schemas import TOOL_INPUT_MODEL
+    return set(TOOL_INPUT_MODEL[FIN_SECTIONS[section]].model_fields)
+
+
+def merge_constraints(prior: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
+    """The previous turn's constraints, updated with anything this message states. financial_inputs merges per field."""
+    out = dict(prior or {})
+    for k, v in (new or {}).items():
+        if k == "financial_inputs":
+            fin = {sec: dict(vals or {}) for sec, vals in (out.get("financial_inputs") or {}).items()}
+            for sec, vals in (v or {}).items():
+                fin.setdefault(sec, {}).update({f: x for f, x in (vals or {}).items() if x is not None})
+            out["financial_inputs"] = fin
+        elif v not in (None, [], {}, False):
+            out[k] = v
+    return out
+
+
+_AGES_RE = re.compile(r"\b(?:aged?|are|am)\s+(\d{2})(?:\s*(?:and|&|,)\s*(\d{2}))?\b", re.I)
+_CASH_RE = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)\s*(k)?\s*(?:in\s+)?(?:cash|savings)|(?:cash|savings)[^$\n]{0,25}\$\s?(\d[\d,]*(?:\.\d+)?)\s*(k)?", re.I)
+
+
+def parse_clarification_answer(text: str, needed: List[str], conversation: str = "") -> Dict[str, Dict[str, Any]]:
+    """No-model reading of a reply to the follow-up question, for the facts the calculators most often lack (cash,
+    ages). Only stated facts are recorded; the youngest core member equals the youngest buyer only when the
+    conversation says there are no children. The model path reads any fact through structured extraction."""
+    found: Dict[str, Any] = {}
+    m = _CASH_RE.search(text or "")
+    if m and "cash_savings" in needed:
+        amount, k = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+        found["cash_savings"] = float(amount.replace(",", "")) * (1000 if k else 1)
+    m = _AGES_RE.search(text or "")
+    if m and any("age" in n for n in needed):
+        ages = [int(a) for a in m.groups() if a]
+        young, old = min(ages), max(ages)
+        found.update(youngest_buyer_age=young, oldest_buyer_age=old, average_applicant_age=sum(ages) / len(ages))
+        if re.search(r"\bno (?:children|kids)\b", f"{conversation} {text}", re.I):
+            found["youngest_core_member_age"] = young
+    if re.search(r"\bno (?:other )?debts?\b", text or "", re.I) and "monthly_debt_obligations" in needed:
+        found["monthly_debt_obligations"] = 0.0
+    return {sec: {f: v for f, v in found.items() if f in _section_fields(sec)} for sec in FIN_SECTIONS
+            if any(f in _section_fields(sec) for f in found)}
+
+
+# Calculator facts the user must state. Code reads them from the user's words (stated_financial_inputs); the
+# model's value for any of them is never used, because in the live run it turned "married Singapore citizen
+# couple" into SC_Single, invented ages and an interest rate, and passed zero grants. The model may still set
+# the remaining fields (flat category and type, loan type, the purchase price to cost).
+FACT_FIELDS = {
+    "citizenship_pair", "first_timer_status", "monthly_income", "youngest_buyer_age", "youngest_core_member_age",
+    "oldest_buyer_age", "average_applicant_age", "remaining_lease_years", "eligibility_confirmed",
+    "loan_eligibility_confirmed", "continuous_employment_12_months", "proximity", "proximity_eligibility_confirmed",
+    "cpf_oa_balance", "cash_savings", "monthly_debt_obligations", "total_grants", "interest_rate", "tenure_years",
+    "legal_and_valuation_fees", "additional_buyer_stamp_duty", "ltv_ratio",
+}
+FIN_TOOL_SECTION = {"calculate_cpf_housing_grants": "grants", "calculate_maximum_affordability": "affordability",
+                    "calculate_bsd_and_upfront_outlay": "upfront"}
+_AMOUNT = r"\$\s?(\d[\d,]*(?:\.\d+)?)\s*(k)?"
+
+
+def _amount(m: re.Match) -> float:
+    return float(m.group(1).replace(",", "")) * (1000 if m.group(2) else 1)
+
+
+def stated_financial_inputs(text: str) -> Dict[str, Dict[str, Any]]:
+    """The calculator facts the user's own words state, in the financial_inputs shape. Nothing is inferred:
+    "couple" alone gives no citizenship, and the youngest core member is the youngest buyer only when the
+    user says there are no children."""
+    t = text or ""
+    f: Dict[str, Any] = {}
+    if re.search(r"\bcitizen\b.{0,40}\b(?:permanent resident|PR)\b|\b(?:permanent resident|PR)\b.{0,40}\bcitizen\b", t, re.I):
+        f["citizenship_pair"] = "SC_PR"
+    elif re.search(r"\bsingle\s+(?:singapore(?:an)?\s+)?citizen\b", t, re.I):
+        f["citizenship_pair"] = "SC_Single"
+    elif re.search(r"\bsingapore(?:an)?\s+citizen\s+couple\b|\bboth\s+(?:are\s+)?singapore(?:an)?\s+citizens\b", t, re.I):
+        f["citizenship_pair"] = "SC_SC"
+    if re.search(r"\bsecond[- ]timers?\b", t, re.I):
+        f["first_timer_status"] = False
+    elif re.search(r"\bfirst[- ]timers?\b", t, re.I):
+        f["first_timer_status"] = True
+    m = _AGES_RE.search(t)
+    if m:
+        ages = [int(a) for a in m.groups() if a]
+        f.update(youngest_buyer_age=min(ages), oldest_buyer_age=max(ages), average_applicant_age=sum(ages) / len(ages))
+        if re.search(r"\bno (?:children|kids)\b", t, re.I):
+            f["youngest_core_member_age"] = min(ages)
+    rb = rule_based_extract(t)
+    if rb.household_income is not None:
+        f["monthly_income"] = rb.household_income
+    if rb.cpf_oa_balance is not None:
+        f["cpf_oa_balance"] = rb.cpf_oa_balance
+    m = _CASH_RE.search(t)
+    if m:
+        amount, k = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+        f["cash_savings"] = float(amount.replace(",", "")) * (1000 if k else 1)
+    if re.search(r"\bno (?:other )?(?:debts?|loans?|monthly (?:debt|loan) (?:payments|obligations))\b", t, re.I):
+        f["monthly_debt_obligations"] = 0.0
+    if re.search(r"(?:continuously employed|employed continuously).{0,30}\b12 months\b", t, re.I):
+        f["continuous_employment_12_months"] = True
+    if re.search(r"eligibility for (?:the )?grants?.{0,40}\bconfirmed\b|grant eligibility (?:is |has been )?confirmed", t, re.I):
+        f["eligibility_confirmed"] = True
+    if re.search(r"eligibility for .{0,30}\b(?:HDB|bank) loan (?:is |has been )?confirmed|\b(?:HDB|bank) loan(?: eligibility)? (?:is |has been )?confirmed", t, re.I):
+        f["loan_eligibility_confirmed"] = True
+    if re.search(r"\bbank loan\b", t, re.I):
+        f["loan_type"] = "bank"
+    elif re.search(r"\bHDB loan\b", t, re.I):
+        f["loan_type"] = "hdb"
+    if re.search(r"\bno proximity (?:housing )?grant\b", t, re.I):
+        f["proximity"] = "none"
+    if re.search(r"\bno (?:housing )?grants\b", t, re.I):
+        f["total_grants"] = 0.0
+    m = re.search(r"(\d{2})\s*years of remaining lease for the .{0,30}calculation|\b(?:assume|use)\s+(\d{2})\s*years of remaining lease", t, re.I)
+    if m:
+        f["remaining_lease_years"] = float(m.group(1) or m.group(2))
+    m = re.search(r"interest rate of (\d+(?:\.\d+)?)\s*%|(\d+(?:\.\d+)?)\s*%\s*(?:p\.a\.|per annum|interest)", t, re.I)
+    if m:
+        f["interest_rate"] = float(m.group(1) or m.group(2))
+    m = re.search(r"tenure of (\d{1,2}) years|(\d{1,2})[- ]year (?:loan )?tenure", t, re.I)
+    if m:
+        f["tenure_years"] = int(m.group(1) or m.group(2))
+    if re.search(r"\bresale\b", t, re.I):
+        f["flat_category"] = "resale"
+    elif re.search(r"\bbto\b", t, re.I):
+        f["flat_category"] = "bto"
+    if len(rb.flat_types) == 1:
+        f["flat_type"] = rb.flat_types[0]
+    upfront: Dict[str, Any] = {}
+    m = re.search(r"(?:buy(?:ing)?|purchas(?:e|ing))\b[^$.]{0,40}\bfor " + _AMOUNT, t, re.I)
+    if m:
+        upfront["purchase_price"] = _amount(m)
+    for field, pattern in (("market_valuation", r"valued at " + _AMOUNT), ("loan_amount", r"loan of " + _AMOUNT),
+                           ("legal_and_valuation_fees", r"fees of " + _AMOUNT)):
+        m = re.search(pattern, t, re.I)
+        if m:
+            upfront[field] = _amount(m)
+    if re.search(r"\bno ABSD\b|\bno additional buyer'?s stamp duty\b", t, re.I):
+        upfront["additional_buyer_stamp_duty"] = 0.0
+    from agents.schemas import TOOL_INPUT_MODEL
+    out: Dict[str, Dict[str, Any]] = {}
+    for tool, sec in FIN_TOOL_SECTION.items():
+        fields = set(TOOL_INPUT_MODEL[tool].model_fields)
+        vals = {k: v for k, v in {**f, **upfront}.items() if k in fields}
+        # a section exists only when the user stated one of its facts, not just a flat type or loan type
+        if any(k in FACT_FIELDS or k in upfront for k in vals):
+            out[sec] = vals
+    if "upfront" in out and "purchase_price" not in out["upfront"]:
+        del out["upfront"]  # the upfront calculator needs a price; costing the budget is the agent's call
+    return out
+
+
+def trusted_financial_inputs(model: Optional[Dict[str, Any]], stated: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The model's financial_inputs reduced to what the user stated: stated facts override, the model's value for a
+    FACT_FIELDS field is dropped, and a section the user said nothing about is dropped whole."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for sec, facts in stated.items():
+        extra = {k: v for k, v in ((model or {}).get(sec) or {}).items() if v is not None and k not in FACT_FIELDS}
+        out[sec] = {**extra, **facts}
+    return out or None
+
+
+def has_financial_facts(c: Dict[str, Any]) -> bool:
+    return any(vals for vals in (c.get("financial_inputs") or {}).values())
+
+
+def guard_financial_args(name: str, args: Dict[str, Any], c: Dict[str, Any], outputs: Dict[str, Any],
+                         runners: Dict[str, Any]) -> Dict[str, Any]:
+    """A calculator call as the model wrote it, corrected at the tool boundary: stated facts override the model's
+    arguments, facts the user never stated are left out (the calculator then reports them missing), and a confirmed
+    grant total is passed forward, running the grant calculator first if the model has not."""
+    sec = FIN_TOOL_SECTION.get(name)
+    fin = c.get("financial_inputs") or {}
+    if sec is None or not has_financial_facts(c):
+        return args
+    stated = fin.get(sec) or {}
+    out = {k: v for k, v in args.items() if k not in FACT_FIELDS}
+    out.update(stated)
+    grant = "calculate_cpf_housing_grants"
+    if sec != "grants" and "total_grants" not in out:
+        if grant not in outputs and grant in runners and fin.get("grants"):
+            outputs[grant] = runners[grant](**guard_financial_args(grant, {}, c, outputs, runners))
+        if (outputs.get(grant) or {}).get("status") == "ok":
+            out["total_grants"] = outputs[grant]["total_grants"]
+    if sec == "upfront":
+        for k in ("cpf_oa_balance", "cash_savings", "loan_type"):
+            if k in (fin.get("affordability") or {}):
+                out.setdefault(k, fin["affordability"][k])
+        aff = outputs.get("calculate_maximum_affordability") or {}
+        if aff.get("status") == "ok" and aff.get("ltv_ratio") is not None \
+                and out.get("loan_type", "hdb") == (fin.get("affordability") or {}).get("loan_type", "hdb"):
+            out.setdefault("ltv_ratio", aff["ltv_ratio"])
+    return out
+
+
 def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
     query = last_user_query(state)
+    prior = state.get("prior_constraints")
+    pending = state.get("pending_clarification")
     llm = get_llm()
     extracted: Optional[ExtractedConstraints] = None
     errors: List[str] = []
+    system = EXTRACT_SYSTEM
+    if pending:
+        system += (f" This message answers the assistant's earlier question about: {', '.join(pending['needed'])}. "
+                   "Record each stated answer under financial_inputs.grants and financial_inputs.affordability using exactly "
+                   "those field names; facts already known: "
+                   f"{json.dumps((prior or {}).get('financial_inputs') or {}, default=str)}. Leave everything else empty.")
     if llm is not None:
         for method in ("json_schema", "json_mode"):
             try:
                 structured = llm.with_structured_output(ExtractedConstraints, method=method)
-                extracted = structured.invoke([sys_msg(EXTRACT_SYSTEM), HumanMessage(content=query)])
+                extracted = structured.invoke([sys_msg(system), HumanMessage(content=query)])
                 break
             except Exception as e:  # noqa: BLE001
                 errors.append(f"extract_constraints[{method}] failed: {type(e).__name__}: {str(e)[:120]}")
@@ -227,6 +432,16 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
     constraints = extracted.model_dump()
     if extracted.financial_inputs is not None:
         constraints["financial_inputs"] = extracted.financial_inputs.model_dump(exclude_unset=True)
+    # calculator facts come from the user's own words in every turn so far, never from the model's reading of them
+    users = " ".join(m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user")
+    constraints["financial_inputs"] = trusted_financial_inputs(constraints.get("financial_inputs"), stated_financial_inputs(users or query))
+    if pending:
+        conversation = " ".join(m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict))
+        answers = parse_clarification_answer(query, pending["needed"], conversation)
+        if answers:
+            constraints = merge_constraints(constraints, {"financial_inputs": answers})
+    if prior:
+        constraints = merge_constraints(prior, constraints)
     return {"user_constraints": constraints, "errors": errors}
 
 
@@ -240,7 +455,7 @@ def decide_routing(c: Dict[str, Any]) -> List[str]:
         active.append("market_sql")
     if c.get("amenity_radii_meters") or c.get("school_name") or len(c.get("work_destinations") or []) >= 2:
         active.append("spatial")
-    if c.get("financial_inputs") or c.get("household_income") or c.get("cpf_oa_balance") or (c.get("citizenship_scheme") and c.get("max_budget_sgd")):
+    if has_financial_facts(c) or c.get("household_income") or c.get("cpf_oa_balance") or (c.get("citizenship_scheme") and c.get("max_budget_sgd")):
         active.append("financial")
     if c.get("policy_question"):
         active.append("policy_rag")
@@ -367,7 +582,7 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
                         errors.append(f"{label}: model called unknown tool {name}")
                         msgs.append(ToolMessage(content=json.dumps({"error": f"unknown tool {name}"}), tool_call_id=tc["id"]))
                         continue
-                    result = runners[name](**args)
+                    result = runners[name](**guard_financial_args(name, args, c, outputs, runners))
                     used_llm_tools = True
                     outputs[name] = result
                     msgs.append(ToolMessage(content=json.dumps(result, default=str)[:12000], tool_call_id=tc["id"]))
@@ -486,11 +701,23 @@ def slot_outputs(outputs: Dict[str, Any], towns: List[str]) -> Dict[str, Any]:
     return update
 
 
+def requested_outputs(agent: str, outputs: Dict[str, Any], c: Dict[str, Any], query: str) -> Dict[str, Any]:
+    """Evidence gate for Variant C's market and spatial specialists: a tool's result becomes evidence only when the
+    extracted constraints call for that tool (deterministic_plan). In the 27 Oct rerun the spatial agent ran the school
+    check with school_name null and the commute check with blank workplaces, and their empty results filtered every
+    block out (E1-04); the market agent pulled comparable sales at coordinates it made up. The calls stay in the
+    tool-call log, so tool-selection metrics still count them."""
+    if agent not in ("market_sql", "spatial"):
+        return outputs
+    asked = {name for name, _ in deterministic_plan(agent, c, query)}
+    return {name: out for name, out in outputs.items() if name in asked or name == "sync_interactive_map_ui"}
+
+
 def make_specialist_node(agent: str) -> Callable[[HDBCompassState], Dict[str, Any]]:
     def node(state: HDBCompassState) -> Dict[str, Any]:
         c = state.get("user_constraints", {})
         outputs, log, errors, final = run_react(agent, tools_for_agent(agent), AGENT_SYSTEM[agent], last_user_query(state), c)
-        update = slot_outputs(outputs, c.get("towns") or [])
+        update = slot_outputs(requested_outputs(agent, outputs, c, last_user_query(state)), c.get("towns") or [])
         update.update({"tool_call_log": log, "errors": errors,
                        "subagent_notes": [{"agent": agent, "text": (final or "")[:4000]}] if final else []})
         return update
@@ -794,8 +1021,59 @@ def synthesis_evidence(state: HDBCompassState) -> Tuple[Dict[str, Any], str]:
               "distance_matches": len(spatial) if spatial is not None else None,
               "blocks_meeting_every_constraint": len(matches)}
     market_context = {k: v for k, v in sql.items() if k != "query_resale_blocks_by_criteria"}
+    rule = GROUNDED_RULE
+    if 0 < len(matches) <= 50:
+        # in the 27 Oct rerun the writer listed 4 of 8 and 5 of 7 matches although the join was exact
+        rule += f" List all {len(matches)} blocks in matching_blocks; do not shorten the list."
     return ({**base, "matching_blocks": matches[:50], "match_counts": counts, "market_context": market_context,
-             "relaxation": state.get("relaxation")}, GROUNDED_RULE)
+             "relaxation": state.get("relaxation")}, rule)
+
+
+FACT_WORDS = {
+    "cash_savings": "your cash savings",
+    "cpf_oa_balance": "the CPF Ordinary Account amount you can use",
+    "monthly_income": "your HFE-assessed monthly household income",
+    "monthly_debt_obligations": "your monthly debt repayments (or that you have none)",
+    "remaining_lease_years": "the remaining lease you want the calculation to assume",
+    "youngest_buyer_age": "the age of each buyer", "oldest_buyer_age": "the age of each buyer",
+    "average_applicant_age": "the age of each buyer",
+    "youngest_core_member_age": "the age of the youngest person who will live in the flat",
+    "citizenship_pair": "each buyer's citizenship", "first_timer_status": "whether you are first-timers",
+    "flat_type": "the flat type", "eligibility_confirmed": "whether your grant eligibility is confirmed",
+    "continuous_employment_12_months": "whether you have been employed continuously for the past 12 months",
+    "proximity": "whether you are buying near or with your parents or children",
+    "proximity_eligibility_confirmed": "whether your proximity grant eligibility is confirmed",
+    "loan_eligibility_confirmed": "whether your HDB loan eligibility is confirmed",
+}
+
+
+def clarification_needed(state: HDBCompassState) -> Optional[Dict[str, Any]]:
+    """Facts the grant and affordability calculators reported missing, as one plain question. Upfront costs are
+    left out: they need one chosen flat's valuation, loan and quoted fees, which a search question cannot supply."""
+    fin = state.get("financial_breakdown") or {}
+    needed: List[str] = []
+    for name in ("calculate_cpf_housing_grants", "calculate_maximum_affordability"):
+        v = fin.get(name)
+        if isinstance(v, dict) and v.get("status") == "needs_information":
+            needed += v.get("missing_inputs") or []
+    if (fin.get("calculate_cpf_housing_grants") or {}).get("status") == "ok":
+        needed = [n for n in needed if n != "total_grants"]   # the grant result supplies it
+    needed = list(dict.fromkeys(needed))
+    if not needed:
+        return None
+    phrases = list(dict.fromkeys(FACT_WORDS.get(n, n.replace("_", " ")) for n in needed))
+    listed = phrases[0] if len(phrases) == 1 else ", ".join(phrases[:-1]) + " and " + phrases[-1]
+    return {"needed": needed, "question": f"To finish your grant and budget estimate, please tell me {listed}."}
+
+
+def user_request(state: HDBCompassState) -> str:
+    """What the answer must address. A reply to the follow-up question ("We are aged 32 and 30.") completes the
+    earlier request, so the answer still covers everything first asked for (in the 27 Oct rerun it listed the
+    blocks but dropped the grants and budget it now had)."""
+    users = [m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user"]
+    if state.get("pending_clarification") and len(users) > 1:
+        return (" ".join(users[:-1]) + f"\n(Reply to your follow-up question: {users[-1]})")
+    return last_user_query(state)
 
 
 def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
@@ -804,6 +1082,11 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     log: List[Dict[str, Any]] = []
     payload = build_map_payload(blocks, c, log) if blocks else {}
     evidence, rule = synthesis_evidence(state)
+    clar = clarification_needed(state)
+    if clar:
+        evidence["clarification_needed"] = clar
+        rule += (" Some financial facts are missing: state no maximum budget or affordability figure, and end with "
+                 "clarification_needed.question.")
     verdict = state.get("auditor_verdict") or {}
     text = ""
     errors: List[str] = []
@@ -811,7 +1094,7 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     if llm is not None:
         try:
             msgs = [sys_msg(SYNTH_SYSTEM),
-                    HumanMessage(content=f"User query: {last_user_query(state)}\n\n{rule}\n\nEvidence JSON:\n{json.dumps(evidence, default=str)[:24000]}")]
+                    HumanMessage(content=f"User query: {user_request(state)}\n\n{rule}\n\nEvidence JSON:\n{json.dumps(evidence, default=str)[:24000]}")]
             if verdict and not verdict.get("passed", True) and verdict.get("critique"):
                 msgs.append(HumanMessage(content=f"Your previous draft was rejected by the auditor: {verdict['critique']}. Rewrite it, fixing every issue."))
             text = llm.invoke(msgs).content
@@ -825,7 +1108,10 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     elif state.get("financial_breakdown") or state.get("rag_policy_passages"):
         if "HFE" not in text:
             text += HFE_DISCLAIMER
-    return {"draft_response": text, "map_ui_payload": payload, "tool_call_log": log, "errors": errors}
+    if clar and clar["question"] not in text:
+        text = text.rstrip() + "\n\n" + clar["question"]
+    return {"draft_response": text, "map_ui_payload": payload, "tool_call_log": log, "errors": errors,
+            "clarification": clar}
 
 
 # ---------------------------------------------------------------------------
@@ -884,7 +1170,21 @@ def finalize_node(state: HDBCompassState) -> Dict[str, Any]:
     return {"messages": [{"role": "assistant", "content": state.get("draft_response", "")}]}
 
 
-def initial_state(query: str, variant: str, map_state: Optional[Dict[str, Any]] = None) -> HDBCompassState:
-    return {"messages": [{"role": "user", "content": query}], "variant": variant, "active_subagents": [],
+def initial_state(query: str, variant: str, map_state: Optional[Dict[str, Any]] = None,
+                  previous: Optional[Dict[str, Any]] = None) -> HDBCompassState:
+    """previous: the final state of the last turn in the same conversation. Its messages, constraints and any
+    open follow-up question carry forward, so a reply such as "we have $25,000 in cash" completes the earlier request."""
+    history = list((previous or {}).get("messages") or [])
+    return {"messages": history + [{"role": "user", "content": query}], "variant": variant, "active_subagents": [],
             "candidate_blocks_intersection": [], "map_ui_payload": map_state or {}, "draft_response": "",
-            "auditor_verdict": {}, "tool_call_log": [], "errors": [], "subagent_notes": []}
+            "auditor_verdict": {}, "tool_call_log": [], "errors": [], "subagent_notes": [],
+            "prior_constraints": (previous or {}).get("user_constraints"),
+            "pending_clarification": (previous or {}).get("clarification"), "clarification": None}
+
+
+def conversation_text(state: HDBCompassState) -> str:
+    """The latest message, preceded by the earlier turns when there are any (for agents without structured memory)."""
+    msgs = [m for m in state.get("messages", []) if isinstance(m, dict)]
+    if len(msgs) <= 1:
+        return last_user_query(state)
+    return "\n".join(f"{m.get('role', 'user').capitalize()}: {m.get('content', '')}" for m in msgs)

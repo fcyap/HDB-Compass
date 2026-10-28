@@ -159,9 +159,37 @@ Experiment 1.
 
 ## 6. Evaluation hooks (Member 5)
 
-- Each variant exposes `run(query: str, map_state: dict | None = None) -> HDBCompassState`
+- Each variant exposes `run(query: str, map_state: dict | None = None, previous: dict | None = None) -> HDBCompassState`
   from `agents/arch_1_monolith.py`, `agents/arch_2_coarse.py`, `agents/arch_3_specialist_5agent.py`.
+  `previous` is the final state of the last turn in the same conversation (see §7).
+- Category E (`evaluation/category_e_queries.json`, built by `python -m evaluation.ground_category_e`) is grounded on
+  the real database: each item has `stated_constraints`, `financial_inputs` (the facts the question states),
+  `ground_truth_facts` (matching block keys, grant total, maximum purchase price, relaxations, snapshot and rule
+  version) and, for the two deliberately incomplete questions, a `follow_up` turn with its own ground truth.
+  `evaluation/architecture_metrics.ground_truth_scores(item, state)` scores an answer against it.
 - Predicted tool calls = `state["tool_call_log"]` (tool name + arguments). Compare against
   `expected_mcp_calls` in `evaluation/golden_dataset_90.json`.
 - Routing trajectory = `state["active_subagents"]`.
 - Latency/tokens come from LangSmith; the runner should checkpoint per query to JSONL.
+
+## 7. Follow-up questions for missing financial facts (Member 4)
+
+When the grant or affordability calculator returns `needs_information`, the Supervisor sets
+`state["clarification"] = {"needed": [calculator fields], "question": "To finish your grant and budget estimate, please
+tell me ..."}`, states no budget, and ends the answer with that question. Upfront costs are not asked for during a
+search: they need one chosen flat's valuation, loan and quoted fees.
+
+To continue the conversation, pass the previous final state back: `run(reply, previous=state)`. The earlier messages,
+constraints and financial facts carry over (`prior_constraints`, `pending_clarification`); the reply's facts are merged
+field by field and the request is re-run. For the web app (Member 2), keep the last state per chat session and pass it
+on each message. Variants B and C share this memory through the Supervisor; Variant A receives the conversation text.
+
+
+**Where calculator facts come from.** The financial facts in `user_constraints["financial_inputs"]` are read by code
+from the user's own messages (`stated_financial_inputs` in `agents/supervisor.py`), never taken from the model's
+extraction: in the 27 Oct live run the model turned a married citizen couple into `SC_Single`, invented ages and an
+interest rate, and passed zero grants. Nothing is inferred ("couple" alone gives no citizenship; the youngest core
+member is the youngest buyer only when the user says there are no children). A section exists only when the user
+stated one of its facts, and the finance agent is routed only then. At the tool boundary the same stated facts
+override the model's calculator arguments, and a confirmed grant total is passed to the affordability and upfront
+calculators (`guard_financial_args`). Calculator inputs and outputs (Member 1) are unchanged.
