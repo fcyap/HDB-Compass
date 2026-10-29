@@ -80,3 +80,8 @@ architecture:
   # While a tool is still mocked (tools.use_mock), say "cannot check this yet" instead of answering from its
   # sample data (policy rules, BTO launch prices). See supervisor.UNBUILT_NOTES.
   disclose_unbuilt_tools: true
+  # Variant C / the app: code writes the answer's facts section; the model writes the opening and trade-offs.
+  code_written_facts: true
+  # Optional first pass that lists the stated facts in plain words before the structured constraint reading.
+  # Off by default: it adds a model call; switch on only if the varied-phrasing test shows it helps.
+  extraction_reasoning: false

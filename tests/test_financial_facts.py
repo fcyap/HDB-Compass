@@ -215,3 +215,35 @@ def test_reply_that_is_not_json_gets_one_repair():
     c, notes = sv.read_constraints_with_model(Model(), [])
     assert c.towns == ["BISHAN"] and c.flat_types == ["4 ROOM"]
     assert any("repaired" in n for n in notes)
+
+
+def test_c_answer_facts_are_written_by_code():
+    from unittest.mock import patch
+    from langchain_core.messages import AIMessage
+    from agents import arch_3_specialist_5agent as C
+    item = ITEMS["E1-03"]
+    state = C.graph.invoke(sv.initial_state(item["query"], "C"))           # no model: the template answer
+    seen = {}
+
+    class Writer:
+        def invoke(self, msgs):
+            seen["prompt"] = msgs[-1].content
+            return AIMessage(content="Two Ang Mo Kio blocks fit. Blk 627 is cheaper at $600,000.")   # a wrong price
+
+    with patch.object(sv, "get_llm", return_value=Writer()):
+        out = sv.synthesize_node({**state, "draft_response": ""})
+    facts = sv.template_response(state)
+    assert out["draft_response"].startswith("Two Ang Mo Kio blocks fit.")
+    assert "$600,000" not in out["draft_response"]                          # the sentence with a wrong price is dropped
+    assert facts in out["draft_response"]                                  # the facts section is the code's, verbatim
+    assert "will be shown to the user exactly as written" in seen["prompt"]
+    with patch.object(sv, "get_llm", return_value=Writer()):
+        b = sv.synthesize_node({**state, "variant": "B", "draft_response": ""})
+    assert facts not in b["draft_response"]                                # B keeps the model as the writer
+
+
+def test_opening_keeps_only_figures_from_the_facts():
+    facts = "- Blk 627 ANG MO KIO AVE 9 — median $655,000\n- Grants = **$85,000**"
+    text, dropped = sv.keep_supported_sentences(
+        "Blk 627 costs about $655k. Your grants total $85,000. Blk 999 is also nice. Blk 627 is $700,000.", facts)
+    assert text == "Blk 627 costs about $655k. Your grants total $85,000." and dropped == 2

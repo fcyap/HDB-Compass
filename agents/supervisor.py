@@ -226,8 +226,20 @@ EXTRACT_SYSTEM = (
     " Financial inputs contain only explicit user facts: never infer citizenship from 'couple', "
     "first-timer status, CPF usability, no debts, zero ABSD, fees, grant/loan eligibility or confirmations. "
     "Use financial_inputs.grants/affordability/upfront for supplied calculator facts. "
-    "For comparable transactions, use comparable_resale with explicit verified latitude, longitude and flat type. "
+    "For comparable transactions, use comparable_resale with explicit verified latitude, longitude and flat type; "
+    "leave comparable_resale null unless the user gives coordinates. "
     "Never invent coordinates or substitute a town centre for a project."
+    # how real users write (the varied-phrasing test set): short forms the model should read the same way
+    " Users often write casually. Read 'AMK' as ANG MO KIO, 'TPY' as TOA PAYOH, 'JE' as JURONG EAST; "
+    "'4rm', '4-rm', 'four-room' as '4 ROOM'; '650k', '$0.65m', '650 thousand' as 650000; '<650k', 'under 650k', "
+    "'budget up to $0.65m' as max_budget_sgd; 'lease 65+ yrs', 'at least 65 years left', 'remaining lease of 65 "
+    "years or more' as min_remaining_lease_years 65; '<=400m MRT', 'no more than 400 metres from an MRT station' as "
+    "amenity_radii_meters.mrt 400. Leave amenity_radii_meters empty unless a distance is stated; never use 0. "
+    "Money facts: 'SC couple' or 'both Singapore citizens' is citizenship_pair SC_SC, 'SC + PR' or 'one citizen, "
+    "one PR' is SC_PR, a single citizen is SC_Single; '1st timers' or 'first-time buyers' is first_timer_status "
+    "true; 'no PHG' or 'no proximity grant' is proximity 'none'; 'cash 40k' is cash_savings 40000; 'we're 32 & 30' "
+    "is youngest_buyer_age 30 and oldest_buyer_age 32; 'employed 12 mths continuously' is "
+    "continuous_employment_12_months true; 'calc w 65 yrs lease' is remaining_lease_years 65."
 )
 
 
@@ -643,7 +655,19 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
                    "those field names; facts already known: "
                    f"{json.dumps((prior or {}).get('financial_inputs') or {}, default=str)}. Leave everything else empty.")
     if llm is not None:
-        extracted, notes = read_constraints_with_model(llm, [sys_msg(system), HumanMessage(content=query)])
+        messages = [sys_msg(system), HumanMessage(content=query)]
+        if load_config().get("architecture", {}).get("extraction_reasoning", False):
+            # Guided JSON output leaves the model no room to think, so an optional first pass lists, in plain
+            # words, every constraint and money fact the user stated; the JSON pass then reads from that list too.
+            try:
+                think = llm.invoke([sys_msg("List, as short bullet points, every housing-search constraint and every money "
+                                            "or household fact this buyer states, quoting their words. Add nothing they did "
+                                            "not say."), HumanMessage(content=query)])
+                notes_text = strip_think(think.content if isinstance(think.content, str) else str(think.content))
+                messages.append(HumanMessage(content=f"Facts the buyer stated (from a first read):\n{notes_text[:3000]}"))
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"extract_constraints[reasoning] failed: {type(e).__name__}")
+        extracted, notes = read_constraints_with_model(llm, messages)
         errors += notes
         if extracted is not None:
             # merge: regex fills anything the model left empty (cheap robustness)
@@ -1348,6 +1372,39 @@ def user_request(state: HDBCompassState) -> str:
     return last_user_query(state)
 
 
+_FIGURE_RE = re.compile(r"\$\s?\d[\d,]*(?:\.\d+)?\s*(?:k|m)?\b|\b(?:Blk|Block)\s*\d{1,4}[A-Z]?\b", re.I)
+
+
+def keep_supported_sentences(opening: str, facts: str) -> Tuple[str, int]:
+    """The model's opening with every sentence dropped that states a price or block number not in the code-written
+    facts, so it cannot contradict them. Returns (text, sentences dropped)."""
+    known_money = {round(n) for n, _ in _stated_numbers(facts)}
+    known_blocks = {b.upper() for b in re.findall(r"\b(?:Blk|Block)\s*(\d{1,4}[A-Z]?)\b", facts, re.I)}
+    kept, dropped = [], 0
+    for sentence in re.split(r"(?<=[.!?])\s+", opening.strip()):
+        bad = False
+        for fig in _FIGURE_RE.findall(sentence):
+            blk = re.match(r"(?:Blk|Block)\s*(\d{1,4}[A-Z]?)", fig, re.I)
+            if blk:
+                bad |= blk.group(1).upper() not in known_blocks
+            else:
+                # rounding such as "$784k" for $784,366 is fine (0.2%); a different price is not
+                bad |= not any(abs(n - v) <= max(1, 0.002 * v) for n, _ in _stated_numbers(fig) for v in known_money)
+        if bad:
+            dropped += 1
+        else:
+            kept.append(sentence)
+    return " ".join(kept), dropped
+
+
+def writes_facts_in_code(state: HDBCompassState) -> bool:
+    """Variant C (and the app): the facts section of the answer (blocks, prices, leases, distances, relaxations,
+    grants, budget) is written by code, the same text the no-model template produces, and the model writes only
+    the opening and the trade-offs, so it cannot drop or garble a number. Variant B keeps the model as the writer
+    by design (no join in code). Switch: architecture.code_written_facts."""
+    return state.get("variant") != "B" and bool(load_config().get("architecture", {}).get("code_written_facts", True))
+
+
 def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     c = state.get("user_constraints", {})
     blocks = state.get("candidate_blocks_intersection") or []
@@ -1363,8 +1420,15 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     text = ""
     errors: List[str] = []
     llm = get_llm()
+    facts = template_response(state) if writes_facts_in_code(state) else ""
     if llm is not None:
         try:
+            if facts:
+                rule = ("The facts section below was written by code from the tool results and will be shown to the user "
+                        "exactly as written, straight after your text:\n---\n" + facts + "\n---\nWrite only a short opening "
+                        "(one or two sentences that answer the question directly) and, when there are several options, the "
+                        "trade-offs between them (price vs lease vs distance). Do not repeat or change any block, price, grant, "
+                        "budget or relaxation figure, and do not contradict the facts.")
             msgs = [sys_msg(SYNTH_SYSTEM),
                     HumanMessage(content=f"User query: {user_request(state)}\n\n{rule}\n\nEvidence JSON:\n{json.dumps(evidence, default=str)[:24000]}")]
             if verdict and not verdict.get("passed", True) and verdict.get("critique"):
@@ -1373,10 +1437,15 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
             if isinstance(text, list):
                 text = "".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in text)
             text = strip_think(text)
+            if facts:
+                opening, dropped = keep_supported_sentences(text, facts)
+                if dropped:
+                    errors.append(f"synthesize: dropped {dropped} opening sentence(s) with figures not in the facts")
+                text = (opening.strip() + "\n\n" if opening.strip() else "") + facts
         except Exception as e:  # noqa: BLE001
             errors.append(f"synthesize: LLM failed, template used: {type(e).__name__}")
     if not text:
-        text = template_response(state)
+        text = facts or template_response(state)
     elif state.get("financial_breakdown") or state.get("rag_policy_passages"):
         if "HFE" not in text:
             text += HFE_DISCLAIMER
