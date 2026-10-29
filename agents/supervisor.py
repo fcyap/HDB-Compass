@@ -1160,7 +1160,10 @@ def template_response(state: HDBCompassState) -> str:
             lines.append(f"- {town}: no transactions for the requested flat type in the trend window.")
         for town in metadata.get("towns_without_complete_quarters", []):
             lines.append(f"- {town}: only incomplete quarters are available; no complete-quarter summary or YoY comparison.")
-    if "compare_bto_launch_vs_resale" in sql:
+    unbuilt = unbuilt_tools_used(state)
+    if "compare_bto_launch_vs_resale" in sql and "compare_bto_launch_vs_resale" in unbuilt:
+        lines.append("- BTO launch prices can't be compared in this version yet.")
+    elif "compare_bto_launch_vs_resale" in sql:
         b = sql["compare_bto_launch_vs_resale"]
         lines.append(f"- BTO {b['bto_project_name']}: ${b['bto_indicative_price_range']['min']:,.0f}–${b['bto_indicative_price_range']['max']:,.0f} vs nearby resale median ${b['resale_median_nearby']:,.0f} ({b['price_gap_pct']:+.1f}%)")
     fin = state.get("financial_breakdown") or {}
@@ -1193,7 +1196,11 @@ def template_response(state: HDBCompassState) -> str:
             if (u.get("cash_shortfall") or 0) > 0:
                 lines.append(f"- Cash shortfall: ${u['cash_shortfall']:,.0f}.")
     passages = state.get("rag_policy_passages") or []
-    if passages:
+    if passages and "retrieve_hdb_policy_knowledge" in unbuilt:
+        lines.append("**Policy:**")
+        lines.append("- I can't check HDB policy or eligibility rules yet in this version. Please confirm with HDB, "
+                     "for example with an HDB Flat Eligibility (HFE) letter.")
+    elif passages:
         lines.append("**Policy:**")
         for p in passages[:3]:
             lines.append(f"- {p['text']} [{p['source_url']}]")
@@ -1212,6 +1219,7 @@ SYNTH_SYSTEM = (
     " Financial results with status needs_information or unsupported do not establish any numeric estimate; "
     "ask for the missing facts or explain the limitation. Never add grants again when grants_included is true. "
     "A purchase-only affordability ceiling excludes taxes and fees; disclose that and any reported cash shortfall."
+    " If not_available_yet is present, tell the user plainly what cannot be checked yet, as it says, and do not guess."
 )
 
 
@@ -1231,16 +1239,43 @@ def _compact_spatial(rows: Any, cap: int = 300) -> Any:
     return [{k: b.get(k) for k in ("block", "street", "distances")} if isinstance(b, dict) else b for b in rows[:cap]]
 
 
+# Tools whose real version is not built yet answer from mcp_server/mock_tools.py with fixed sample data. That data
+# must not reach a user as if it answered the question (an unmarried couple asking about BTO eligibility got the
+# same two sample passages every time). While a tool is mocked, the answer says what cannot be checked yet instead.
+# Switch off with architecture.disclose_unbuilt_tools: false.
+UNBUILT_NOTES = {
+    "retrieve_hdb_policy_knowledge": (
+        "HDB policy and eligibility rules cannot be checked in this version yet (the policy search is still being "
+        "built). Say so plainly, state no rule, and suggest confirming with HDB, for example with an HDB Flat "
+        "Eligibility (HFE) letter."),
+    "compare_bto_launch_vs_resale": (
+        "BTO launch prices cannot be compared in this version yet. Say so plainly and give no BTO price."),
+}
+
+
+def unbuilt_tools_used(state: HDBCompassState) -> List[str]:
+    """Mocked tools (see UNBUILT_NOTES) that this answer called."""
+    cfg = load_config()
+    if not cfg.get("architecture", {}).get("disclose_unbuilt_tools", True):
+        return []
+    mocked = {t for t, v in cfg.get("tools", {}).get("use_mock", {}).items() if v == "mock" and t in UNBUILT_NOTES}
+    called = {t.get("tool") for t in state.get("tool_call_log") or []}
+    return sorted(mocked & called)
+
+
 def synthesis_evidence(state: HDBCompassState) -> Tuple[Dict[str, Any], str]:
     """What the final writing step may see, by architecture.
     C (and the default): the supervisor's join is the ONLY source of blocks. Raw price-query rows are withheld, so the
       writer cannot re-introduce a block the intersection excluded (the failure seen in the first Category E run).
     B: no join in code by design. The writer gets the data agent's own reconciliation plus the raw price AND distance
       results, and must do the join itself."""
+    unbuilt = unbuilt_tools_used(state)
     base = {"user_constraints": state.get("user_constraints"),
             "financial_breakdown": state.get("financial_breakdown"),
-            "rag_policy_passages": state.get("rag_policy_passages")}
-    sql = state.get("sql_market_results") or {}
+            "rag_policy_passages": [] if "retrieve_hdb_policy_knowledge" in unbuilt else state.get("rag_policy_passages")}
+    if unbuilt:
+        base["not_available_yet"] = [UNBUILT_NOTES[t] for t in unbuilt]
+    sql = {k: v for k, v in (state.get("sql_market_results") or {}).items() if k not in unbuilt}
     if state.get("variant") == "B":
         notes = [n.get("text", "") for n in state.get("subagent_notes") or [] if n.get("agent") == "data"]
         return ({**base, "data_agent_summary": notes[-1] if notes else "", "sql_market_results": sql,
@@ -1252,6 +1287,12 @@ def synthesis_evidence(state: HDBCompassState) -> Tuple[Dict[str, Any], str]:
               "distance_matches": len(spatial) if spatial is not None else None,
               "blocks_meeting_every_constraint": len(matches)}
     market_context = {k: v for k, v in sql.items() if k != "query_resale_blocks_by_criteria"}
+    searched = ({"market_sql", "spatial"} & set(state.get("active_subagents") or [])) or sql_rows is not None \
+        or spatial is not None or matches or (state.get("user_constraints") or {}).get("towns")
+    if not searched:
+        # no flat search was asked (e.g. a pure eligibility question): no "no block meets every constraint" answer
+        return ({**base, "market_context": market_context},
+                "Answer the user's question from the evidence; no flat search was requested.")
     rule = GROUNDED_RULE
     if 0 < len(matches) <= 50:
         # in the 27 Oct rerun the writer listed 4 of 8 and 5 of 7 matches although the join was exact

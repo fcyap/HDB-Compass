@@ -198,3 +198,15 @@ def test_eligibility_questions_go_to_the_policy_agent():
     q = "we are a couple that's not married. We are looking to apply for 4 room btos."
     assert sv.rule_based_extract(q).policy_question == q
     assert sv.rule_based_extract("Find 4-room resale flats in Bishan under $600k").policy_question is None
+
+
+def test_stand_in_policy_answer_is_disclosed_not_presented():
+    q = "we are a couple that's not married. Can we apply for a 4 room BTO?"
+    out = C.graph.invoke(sv.initial_state(q, "C"))
+    assert out["rag_policy_passages"]                                  # the agent still ran
+    answer = out["draft_response"]
+    assert "can't check HDB policy or eligibility rules yet" in answer
+    assert not any(p["text"] in answer for p in out["rag_policy_passages"])   # no sample passage shown as an answer
+    assert "no block" not in answer.lower()                            # no flat search was asked
+    evidence, rule = sv.synthesis_evidence(out)
+    assert evidence["rag_policy_passages"] == [] and evidence["not_available_yet"]

@@ -77,3 +77,6 @@ architecture:
     amenity_radius_meters: 150
     min_remaining_lease_years: 5
   variants: ["A", "B", "C"]
+  # While a tool is still mocked (tools.use_mock), say "cannot check this yet" instead of answering from its
+  # sample data (policy rules, BTO launch prices). See supervisor.UNBUILT_NOTES.
+  disclose_unbuilt_tools: true
