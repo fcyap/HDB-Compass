@@ -230,7 +230,10 @@ def task_success(sub_use_case: str, csr: Dict[str, Any], fabricated: int, relaxe
 # Ground-truth scoring (grounded questions carry ground_truth_facts; see evaluation/ground_category_e.py)
 # ---------------------------------------------------------------------------
 _NUM_RE = _re.compile(r"(?<![\w.])\$?\s?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(\s*k\b)?", _re.I)
-_ASK_CUE = _re.compile(r"\?|\b(please|could you|can you|let (?:me|us) know|share|provide|tell (?:me|us)|confirm)\b", _re.I)
+# asking the user: a question, or a request addressed to them ("please tell me your cash savings", "could you share",
+# "let me know"); not advice ("please note", "please consult the bank", "confirm your eligibility with HDB")
+_ASK_CUE = _re.compile(r"\?|\b(?:could|can|would) you\b|\blet (?:me|us) know\b|\bplease (?:tell|share|provide|send|give|let)\b"
+                       r"|\bplease confirm (?:your|how|what|whether|if)\b|\btell (?:me|us)\b|\bwhat (?:is|are) your\b", _re.I)
 _BUDGET_CLAIM = _re.compile(r"\b(?:maximum|max\.?)\s+(?:purchase\s+price|budget|price|loan(?:\s+amount)?)\b[^.\n]{0,40}?\$\s?\d", _re.I)
 # A missing calculator input counts as asked for when the answer names it in plain words.
 _MISSING_WORDS = {
@@ -257,10 +260,9 @@ def mentions_amount(text: str, value: Optional[float], tol: float = 1.0) -> bool
 def asked_for_missing(draft: str, missing: List[str]) -> bool:
     """Every missing fact is named, and a sentence that names one actually asks for it. Boilerplate such as "please
     confirm with HDB" elsewhere in the answer does not count as asking."""
-    # boilerplate that is not asking the user anything ("please confirm with HDB", "an HFE letter", "confirm your loan
-    # eligibility with HDB or a bank", "please check with HDB for the latest rules"): advice to go to HDB, not a question
-    draft = _re.sub(r"(?:please\s+)?(?:confirm|check|verify)\b[^.?!\n]{0,60}?\bwith (?:hdb|the bank|a bank|your bank)\b[^.?!\n]*"
-                    r"|hdb flat eligibility \(hfe\) letter|hfe letter", " ", draft or "", flags=_re.I)
+    # boilerplate that is not asking the user anything ("please confirm with HDB", "an HFE letter")
+    draft = _re.sub(r"(?:please\s+)?confirm (?:it\s+)?with (?:hdb|the bank)|hdb flat eligibility \(hfe\) letter|hfe letter", " ",
+                    draft or "", flags=_re.I)
     low = draft.lower()
     words = {m: _MISSING_WORDS.get(m, (m.replace("_", " "),)) for m in missing}
     named = all(any(w in low for w in ws) for ws in words.values())

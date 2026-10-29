@@ -228,12 +228,12 @@ def test_c_answer_facts_are_written_by_code():
     class Writer:
         def invoke(self, msgs):
             seen["prompt"] = msgs[-1].content
-            return AIMessage(content="Two Ang Mo Kio blocks fit. Blk 627 is cheaper at $600,000.")   # a wrong price
+            return AIMessage(content="Both Ang Mo Kio blocks fit. Blk 627 is cheaper at $600,000.")   # a figure: dropped
 
     with patch.object(sv, "get_llm", return_value=Writer()):
         out = sv.synthesize_node({**state, "draft_response": ""})
     facts = sv.template_response(state)
-    assert out["draft_response"].startswith("Two Ang Mo Kio blocks fit.")
+    assert out["draft_response"].startswith("Both Ang Mo Kio blocks fit.")
     assert "$600,000" not in out["draft_response"]                          # the sentence with a wrong price is dropped
     assert facts in out["draft_response"]                                  # the facts section is the code's, verbatim
     assert "will be shown to the user exactly as written" in seen["prompt"]
@@ -242,11 +242,11 @@ def test_c_answer_facts_are_written_by_code():
     assert facts not in b["draft_response"]                                # B keeps the model as the writer
 
 
-def test_opening_keeps_only_figures_from_the_facts():
+def test_opening_states_no_figures():
     facts = "- Blk 627 ANG MO KIO AVE 9 — median $655,000\n- Grants = **$85,000**"
     text, dropped = sv.keep_supported_sentences(
-        "Blk 627 costs about $655k. Your grants total $85,000. Blk 999 is also nice. Blk 627 is $700,000.", facts)
-    assert text == "Blk 627 costs about $655k. Your grants total $85,000." and dropped == 2
+        "Blk 627 fits best. It costs about $655k. Blk 999 is also nice. Blk 627 Ang Mo Kio Ave 9 is near the MRT.", facts)
+    assert text == "Blk 627 fits best. Blk 627 Ang Mo Kio Ave 9 is near the MRT." and dropped == 2
 
 
 # --- regressions found by the 30 Oct adversarial review -------------------------------------------------------------
@@ -333,12 +333,14 @@ def test_the_models_own_reading_is_kept_before_code_fills_it():
     assert sv.extract_constraints_node({"messages": [{"role": "user", "content": q}]})["model_constraints"] is None
 
 
-def test_opening_figures_are_checked_in_every_form():
+def test_opening_figures_are_dropped_in_every_form():
     facts = "- Blk 627 ANG MO KIO AVE 9 — median $655,000 — mrt 379m\n- Grants = **$85,000**\n- Max purchase price $784,366"
-    for bad in ("Blk 627 is the cheaper one at 600k.", "Your grants come to 95,000 dollars.",
-                "You can afford up to SGD 900,000.", "It is 250 metres from the MRT.", "You could stretch to $1.2m."):
+    for bad in ("Blk 627 is the cheaper one at 600k.", "Your grants come to 95,000 dollars.", "Six blocks match.",
+                "It is 250 metres from the MRT.", "You could stretch to half a million.", "Prices rose 8 percent.",
+                "Blk 627 is about $655k.", "Block #999 is nice.", "Also see 999 Toa Payoh Lorong 1."):
         assert sv.keep_supported_sentences(bad, facts)[1] == 1, bad
-    for good in ("Blk 627 is about $655k.", "Your budget tops out near $784k.", "It is 379m from the MRT.", "Grants total 85,000."):
+    for good in ("Blk 627 is the best fit for a 4-room.", "It is close to the MRT and within your budget.",
+                 "Blk 627 Ang Mo Kio Ave 9 balances price and lease."):
         assert sv.keep_supported_sentences(good, facts)[1] == 0, good
 
 
@@ -395,11 +397,11 @@ def test_plain_statements_with_please_or_never_still_count():
     assert not sv.fact_is_grounded("continuous_employment_12_months", True, "I lost my job last year")
 
 
-def test_opening_may_repeat_the_users_own_limits():
+def test_opening_leaves_even_the_users_limits_to_the_facts():
     facts = "- Blk 627 ANG MO KIO AVE 9 — median $655,000 — mrt 379m"
     user = "Find 4-room flats in Jurong East within 400m of an MRT station under 650k."
-    assert sv.keep_supported_sentences("All are within 400m of an MRT station and under your 650k budget.", facts, user)[1] == 0
-    assert sv.keep_supported_sentences("You could stretch to 1.2m.", facts, user)[1] == 1
+    assert sv.keep_supported_sentences("All are within 400m of an MRT station and under your 650k budget.", facts, user)[1] == 1
+    assert sv.keep_supported_sentences("All are close to an MRT station and within your budget.", facts, user)[1] == 0
 
 
 # --- third round: facts only from plain statements about the buyers; a contradiction is asked about ---------------------
@@ -471,7 +473,7 @@ def test_citizenship_only_when_the_buyers_state_it_without_contradiction():
 
 def test_first_timer_only_when_nobody_owned_a_home():
     for text, want in (("Neither of us are first timers", False), ("We don't count as first-timers", False),
-                       ("I'm a first timer but my husband owned a flat before", False),
+                       ("I'm a first timer but my husband owned a flat before", None),
                        ("First time applying for BTO, but my husband owned a flat with his ex-wife.", None),
                        ("we were first timers when we bought our BTO in 2015.", None), ("We sold our first flat in 2019", None),
                        ("We have never owned a flat before.", True), ("both 1st timers, no kids", True)):
@@ -509,22 +511,9 @@ def test_search_reading_skips_flat_age_walking_time_and_room_counts():
     assert rb("We're PRs, not citizens. Income 9k").citizenship_scheme is None
 
 
-def test_opening_figures_must_match_the_right_fact():
-    facts = ("**2 candidate block(s)** match all stated constraints:\n"
-             "- Blk 228 JURONG EAST ST 21 (JURONG EAST) — median $532,500, 60 yrs lease — mrt 394m\n"
-             "- Blk 288B JURONG EAST ST 21 (JURONG EAST) — median $598,888, 73 yrs lease — mrt 107m\n"
-             "- Grants: EHG $10,000 + Family $80,000 + PHG $0 = **$90,000**\n"
-             "- Max purchase price $777,735 (loan $537,735, instalment $2,440/mth, binding: MSR)")
-    user = "SC couple, cash 40k, income 8,500. 4-room in Jurong East under $650,000 within 400m of an MRT station."
-    for bad in ("You can afford up to $650,000.", "Your grants come to $40,000.", "Blk 288B is 400m from the MRT.",
-                "Your max is $598,888.", "Blk 228 has 73 years of lease.", "Blocks 228 and 999 both fit.",
-                "Try 999 Jurong East St 21 as well.", "Blk 228 is a 3-minute walk to the MRT.", "Blk 228 is about 1.5 km away.",
-                "Your instalment would be about 2800 a month.", "You can borrow up to half a million dollars.",
-                "Yes, Blk 228 is within 200m of the MRT."):
-        assert sv.keep_supported_sentences(bad, facts, user)[1] == 1, bad
-    for good in ("All are within 400m of an MRT station and under your $650,000 budget.", "Blk 288B is about 110m from the MRT.",
-                 "Your grants come to $90,000.", "Your instalment would be about $2.4k a month.",
-                 "Blk 228 at 394m is within your 400m limit.", "Prices range from $532,500 to $598,888."):
-        assert sv.keep_supported_sentences(good, facts, user)[1] == 0, good
-    text, dropped = sv.keep_supported_sentences("Blk 228 at approx. $700k is fine. Blk 288B is 107m from the MRT.", facts, user)
-    assert text == "Blk 288B is 107m from the MRT." and dropped == 1
+def test_opening_drops_abbreviated_and_relaxation_figures():
+    facts = "- Blk 228 JURONG EAST ST 21 — median $532,500, 60 yrs lease — mrt 394m\n- Blk 288B JURONG EAST ST 21 — median $598,888"
+    text, dropped = sv.keep_supported_sentences("Blk 228 at abt. $600k is fine. Blk 288B is the closest to the MRT.", facts)
+    assert text == "Blk 288B is the closest to the MRT." and dropped == 1
+    assert sv.keep_supported_sentences("Extending the MRT distance unlocks more blocks.", facts)[1] == 0
+    assert sv.keep_supported_sentences("Extending the MRT distance to 550m unlocks 6 blocks.", facts)[1] == 1

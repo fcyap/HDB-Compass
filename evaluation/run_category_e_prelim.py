@@ -18,6 +18,7 @@ Each line: {run, variant, id, sub_use_case, profile, model, latency_s, scores, s
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -132,6 +133,7 @@ FALLBACK_MARKS = ("deterministic plan used", "template used")   # both-modes rea
 
 RUN_SETTINGS: Dict[str, Any] = {}   # filled once per run in main() (run_settings)
 DATASET_NAME = "category_e_queries.json"
+DATASET_SHA = ""
 
 
 def same_settings(a: Optional[Dict[str, Any]], b: Dict[str, Any]) -> bool:
@@ -184,7 +186,6 @@ def run_settings(profile: Dict[str, Any]) -> Dict[str, Any]:
             return ""
     cfg = sv.load_config()
     arch = cfg.get("architecture", {})
-    import hashlib
     # the exact code: commit plus a fingerprint of uncommitted edits and new Python files, so two different
     # uncommitted versions of the same commit are told apart
     new_files = sorted(f for f in git("ls-files", "--others", "--exclude-standard").splitlines()
@@ -195,6 +196,7 @@ def run_settings(profile: Dict[str, Any]) -> Dict[str, Any]:
         "uncommitted_changes": bool(edits.strip()),
         "code_fingerprint": hashlib.sha1(edits.encode()).hexdigest()[:12] if edits.strip() else "clean",
         "dataset": DATASET_NAME,
+        "dataset_sha": DATASET_SHA,      # the file's contents: two files with the same name are not the same dataset
         "profile": profile.get("name"), "model": profile.get("model"),
         "code_written_facts": bool(arch.get("code_written_facts", True)),
         "extraction_reasoning": os.getenv("HDB_EXTRACTION_REASONING") == "1" or bool(arch.get("extraction_reasoning", False)),
@@ -305,8 +307,9 @@ def main() -> None:
 
     profile = active_profile()
     queries = dataset_path(args.dataset)
-    global RUN_SETTINGS, DATASET_NAME
+    global RUN_SETTINGS, DATASET_NAME, DATASET_SHA
     DATASET_NAME = queries.name
+    DATASET_SHA = hashlib.sha1(queries.read_bytes()).hexdigest()[:12]
     RUN_SETTINGS = run_settings(profile)
     path = results_path(profile, args.tag)
     items = json.loads(queries.read_text())
@@ -322,12 +325,14 @@ def main() -> None:
         # each row is scored against the dataset it was run on (its settings name it); rows from before 30 Oct record
         # none and are looked up in the known datasets by id
         sets = {q.name: {i["id"]: i for i in json.loads(q.read_text())} for q in (QUERIES, VARIED, queries) if q.exists()}
+        shas = {q.name: hashlib.sha1(q.read_bytes()).hexdigest()[:12] for q in (QUERIES, VARIED, queries) if q.exists()}
         any_set = {k: i for by_id in sets.values() for k, i in by_id.items()}
         n = unnamed = 0
         for r in rows:
             if r.get("status") == "ok" and r.get("state"):
                 named = (r.get("settings") or {}).get("dataset")
-                if named and named not in sets:
+                sha = (r.get("settings") or {}).get("dataset_sha")
+                if named and (named not in sets or (sha and sha != shas[named])):
                     print(f"  skipped {r['id']}: it was run on {named}; pass --dataset with that file to rescore it")
                     continue
                 item = (sets[named] if named else any_set).get(r["id"])
@@ -358,6 +363,9 @@ def main() -> None:
     # a crashed row from before 30 Oct records no settings; it is rerun, not taken as another dataset
     other_sets = {(r.get("settings") or {}).get("dataset") for r in existing.values()
                   if r.get("settings") or r.get("status") == "ok"} - {DATASET_NAME}
+    other_sets |= {f"another file named {DATASET_NAME}" for r in existing.values()
+                   if (r.get("settings") or {}).get("dataset") == DATASET_NAME
+                   and (r.get("settings") or {}).get("dataset_sha") not in (None, DATASET_SHA)}
     if other_sets:
         named = ", ".join(sorted(s or "an unknown dataset (rows from before 30 Oct)" for s in other_sets))
         sys.exit(f"{path.name} already holds results for {named}; use another --tag for {DATASET_NAME}")
