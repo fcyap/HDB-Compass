@@ -13,6 +13,7 @@
 # Needs: SMU VPN, CLUSTER_LOGIN in the gitignored .env, and an open shared session so no password is asked
 # mid-run. Open it once in your own terminal (it asks for your password there and stays open):
 #   ssh -M -S ~/.ssh/hdb-cluster.sock -o ControlPersist=8h -fN "$CLUSTER_LOGIN"
+# KEEP_JOB=1 leaves the GPU job running for a following run (the next run reuses it; the last one must not set it).
 # Rows whose model calls could not reach the server are marked model_unreachable and rerun on the next resume.
 set -uo pipefail
 TAGS="${1:?usage: run_live_eval.sh TAG[,TAG...] [VARIANTS] [--tool-check]}"
@@ -39,7 +40,11 @@ else
 fi
 cleanup() {
   bash cluster/tunnel.sh --close >/dev/null 2>&1 || true
-  "${SSH[@]}" "scancel $JOB" && echo "cancelled job $JOB"
+  if [[ -n "${KEEP_JOB:-}" ]]; then
+    echo "left job $JOB running (KEEP_JOB) for the next run"
+  else
+    "${SSH[@]}" "scancel $JOB" && echo "cancelled job $JOB"
+  fi
 }
 trap cleanup EXIT
 
