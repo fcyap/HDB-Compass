@@ -305,3 +305,18 @@ def test_logs_without_a_source_tag_get_no_model_chosen_score():
     s = M.score_item({"id": "x", "expected_mcp_calls": [{"tool": "query_resale_blocks_by_criteria"}]},
                      {"variant": "C", "tool_call_log": [{"tool": "query_resale_blocks_by_criteria", "agent": "market_sql"}]})
     assert "tool_selection_model_chosen" not in s
+
+
+def test_a_recovered_schema_error_is_not_a_lost_model_but_a_silent_model_is():
+    from evaluation.run_category_e_prelim import lost_model
+    assert not lost_model({"variant": "C", "errors": ["extract_constraints[json_schema] failed: BadRequestError: 400"],
+                           "model_constraints": {"towns": ["X"]}})
+    assert lost_model({"variant": "A", "errors": ["monolith: LLM loop failed: ConflictError: 409"],
+                       "tool_call_log": [{"source": "code"}]})
+
+
+def test_a_failed_model_reading_scores_zero_not_missing():
+    acc = M.model_reading_accuracy({"stated_constraints": {"towns": ["X"]}, "financial_inputs": {"grants": {"a": 1}}},
+                                   {"errors": ["extract_constraints[json_mode] failed: x"]})
+    assert acc["search_correct"] == 0 and acc["reading_failed"]
+    assert not M.asked_for_missing("More information needed — cash savings Please confirm with HDB", ["cash_savings"])

@@ -339,3 +339,63 @@ def test_opening_figures_are_checked_in_every_form():
         assert sv.keep_supported_sentences(bad, facts)[1] == 1, bad
     for good in ("Blk 627 is about $655k.", "Your budget tops out near $784k.", "It is 379m from the MRT.", "Grants total 85,000."):
         assert sv.keep_supported_sentences(good, facts)[1] == 0, good
+
+
+# --- second round: near-variants and regressions found when the fixes were re-checked ---------------------------------
+
+def test_amounts_are_paired_with_the_word_next_to_them():
+    aff = lambda t: sv.stated_financial_inputs(t).get("affordability") or {}  # noqa: E731
+    for text, want in (("cash 40k cpf 100k", {"cash_savings": 40000, "cpf_oa_balance": 100000}),
+                       ("40k cash and 100k cpf", {"cash_savings": 40000, "cpf_oa_balance": 100000}),
+                       ("Income 9000 cash 50k", {"monthly_income": 9000, "cash_savings": 50000}),
+                       ("income 8000 cpf 90k", {"monthly_income": 8000, "cpf_oa_balance": 90000})):
+        got = aff(text)
+        assert all(got.get(k) == v for k, v in want.items()), (text, got)
+    assert sv.rule_based_extract("Our income is 8000, CPF OA 90k").cpf_oa_balance == 90000   # the monolith's path too
+
+
+def test_sc_pr_couples_in_everyday_wording_but_not_quotas_or_what_ifs():
+    pair = lambda t: (sv.stated_financial_inputs(t).get("grants") or {}).get("citizenship_pair")  # noqa: E731
+    for t in ("We're an SC-PR couple, both first timers", "We are a Singapore citizen and PR couple",
+              "One of us is a citizen and the other is a PR", "my husband is a Malaysian PR, I'm a Singapore citizen"):
+        assert pair(t) == "SC_PR", t
+    for t in ("We're a Singapore citizen couple. What is the SC/PR quota under EIP?",
+              "Both are Singapore citizens. What if my husband is a PR?"):
+        assert pair(t) == "SC_SC", t
+
+
+def test_more_ways_of_stating_the_buyers_ages():
+    assert sv.buyer_ages("My husband and I are 32 and 30") == [32, 30]
+    assert sv.buyer_ages("I'm 45 and my husband's 52") == [45, 52]
+    assert sv.buyer_ages("My mum is 65 and I'm 35") == [35]
+
+
+def test_one_partner_correction_does_not_collapse_the_couple():
+    st = sv.extract_constraints_node({"messages": [
+        {"role": "user", "content": "We are a Singapore citizen couple aged 32 and 30, first-timers, no kids. income 9k"},
+        {"role": "assistant", "content": "..."}, {"role": "user", "content": "Sorry, my husband is 34, not 32."}]})
+    a = st["user_constraints"]["financial_inputs"]["affordability"]
+    assert a["youngest_buyer_age"] == 30          # not collapsed to 34 (the model's grounded reading can apply 34)
+    t = "We are a Singapore citizen couple aged 32 and 30. Sorry, my husband is 34, not 32."
+    assert sv.fact_is_grounded("oldest_buyer_age", 34, t)
+
+
+def test_income_kept_unless_the_sentence_is_about_paying():
+    assert sv.rule_based_extract("We make $9,000 a month, no other loans.").household_income == 9000
+    assert sv.rule_based_extract("We take home $9,000 a month. Budget is $650k.").household_income == 9000
+    assert sv.rule_based_extract("We can spend $2,500 per month on the flat").household_income is None
+
+
+def test_plain_statements_with_please_or_never_still_count():
+    assert sv.fact_is_grounded("eligibility_confirmed", True,
+                               "HDB has confirmed we are eligible for the grants and the HDB loan, so please work out our grants.")
+    assert sv.fact_is_grounded("first_timer_status", True, "We have never owned a flat before.")
+    assert not sv.fact_is_grounded("first_timer_status", True, "We aren't first-time buyers")
+    assert not sv.fact_is_grounded("continuous_employment_12_months", True, "I lost my job last year")
+
+
+def test_opening_may_repeat_the_users_own_limits():
+    facts = "- Blk 627 ANG MO KIO AVE 9 — median $655,000 — mrt 379m"
+    user = "Find 4-room flats in Jurong East within 400m of an MRT station under 650k."
+    assert sv.keep_supported_sentences("All are within 400m of an MRT station and under your 650k budget.", facts, user)[1] == 0
+    assert sv.keep_supported_sentences("You could stretch to 1.2m.", facts, user)[1] == 1

@@ -139,8 +139,9 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
             break
     if budget is None:
         # "my budget is 600k", "budget: $650,000", "budget around 650k", "650k budget"
-        m = re.search(r"\bbudget\b\s*(?:is|of|:|=|around|about|approx\w*|roughly|~|\s)*\s*\$?\s?(\d[\d,]*(?:\.\d+)?)\s*"
-                      r"(k|m|thousand|million|mil)?\b|\$?\s?(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million|mil)\s+budget\b", q, re.I)
+        m = re.search(r"\bbudget\b\s*(?:is|of|:|=|around|about|approx\.?|approximately|roughly|~|\s)*\s*(?:S?\$|SGD\s?)?\s?"
+                      r"(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million|mil)?\b"
+                      r"|(?:S?\$|SGD\s?)?\s?(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million|mil)?\s+budget\b", q, re.I)
         if m:
             num, unit = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
             value = _money(f"{num}{unit or ''}")
@@ -188,18 +189,22 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
     if m:
         income = _money(m.group(1))
     if income is None:
-        # "$9,000 a month", but not a repayment or rent: "$2,500 per month for the mortgage", "afford $2,500 a month"
+        # "$9,000 a month", but not what the buyer will pay: "afford $2,500 per month", "$2,500 a month for the
+        # mortgage", "max $2,500 per month on housing". Judged within the same sentence only.
         for m in re.finditer(r"\$\s?(\d[\d,]*(?:\.\d+)?\s*k?)\s*(?:/|per|a)\s*month", q, re.I):
-            around = q[max(0, m.start() - 30):m.end() + 30]
-            if re.search(r"mortgage|loan|instal|repay|rent|afford|pay(?:ing|ment)?\b|budget", around, re.I):
+            before = re.split(r"[.;!?\n]", q[:m.start()])[-1]
+            after = re.split(r"[.;!?\n]", q[m.end():])[0]
+            if re.search(r"\b(?:afford\w*|spend\w*|pay(?:ing)?|repay\w*|instal\w*|rent\w*|mortgage|comfortable with|"
+                         r"max(?:imum)?|budget\w*|commit\w*)\b", before, re.I) or \
+                    re.match(r"\s*(?:\w+\s+){0,3}(?:for|on|towards)\s+(?:the\s+|our\s+|a\s+|my\s+)?(?:flat|housing|house|home|"
+                             r"mortgage|loan|rent|instal\w*|repayments?)\b", after, re.I):
                 continue
             income = _money(m.group(1))
             break
+    if income is None:
+        income = bound_amounts(q).get("monthly_income")
 
-    cpf = None
-    m = re.search(r"\$?\s?(\d[\d,]*(?:\.\d+)?\s*k?)\s*(?:in\s*)?(?:cpf|oa)", q, re.I)
-    if m:
-        cpf = _money(m.group(1))
+    cpf = bound_amounts(q).get("cpf_oa_balance")   # paired with its own word (never the income just before it)
 
     scheme = None
     if re.search(r"\bsingle\b", q, re.I):
@@ -291,7 +296,8 @@ _AGES_RE = re.compile(r"\b(?:aged?|ages?:?|we're|we are|i'm|i am)\s+(?:both\s+)?
                       r"(?!\s*(?:years?|yrs?)\s+(?:of\s+)?(?:remaining\s+)?lease)"
                       r"(?!\s*(?:k\b|%|mins?\b|minutes|km\b|m\b|years? left|yrs? left|years? of lease))", re.I)
 _NOT_BUYER = re.compile(r"\b(?:parents?|mum|mom|mother|dad|father|in-laws?|grand\w*|kids?|child(?:ren)?|sons?|daughters?)\b", re.I)
-_PARTNER_AGE = re.compile(r"\b(?:husband|wife|spouse|partner|fianc[eé]e?)\s+is\s+(?:aged\s+)?(\d{2})\b", re.I)
+_PARTNER_AGE = re.compile(r"\b(?:husband|wife|spouse|partner|fianc[eé]e?|hubby|he|she)(?:\s+is|'s|\s+aged|\s+)\s*(?:aged\s+)?(\d{2})\b"
+                          r"(?!\s*(?:years?|yrs?)(?!\s+old))(?!\s*(?:k\b|%|mins?\b|minutes|m\b))", re.I)
 _CASH_RE = re.compile(rf"\$?\s?{_NUMBER}\s*(k)?\s*(?:sgd\s*)?(?:in\s+)?(?:cash|savings)\b"
                       rf"|\b(?:cash|savings)\b[^\d\n,;.]{{0,20}}?\$?\s?{_NUMBER}\s*(k)?", re.I)
 # "$90,000 in CPF OA", "40k cpf", "cpf of ard 40k"; a comma or full stop in between ends the match
@@ -301,30 +307,107 @@ _CPF_RE = re.compile(rf"\$?\s?{_NUMBER}\s*(k)?\s*(?:sgd\s*)?(?:in\s+)?(?:(?:my|o
 
 # A buyer who is a permanent resident: "one Singapore citizen and one permanent resident", "SC + PR couple", "my husband
 # is a PR", "I'm a PR". Not "no PR", "not a PR", "my parents are PR" or "the PR quota".
+_PR = r"(?:PRs?|permanent residents?)"
+_CITIZEN_WORD = r"(?:singapore(?:an)?\s+)?(?:citizens?|SC|singaporeans?)"
+# A buyer who is a permanent resident: "one Singapore citizen and one permanent resident", "SC + PR couple",
+# "SC-PR couple", "citizen and PR couple", "one of us is a citizen and the other a PR", "my husband is a (Malaysian) PR",
+# "I'm a PR". Not "no PR", "not a PR", "my parents are PR", "the SC/PR quota" or "what if my husband is a PR?".
 _PR_BUYER = re.compile(
-    r"\bone\s+(?:singapore(?:an)?\s+)?(?:citizen|SC)\b.{0,20}\bone\s+(?:PR|permanent resident)\b"
-    r"|\bone\s+(?:PR|permanent resident)\b.{0,20}\bone\s+(?:singapore(?:an)?\s+)?(?:citizen|SC)\b"
-    r"|\bSC\s*(?:\+|and|&|/)\s*PR\b|\bPR\s*(?:\+|and|&|/)\s*SC\b"
-    r"|\b(?:i'?m|i am|(?:my\s+)?(?:husband|wife|spouse|partner|fianc[eé]e?)(?:\s+is|'s))\s+(?:a\s+)?(?:singapore\s+)?(?:PR|permanent resident)\b",
+    rf"\bone\s+{_CITIZEN_WORD}\b.{{0,20}}\bone\s+{_PR}\b|\bone\s+{_PR}\b.{{0,20}}\bone\s+{_CITIZEN_WORD}\b"
+    rf"|\bone of us is (?:an?\s+)?{_CITIZEN_WORD}\b.{{0,30}}\bother\b.{{0,12}}\b{_PR}\b"
+    rf"|\bone of us is (?:an?\s+)?{_PR}\b.{{0,30}}\bother\b.{{0,12}}\b{_CITIZEN_WORD}\b"
+    rf"|\b(?:SC|citizen)\s*(?:\+|and|&|/|-)\s*(?:an?\s+)?PR\b(?!\s*(?:quotas?|ratios?|limits?|households?|holders?|status|scheme))"
+    rf"|\bPR\s*(?:\+|and|&|/|-)\s*(?:an?\s+)?(?:SC|citizen)\b(?!\s*(?:quotas?|ratios?|limits?|households?|holders?|status|scheme))"
+    rf"|\b(?:i'?m|i am|(?:my\s+)?(?:husband|wife|spouse|partner|fianc[eé]e?|hubby)(?:\s+is|'s))\s+(?:an?\s+)?(?:\w+\s+)?{_PR}\b",
     re.I)
 
 
+def pr_buyer(text: str) -> bool:
+    """True when the user states that a buyer is a permanent resident, in a plain statement (not a question such as
+    "what if my husband is a PR?" and not negated: "my wife is not a PR")."""
+    for sentence in re.split(r"(?<=[.!?;])\s+|\n+", text or ""):
+        m = _PR_BUYER.search(sentence)
+        if not m or sentence.strip().endswith("?") or re.search(r"\bwhat if\b|\bif (?:my|our|i|we)\b", sentence, re.I):
+            continue
+        if re.search(r"(?:\bnot|n't|\bno longer|\bneither)\b[^.;,]{0,20}$", sentence[:m.end() - len(m.group(0).split()[-1])], re.I):
+            continue
+        return True
+    return False
+
+
+# "are 32 and 30" / "am 38" / "is 52": an age only when the phrase is about the buyers ("my husband and I are ...")
+_AGES_LOOSE = re.compile(r"\b(?:are|am|is)\s+(?:both\s+)?(\d{2})(?:\s*(?:and|&|,|/)\s*(\d{2}))?\b"
+                         r"(?!\s*(?:years?|yrs?)(?!\s+old))(?!\s*(?:k\b|%|mins?\b|minutes|km\b|m\b|months?|mths?))", re.I)
+_BUYER_WORDS = re.compile(r"\b(?:i|we|us|both|husband|wife|spouse|partner|fianc[eé]e?|hubby|he|she)\b", re.I)
+
+
+def _phrase_before(text: str, start: int) -> str:
+    """The words before a position in the same phrase (stops at punctuation and at "and")."""
+    return re.split(r"[.,;!?\n]|\band\b", text[max(0, start - 50):start], flags=re.I)[-1]
+
+
 def buyer_ages(text: str) -> List[int]:
-    """The buyers' own ages. Skips ages that belong to someone else ("our parents are aged 65 and 62", "our kids are
-    10 and 8") and numbers that are not ages; adds a partner's age stated separately ("I'm 45 and my husband is 52")."""
+    """The buyers' own ages, at most two. Skips ages that belong to someone else ("our parents are aged 65 and 62",
+    "my mum is 65") and numbers that are not ages; reads "my husband and I are 32 and 30", and adds a partner's age
+    stated separately ("I'm 45 and my husband's 52", "husband 52")."""
     t = text or ""
     ages: List[int] = []
     for m in _AGES_RE.finditer(t):
-        # who the age belongs to: the words before it in the same phrase ("our parents are aged ...")
-        before = re.split(r"[.,;!?\n]", t[max(0, m.start() - 40):m.start()])[-1]
-        if _NOT_BUYER.search(before):
+        if _NOT_BUYER.search(_phrase_before(t, m.start())):
             continue
         ages = [int(a) for a in m.groups() if a]
         break
+    if not ages:
+        for m in _AGES_LOOSE.finditer(t):
+            before = re.split(r"[.,;!?\n]", t[max(0, m.start() - 50):m.start()])[-1]
+            if _BUYER_WORDS.search(before) and not _NOT_BUYER.search(before):
+                ages = [int(a) for a in m.groups() if a]
+                break
     for m in _PARTNER_AGE.finditer(t):
-        if len(ages) < 2 and int(m.group(1)) not in ages:
+        if len(ages) < 2 and int(m.group(1)) not in ages and not _NOT_BUYER.search(_phrase_before(t, m.start())):
             ages.append(int(m.group(1)))
-    return [a for a in ages if 18 <= a <= 99]
+    return [a for a in ages if 18 <= a <= 99][:2]
+
+
+_AMOUNT_TOKEN = re.compile(r"(?:S?\$|\bSGD\s?)?\s?(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(k|thousand)?\b"
+                           r"(?!\s*(?:%|m\b|km\b|years?|yrs?|mins?\b|minutes|months?|mths?|rooms?|rm\b|-room))", re.I)
+_FACT_WORDS = {"cash_savings": r"\bcash(?:\s+savings)?\b|\bsavings\b",
+               "cpf_oa_balance": r"\bcpf(?:\s+oa)?\b|\boa\b|\bordinary account\b",
+               "monthly_income": r"\b(?:household\s+)?income\b|\bsalary\b|\bearn(?:ing|ings)?\b"}
+# what may sit between a fact word and its amount: "cash 40k", "CPF OA of $90,000", "cpf of ard 40k", "income: $8,500",
+# "savings are $30,000", "CPF OA available is $90,000"; and between an amount and its word: "40k cash", "$90,000 in CPF"
+_WORD_THEN_AMOUNT = re.compile(r"^[\s:=]*(?:(?:of|is|are|ard|around|about|approx\.?|roughly|balance|available|"
+                               r"assessed|hfe|we can use|i can use|totals?|comes? to)[\s:=]*)*$", re.I)
+_AMOUNT_THEN_WORD = re.compile(r"^\s*(?:sgd\s*)?(?:in\s+)?(?:(?:my|our|the)\s+)?$", re.I)
+
+
+def bound_amounts(text: str) -> Dict[str, float]:
+    """Cash, CPF and income amounts, each paired with the fact word right next to it ("cash 40k cpf 100k",
+    "40k cash and 100k cpf", "Income 9,000, cash 50k"). An amount that two facts could claim goes to the one that
+    has no other candidate; one that stays ambiguous is left out, so the assistant asks for it instead of guessing."""
+    t = text or ""
+    words = sorted((m.start(), m.end(), field) for field, pat in _FACT_WORDS.items() for m in re.finditer(pat, t, re.I))
+    claims: List[Tuple[float, int, set]] = []
+    for m in _AMOUNT_TOKEN.finditer(t):
+        value = float(m.group(1).replace(",", "")) * (1000 if m.group(2) else 1)
+        if value < 100:
+            continue                                                   # an age or a count, not money
+        fields = {f for ws, we, f in words if we <= m.start() and _WORD_THEN_AMOUNT.match(t[we:m.start()])
+                  and m.start() - we <= 30}
+        fields |= {f for ws, we, f in words if ws >= m.end() and _AMOUNT_THEN_WORD.match(t[m.end():ws]) and ws - m.end() <= 15}
+        if fields:
+            claims.append((value, m.start(), fields))
+    out: Dict[str, float] = {}
+    changed = True
+    while changed:
+        changed = False
+        for value, pos, fields in claims:
+            open_fields = fields - set(out)
+            if len(open_fields) == 1:
+                out[open_fields.pop()] = value
+                fields.clear()
+                changed = True
+    return out
 
 
 def _re_amount(m: re.Match) -> float:
@@ -380,7 +463,7 @@ def stated_financial_inputs(text: str) -> Dict[str, Dict[str, Any]]:
     t = text or ""
     f: Dict[str, Any] = {}
     citizen = r"(?:citizens?|singaporeans?|\bSC\b)"
-    if _PR_BUYER.search(t):
+    if pr_buyer(t):
         f["citizenship_pair"] = "SC_PR"
     elif re.search(rf"\bsingle\s+(?:singapore(?:an)?\s+)?{citizen}|\bi'?m single, (?:a )?singapore citizen", t, re.I):
         f["citizenship_pair"] = "SC_Single"
@@ -389,7 +472,8 @@ def stated_financial_inputs(text: str) -> Dict[str, Dict[str, Any]]:
         f["citizenship_pair"] = "SC_SC"
     first_time = r"(?:first[- ]?timers?|1st[- ]?timers?|first[- ]time (?:home )?buyers?)"
     if re.search(r"\bsecond[- ]timers?\b|\b2nd[- ]timers?\b", t, re.I) or \
-            re.search(rf"\b(?:not|no longer|aren't|isn't|never been)\s+(?:the\s+|a\s+)?{first_time}", t, re.I):
+            re.search(rf"\b(?:not|no longer|aren't|isn't|never been)\s+(?:\w+\s+){{0,2}}{first_time}"
+                      rf"|\bneither of us is\s+(?:an?\s+)?{first_time}", t, re.I):
         f["first_timer_status"] = False
     elif re.search(rf"\b{first_time}\b", t, re.I):
         f["first_timer_status"] = True
@@ -401,14 +485,12 @@ def stated_financial_inputs(text: str) -> Dict[str, Dict[str, Any]]:
     rb = rule_based_extract(t)
     if rb.household_income is not None:
         f["monthly_income"] = rb.household_income
-    m = _CPF_RE.search(t)
-    if m:
-        f["cpf_oa_balance"] = _re_amount(m)
-    elif rb.cpf_oa_balance is not None:
-        f["cpf_oa_balance"] = rb.cpf_oa_balance
-    m = _CASH_RE.search(t)
-    if m:
-        f["cash_savings"] = _re_amount(m)
+    bound = bound_amounts(t)
+    for field in ("cpf_oa_balance", "cash_savings"):
+        if field in bound:
+            f[field] = bound[field]
+    if "monthly_income" in bound:
+        f["monthly_income"] = bound["monthly_income"]
     if re.search(r"\bno (?:other )?(?:debts?|loans?|monthly (?:debt|loan) (?:payments|obligations))\b", t, re.I):
         f["monthly_debt_obligations"] = 0.0
     if re.search(r"(?:continuous(?:ly)?\s+(?:employ\w*|working)|(?:employ\w*|working)\s+(?:\w+\s+){0,2}continuously)"
@@ -500,35 +582,63 @@ def _number_stated(value: Any, text: str, plain_only: bool = False) -> bool:
     return any(abs(n - v) <= max(0.5, 0.005 * abs(v)) for n, unit in _stated_numbers(text) if not (plain_only and unit))
 
 
-def _number_near(value: Any, text: str, keywords: str, window: int = 35) -> bool:
-    """The number appears in the text next to words for this fact ("40k cash", "CPF OA of $90,000"), so a CPF amount
-    is never accepted as cash, or a lease as income."""
+_GROUNDING_WORDS = {
+    "cash": r"\bcash\b|\bsavings?\b|\bsaved\b", "cpf": r"\bcpf\b|\boa\b|ordinary account",
+    "income": r"income|earn|salary|a month|per month|monthly|/\s*mth|/\s*month|\bmth\b", "lease": r"\blease\b",
+    "debt": r"debt|loan|repay|instal|commitment", "grant": r"\bgrants?\b", "fee": r"\bfees?\b",
+    "absd": r"ABSD|stamp duty", "rate": r"%|\binterest\b|\brate\b", "tenure": r"\btenure\b|[- ]year loan\b",
+}
+
+
+def _number_near(value: Any, text: str, group: str, window: int = 35) -> bool:
+    """The number appears in the text and the nearest fact word to it (within the window) is this fact's
+    (_GROUNDING_WORDS[group]): in "$80,000 in CPF OA, no cash savings" the 80,000 is CPF's, never cash's; in
+    "remaining lease: 65 years" the 65 is the lease's."""
     try:
         v = float(value)
     except (TypeError, ValueError):
         return False
     t = text or ""
     for m in _NUM_RE.finditer(t):
-        for n, _ in _stated_numbers(m.group(0)):
-            if abs(n - v) <= max(0.5, 0.005 * abs(v)):
-                near = t[max(0, m.start() - window):m.end() + window]
-                if re.search(keywords, near, re.I):
-                    return True
+        if not any(abs(n - v) <= max(0.5, 0.005 * abs(v)) for n, _ in _stated_numbers(m.group(0))):
+            continue
+        nearest: Dict[str, int] = {}
+        for g, pat in _GROUNDING_WORDS.items():
+            for k in re.finditer(pat, t, re.I):
+                d = max(k.start() - m.end(), m.start() - k.end(), 0)
+                if d <= window and d < nearest.get(g, window + 1):
+                    nearest[g] = d
+        if group in nearest and nearest[group] == min(nearest.values()):
+            return True
     return False
 
 
-# a sentence that asks, requests or negates does not state a fact: "Can you confirm if we are eligible?",
-# "This is not our first home", "after 6 months unemployed"
-_NOT_A_STATEMENT = re.compile(r"\?|\b(?:not|no longer|never|n't|whether|can you|could you|please|if we|if i|unsure|"
-                              r"don't know|unemploy\w*|without a job)\b", re.I)
+# A fact is stated only in a plain statement: not a question ("Can you confirm if we are eligible?"), not a request
+# about it ("please check whether ..."), and not negated just before the fact words ("we haven't confirmed", "this isn't
+# our first home"). A "please" elsewhere in the sentence ("..., so please work out our grants") is fine.
+_QUESTION_OR_REQUEST = re.compile(r"\b(?:can|could|would|will) you\b|\b(?:please\s+)?(?:confirm|check|tell me|let me know)\s+"
+                                  r"(?:if|whether)\b|\bwhether\b|\bwhat if\b", re.I)
+_NEGATED_BEFORE = re.compile(r"(?:\bnot|n't|\bno longer|\bnever|\bneither|\bnor|\byet to|\bcannot)\b[^.;,]{0,25}$", re.I)
 
 
 def _stated_in_one_sentence(text: str, *cues: str) -> bool:
-    """Every cue appears in one plain statement (not a question, request or negation)."""
+    """Every cue appears, un-negated, in one plain statement."""
     for sentence in re.split(r"(?<=[.!?;])\s+|\n+", text or ""):
-        if all(re.search(c, sentence, re.I) for c in cues) and not _NOT_A_STATEMENT.search(sentence):
+        if sentence.strip().endswith("?") or _QUESTION_OR_REQUEST.search(sentence):
+            continue
+        found = True
+        for cue in cues:
+            m = re.search(cue, sentence, re.I)
+            if not m or (_NEGATED_BEFORE.search(sentence[:m.start()]) and not m.group(0).lower().startswith("never")):
+                found = False
+                break
+        if found:
             return True
     return False
+
+
+_JOB_LOSS = re.compile(r"\b(?:lost|quit|left|between|changed)\s+(?:my |our |his |her |a |the )?jobs?\b|\bunemploy\w*|"
+                       r"\blaid off\b|\bretrench\w*|\bwithout a job\b", re.I)
 
 
 def fact_is_grounded(field: str, value: Any, text: str) -> bool:
@@ -541,39 +651,39 @@ def fact_is_grounded(field: str, value: Any, text: str) -> bool:
     if field in ("average_applicant_age", "ltv_ratio"):
         return False                                   # worked out by code / the calculators
     if field in ("youngest_buyer_age", "oldest_buyer_age"):
-        return _isint(value) and int(value) in (buyer_ages(t) or _bare_ages(t))
+        return _isint(value) and int(value) in (_ages_anywhere(t) or _bare_ages(t))
     if field == "youngest_core_member_age":
-        return _isint(value) and int(value) in (buyer_ages(t) or _bare_ages(t)) and has(_NO_KIDS)
+        return _isint(value) and int(value) in (_ages_anywhere(t) or _bare_ages(t)) and has(_NO_KIDS)
     if field == "monthly_debt_obligations":
         if value == 0:
             return has(r"\bno (?:other )?(?:debts?|loans?|outstanding loans?|car loans?|liabilities)\b|\bdebt[- ]free\b|\bzero debts?\b")
-        return _number_near(value, t, r"debt|loan|repay|instal|commitment")
+        return _number_near(value, t, "debt")
     if field == "total_grants":
-        return (value == 0 and has(r"\bno (?:housing )?grants\b")) or _number_near(value, t, r"\bgrants?\b")
+        return (value == 0 and has(r"\bno (?:housing )?grants\b")) or _number_near(value, t, "grant")
     if field == "additional_buyer_stamp_duty":
-        return (value == 0 and has(r"\bno ABSD\b|\bno additional buyer'?s stamp duty\b")) or _number_near(value, t, r"ABSD|stamp duty")
+        return (value == 0 and has(r"\bno ABSD\b|\bno additional buyer'?s stamp duty\b")) or _number_near(value, t, "absd")
     if field == "interest_rate":
-        return _number_near(value, t, r"%|\binterest\b|\brate\b", window=15)
+        return _number_near(value, t, "rate", window=15)
     if field == "tenure_years":
-        return _number_near(value, t, r"\btenure\b|[- ]year loan\b", window=20)
+        return _number_near(value, t, "tenure", window=20)
     if field == "monthly_income":
-        return _number_near(value, t, r"income|earn|salary|a month|per month|monthly|/\s*mth|/\s*month|\bmth\b")
+        return _number_near(value, t, "income")
     if field == "cpf_oa_balance":
-        return _number_near(value, t, r"\bcpf\b|\boa\b|ordinary account")
+        return _number_near(value, t, "cpf")
     if field == "cash_savings":
-        return _number_near(value, t, r"\bcash\b|\bsavings?\b|\bsaved\b")
+        return _number_near(value, t, "cash")
     if field == "remaining_lease_years":
-        return _number_near(value, t, r"\blease\b", window=25)
+        return _number_near(value, t, "lease", window=25)
     if field == "legal_and_valuation_fees":
-        return _number_near(value, t, r"\bfees?\b")
+        return _number_near(value, t, "fee")
     if field == "citizenship_pair":
-        pr_buyer = _PR_BUYER.search(t) is not None
+        pr_buyer_said = pr_buyer(t)
         if value == "SC_PR":
-            return pr_buyer
+            return pr_buyer_said
         if value == "SC_SC":
-            return not pr_buyer and has(_CITIZEN) and has(_COUPLE)
+            return not pr_buyer_said and has(_CITIZEN) and has(_COUPLE)
         if value == "SC_Single":
-            return not pr_buyer and has(_CITIZEN) and has(r"\bsingle\b") and not has(r"\b(?:wife|husband|spouse|fianc[eé]e?|couple)\b")
+            return not pr_buyer_said and has(_CITIZEN) and has(r"\bsingle\b") and not has(r"\b(?:wife|husband|spouse|fianc[eé]e?|couple)\b")
         return False
     if field == "first_timer_status":
         if value is True:
@@ -585,7 +695,7 @@ def fact_is_grounded(field: str, value: Any, text: str) -> bool:
     if field == "loan_eligibility_confirmed":
         return value is True and stated(r"\bloan\b", r"\beligib|\bapprov", r"\bconfirm|\bapproved\b")
     if field == "continuous_employment_12_months":
-        return value is True and stated(r"\b(?:employ\w*|working|work|job)\b",
+        return value is True and not has(_JOB_LOSS.pattern) and stated(r"\b(?:employ\w*|working|work|job)\b",
                                         r"\b(?:12|twelve)\s*(?:months?|mths?)\b|\b(?:a|one|1|past|last) year\b")
     if field == "proximity":
         if value == "none":
@@ -597,7 +707,7 @@ def fact_is_grounded(field: str, value: Any, text: str) -> bool:
     return False
 
 
-_BARE_AGE = re.compile(r"(?<![\d$.,/])(\d{2})(?!\d|[,.]\d|\s*(?:k\b|%|m\b|km\b|mins?\b|minutes|months?|mths?|"
+_BARE_AGE = re.compile(r"(?<![\d$.,/])(\d{2})(?!\d|[,.]\d|\s*(?:years?|yrs?)(?!\s+old)|\s*(?:k\b|%|m\b|km\b|mins?\b|minutes|months?|mths?|"
                        r"years? (?:of )?(?:remaining )?lease|yrs? (?:of )?lease|years? left|yrs? left|-?\s*rooms?\b|rm\b|\+))",
                        re.I)
 
@@ -609,8 +719,19 @@ def _bare_ages(text: str) -> List[int]:
     out = []
     for m in _BARE_AGE.finditer(text or ""):
         before = re.split(r"[.,;!?\n]", text[max(0, m.start() - 40):m.start()])[-1]
+        if re.search(r"\b(?:lease|remaining|tenure|loan)\b[^.;,]{0,25}$", before, re.I):
+            continue                                            # "lease of 65 years", "remaining lease: 65"
         if 18 <= int(m.group(1)) <= 99 and not _NOT_BUYER.search(before):
             out.append(int(m.group(1)))
+    return out
+
+
+def _ages_anywhere(text: str) -> List[int]:
+    """Buyer ages stated in any sentence, so a model reading a later correction ("my husband is 34, not 32") can be
+    grounded even though the first sentence gave both ages."""
+    out: List[int] = []
+    for sentence in re.split(r"(?<=[.!?;])\s+|\n+", text or ""):
+        out += [a for a in buyer_ages(sentence) if a not in out]
     return out
 
 
@@ -626,9 +747,14 @@ def stated_across_turns(turns: List[str]) -> Dict[str, Dict[str, Any]]:
     message: ages in a reply, "no kids" in the first question), then each later message is read on its own and its
     facts win, so "sorry, cash is 60k" corrects the earlier figure instead of being ignored."""
     out = {sec: dict(vals) for sec, vals in stated_financial_inputs(" ".join(turns)).items()}
+    age_fields = {"youngest_buyer_age", "oldest_buyer_age", "average_applicant_age", "youngest_core_member_age"}
+    known_ages = len(buyer_ages(" ".join(turns)))
     for turn in turns[1:]:
+        # "sorry, my husband is 34" names one partner: it cannot replace both ages, so it is left to the model
+        # (whose reading is grounded) or asked about, rather than collapsing the couple to one age
+        drop_ages = 0 < len(buyer_ages(turn)) < known_ages
         for sec, vals in stated_financial_inputs(turn).items():
-            out.setdefault(sec, {}).update(vals)
+            out.setdefault(sec, {}).update({k: v for k, v in vals.items() if not (drop_ages and k in age_fields)})
     g = out.get("grants") or {}
     if "youngest_core_member_age" in g and "youngest_buyer_age" in g:
         g["youngest_core_member_age"] = g["youngest_buyer_age"]       # follow a corrected age
@@ -1542,26 +1668,30 @@ def user_request(state: HDBCompassState) -> str:
 #   money  "$655,000", "S$655k", "SGD 900,000", "600k", "655 thousand", "$1.2m", "95,000 dollars", "655,000"
 #   blocks "Blk 627", "Block 102"
 #   metres "384m", "400 metres" (compared with the distances in the facts)
-_MONEY_FIG = re.compile(r"(?:S?\$|\bSGD\s?)\s?\d[\d,]*(?:\.\d+)?\s*(?:k|m|thousand|million|mil)?\b"
-                        r"|\b\d[\d,]*(?:\.\d+)?\s*(?:k|thousand|million|mil|dollars)\b"
-                        r"|\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b", re.I)
+_MONEY_FIG = re.compile(r"(?:S?\$|\bSGD\s?)\s?\d[\d,]*(?:\.\d+)?\s*(?:k|m|thousand|million|mil|grand)?\b"
+                        r"|\b\d[\d,]*(?:\.\d+)?\s*(?:k|thousand|million|mil|dollars|grand)\b"
+                        r"|\b\d(?:\.\d+)?\s*m\b"                     # "1.2m": under 10 with m is money, not metres
+                        r"|\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b|\b\d{5,7}\b", re.I)
 _BLOCK_FIG = re.compile(r"\b(?:Blk|Block)\s*(\d{1,4}[A-Z]?)\b", re.I)
 _METRE_FIG = re.compile(r"\b(\d{2,5})\s*(?:m|metres?|meters?)\b(?!\s*(?:dollars|budget))", re.I)
 
 
-def keep_supported_sentences(opening: str, facts: str) -> Tuple[str, int]:
-    """The model's opening with every sentence dropped that states a price, block number or distance not in the
-    code-written facts, so it cannot contradict them. Rounding within 0.2% ("$784k" for $784,366) is fine.
-    Returns (text, sentences dropped)."""
-    known_money = [n for n, _ in _stated_numbers(facts)]
-    known_plain = {float(x.replace(",", "")) for x in re.findall(r"\d[\d,]*(?:\.\d+)?", facts)}
+def keep_supported_sentences(opening: str, facts: str, user_text: str = "") -> Tuple[str, int]:
+    """The model's opening with every sentence dropped that states a price, block number or distance found neither in
+    the code-written facts nor in the user's own message (their budget, income or distance limit), so it cannot
+    contradict them. Rounding within 0.2% ("$784k" for $784,366) is fine. Returns (text, sentences dropped)."""
+    known = f"{facts}\n{user_text}"
+    known_money = [n for n, _ in _stated_numbers(known)]
+    known_plain = {float(x.replace(",", "")) for x in re.findall(r"\d[\d,]*(?:\.\d+)?", known)}
     known_blocks = {b.upper() for b in _BLOCK_FIG.findall(facts)}
     kept, dropped = [], 0
     for sentence in re.split(r"(?<=[.!?])\s+", opening.strip()):
         bad = any(b.upper() not in known_blocks for b in _BLOCK_FIG.findall(sentence))
         rest = _BLOCK_FIG.sub(" ", sentence)
         for fig in _MONEY_FIG.findall(rest):
-            values = [n for n, _ in _stated_numbers(fig.replace("dollars", "").replace("SGD", "").replace("S$", "$"))]
+            clean = re.sub(r"dollars|SGD|S(?=\$)", "", fig, flags=re.I)
+            clean = re.sub(r"(\d)\s*grand\b", r"\1k", clean, flags=re.I)
+            values = [n for n, _ in _stated_numbers(clean)]
             bad |= bool(values) and not any(abs(n - v) <= max(1, 0.002 * v) for n in values for v in known_money)
         for metres in _METRE_FIG.findall(_MONEY_FIG.sub(" ", rest)):
             bad |= float(metres) not in known_plain
@@ -1613,7 +1743,7 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
                 text = "".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in text)
             text = strip_think(text)
             if facts:
-                opening, dropped = keep_supported_sentences(text, facts)
+                opening, dropped = keep_supported_sentences(text, facts, user_request(state))
                 if dropped:
                     errors.append(f"synthesize: dropped {dropped} opening sentence(s) with figures not in the facts")
                 text = (opening.strip() + "\n\n" if opening.strip() else "") + facts

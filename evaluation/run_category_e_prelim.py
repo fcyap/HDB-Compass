@@ -143,13 +143,20 @@ def lost_model(state: Dict[str, Any]) -> bool:
     """No usable answer from the model: an unanswered or refused call, or (whatever the error) an answer in which the
     model did nothing at all: no constraint reading, no tool call it chose, and the writer fell back to the template."""
     errors = [str(e) for e in state.get("errors") or []]
-    if any(mark in e for e in errors for mark in UNREACHABLE):
+    json_mode_failed = any("extract_constraints[json_mode] failed" in e for e in errors)
+    # a json_schema attempt that json_mode then recovered from (the reading exists) is not a lost model: some servers
+    # refuse the schema but accept JSON mode
+    recovered = bool(state.get("model_constraints"))
+    counted = [e for e in errors if not (recovered and e.startswith("extract_constraints[json_schema]"))]
+    if any(mark in e for e in counted for mark in UNREACHABLE):
         return True
-    read_nothing = any("extract_constraints[json_schema] failed" in e for e in errors) and \
-        any("extract_constraints[json_mode] failed" in e for e in errors)
-    wrote_nothing = any("template used" in e for e in errors)
-    chose_nothing = not any(r.get("source") == "model" for r in state.get("tool_call_log") or [])
-    return read_nothing and wrote_nothing and chose_nothing
+    # whatever the error type: some model step failed outright, and the model contributed nothing at all
+    # (no constraint reading, no tool call it chose). Variant A has only its tool loop, so this covers it too.
+    model_failed = any("LLM loop failed" in e or "LLM failed" in e for e in errors) or json_mode_failed
+    wrote = not any(("monolith: LLM loop failed" if state.get("variant") == "A" else "template used") in e for e in errors)
+    contributed = (bool(state.get("model_constraints")) or wrote
+                   or any(r.get("source") == "model" for r in state.get("tool_call_log") or []))
+    return model_failed and not contributed
 
 
 def model_fallbacks(state: Dict[str, Any]) -> List[str]:
@@ -180,8 +187,9 @@ def run_settings(profile: Dict[str, Any]) -> Dict[str, Any]:
     import hashlib
     # the exact code: commit plus a fingerprint of uncommitted edits and new Python files, so two different
     # uncommitted versions of the same commit are told apart
-    edits = git("diff", "HEAD") + "\n".join(sorted(f for f in git("ls-files", "--others", "--exclude-standard").splitlines()
-                                                  if f.endswith(".py")))
+    new_files = sorted(f for f in git("ls-files", "--others", "--exclude-standard").splitlines()
+                       if f.endswith((".py", ".json", ".yaml", ".yml")))
+    edits = git("diff", "HEAD") + "".join(f"\n{f} {git('hash-object', f)}" for f in new_files)   # contents, not names
     return {
         "commit": git("rev-parse", "--short", "HEAD"),
         "uncommitted_changes": bool(edits.strip()),
@@ -314,6 +322,9 @@ def main() -> None:
         n = 0
         for r in rows:
             if r.get("status") == "ok" and r.get("state"):
+                if r["id"] not in items_by_id:
+                    print(f"  skipped {r['id']}: not in the known datasets (pass the same --dataset it was run with)")
+                    continue
                 r["scores"] = M.score_item(items_by_id[r["id"]], r["state"]); n += 1
                 fu = r.get("follow_up") or {}
                 if fu.get("status") == "ok" and fu.get("state") and items_by_id[r["id"]].get("follow_up"):
@@ -332,9 +343,10 @@ def main() -> None:
 
     # resume: only successful rows count as done; a crashed or timed-out row is run again
     existing = {} if args.rerun else load_done(path)
-    other_sets = {(r.get("settings") or {}).get("dataset") for r in existing.values()} - {None, DATASET_NAME}
+    other_sets = {(r.get("settings") or {}).get("dataset") for r in existing.values()} - {DATASET_NAME}
     if other_sets:
-        sys.exit(f"{path.name} already holds results for {', '.join(sorted(other_sets))}; use another --tag for {DATASET_NAME}")
+        named = ", ".join(sorted(s or "an unknown dataset (rows from before 30 Oct)" for s in other_sets))
+        sys.exit(f"{path.name} already holds results for {named}; use another --tag for {DATASET_NAME}")
     # only rows from this exact code and these settings count as done; others (or rows that recorded none) are rerun
     done = {k: r for k, r in existing.items() if r.get("status") == "ok" and same_settings(r.get("settings"), RUN_SETTINGS)}
     stale = sum(1 for r in existing.values() if r.get("status") == "ok") - len(done)

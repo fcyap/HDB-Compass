@@ -257,7 +257,10 @@ def mentions_amount(text: str, value: Optional[float], tol: float = 1.0) -> bool
 def asked_for_missing(draft: str, missing: List[str]) -> bool:
     """Every missing fact is named, and a sentence that names one actually asks for it. Boilerplate such as "please
     confirm with HDB" elsewhere in the answer does not count as asking."""
-    low = (draft or "").lower()
+    # boilerplate that is not asking the user anything ("please confirm with HDB", "an HFE letter")
+    draft = _re.sub(r"(?:please\s+)?confirm (?:it\s+)?with (?:hdb|the bank)|hdb flat eligibility \(hfe\) letter|hfe letter", " ",
+                    draft or "", flags=_re.I)
+    low = draft.lower()
     words = {m: _MISSING_WORDS.get(m, (m.replace("_", " "),)) for m in missing}
     named = all(any(w in low for w in ws) for ws in words.values())
     sentences = _re.split(r"(?<=[.!?])\s+|\n+", draft or "")
@@ -331,7 +334,15 @@ def model_reading_accuracy(item: Dict[str, Any], state: Dict[str, Any]) -> Optio
     measure that shows whether the model, not the code patterns, copes with a phrasing. None without a model."""
     reading = state.get("model_constraints")
     stated = item.get("stated_constraints")
-    if not reading or not stated:
+    if not stated:
+        return None
+    if not reading:
+        # the model was asked but produced no usable reading: it scores zero here, rather than the row dropping out
+        # and leaving only the questions the model managed to read
+        if any(str(e).startswith("extract_constraints[") for e in state.get("errors") or []):
+            facts = sum(len(v or {}) for v in (item.get("financial_inputs") or {}).values())
+            return {"search_correct": 0, "search_total": len(SEARCH_FIELDS), "facts_correct": 0, "facts_total": facts,
+                    "facts_wrong": 0, "facts_invented": 0, "reading_failed": True}
         return None
     search_ok = sum(1 for f in SEARCH_FIELDS if _same(reading.get(f) or ([] if isinstance(stated.get(f), list) else
                                                       {} if isinstance(stated.get(f), dict) else None), stated.get(f)))
