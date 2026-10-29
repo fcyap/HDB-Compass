@@ -8,6 +8,7 @@
 #   bash cluster/run_live_eval.sh realdata4 C               # resume: only rows not yet done are run
 #   bash cluster/run_live_eval.sh realdata5 A,B,C --tool-check
 #   bash cluster/run_live_eval.sh rep1,rep2,rep3            # repeats in one job (the model loads once)
+#   EVAL_DATASET=varied bash cluster/run_live_eval.sh varied1 C   # the 60 varied-phrasing questions
 #
 # Needs: SMU VPN, CLUSTER_LOGIN in the gitignored .env, and an open shared session so no password is asked
 # mid-run. Open it once in your own terminal (it asks for your password there and stays open):
@@ -17,6 +18,7 @@ set -uo pipefail
 TAGS="${1:?usage: run_live_eval.sh TAG[,TAG...] [VARIANTS] [--tool-check]}"
 VARIANTS="${2:-A,B,C}"
 TOOL_CHECK="${3:-}"
+DATASET="${EVAL_DATASET:-}"   # EVAL_DATASET=varied runs evaluation/category_e_varied.json
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 SOCK="${CLUSTER_SOCK:-$HOME/.ssh/hdb-cluster.sock}"
@@ -66,7 +68,7 @@ if [[ "$TOOL_CHECK" == "--tool-check" ]]; then
   echo "TOOLCHECK_DONE"
 fi
 for TAG in ${TAGS//,/ }; do
-  .venv/bin/python evaluation/run_category_e_prelim.py --tag "$TAG" --variants "$VARIANTS" 2>&1 \
+  .venv/bin/python evaluation/run_category_e_prelim.py ${DATASET:+--dataset "$DATASET"} --tag "$TAG" --variants "$VARIANTS" 2>&1 \
     | grep -E "^\[|already done|ERROR|UNREACHABLE|Traceback|^variant|^[ABC] "
   echo "RUN_DONE $TAG"
 done

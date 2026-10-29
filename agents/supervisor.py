@@ -22,6 +22,7 @@ queries can be generated from the same plans.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -656,7 +657,8 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
                    f"{json.dumps((prior or {}).get('financial_inputs') or {}, default=str)}. Leave everything else empty.")
     if llm is not None:
         messages = [sys_msg(system), HumanMessage(content=query)]
-        if load_config().get("architecture", {}).get("extraction_reasoning", False):
+        # HDB_EXTRACTION_REASONING=1 switches it on for one run without editing the config (A/B testing)
+        if os.getenv("HDB_EXTRACTION_REASONING") == "1" or load_config().get("architecture", {}).get("extraction_reasoning", False):
             # Guided JSON output leaves the model no room to think, so an optional first pass lists, in plain
             # words, every constraint and money fact the user stated; the JSON pass then reads from that list too.
             try:
