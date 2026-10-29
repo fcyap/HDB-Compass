@@ -1146,6 +1146,24 @@ HFE_DISCLAIMER = ("\n\n_Figures are indicative. Grant and loan eligibility is co
                   "letter. This is not financial advice._")
 
 
+LISTED_BLOCKS = 20   # matching blocks written out in full; the rest are counted (all are on the map)
+AMENITY_LABELS = {"mrt": "an MRT station", "hawker": "a hawker centre", "bus_stop": "a bus stop",
+                  "supermarket": "a supermarket", "park": "a park", "school": "the school", "clinic": "a clinic"}
+
+
+def plain_relaxation(constraint: str, original: Any, relaxed: Any) -> Tuple[str, str, str]:
+    """A relaxation in words a buyer reads: ("distance to an MRT station", "400 m", "550 m"), not
+    ("amenity_radii_meters.mrt", 400, 550)."""
+    if constraint == "max_budget_sgd":
+        return "budget", f"${float(original):,.0f}", f"${float(relaxed):,.0f}"
+    if constraint == "min_remaining_lease_years":
+        return "minimum remaining lease", f"{float(original):g} years", f"{float(relaxed):g} years"
+    if constraint.startswith("amenity_radii_meters."):
+        what = AMENITY_LABELS.get(constraint.split(".", 1)[1], constraint.split(".", 1)[1].replace("_", " "))
+        return f"distance to {what}", f"{float(original):g} m", f"{float(relaxed):g} m"
+    return constraint.replace("_", " "), str(original), str(relaxed)
+
+
 def template_response(state: HDBCompassState) -> str:
     lines: List[str] = []
     blocks = state.get("candidate_blocks_intersection") or []
@@ -1156,19 +1174,24 @@ def template_response(state: HDBCompassState) -> str:
     if searched:
         if blocks:
             lines.append(f"**{len(blocks)} candidate block(s)** match all stated constraints:")
-            for b in blocks[:8]:
+            for b in blocks[:LISTED_BLOCKS]:
                 price = f" — median ${b['median_resale_price']:,.0f}" if b.get("median_resale_price") else ""
                 lease = f", {b['median_remaining_lease_years']:.0f} yrs lease" if b.get("median_remaining_lease_years") else ""
                 dist = ", ".join(f"{k.replace('_dist_m','')} {v:.0f}m" for k, v in (b.get("distances") or {}).items())
-                lines.append(f"- Blk {b['block']} {b['street']} ({b.get('town','')}){price}{lease}{(' — ' + dist) if dist else ''}")
+                town = f" ({b['town']})" if b.get("town") else ""
+                lines.append(f"- Blk {b['block']} {b['street']}{town}{price}{lease}{(' — ' + dist) if dist else ''}")
+            if len(blocks) > LISTED_BLOCKS:
+                lines.append(f"- …and {len(blocks) - LISTED_BLOCKS} more, all shown on the map.")
         else:
             lines.append("**No block satisfies every constraint at once.**")
             rel = state.get("relaxation") or {}
             if rel.get("best_single_change"):
                 bsc = rel["best_single_change"]
-                lines.append(f"Relaxing **{bsc['constraint']}** from {bsc['original']} to {bsc['relaxed']} unlocks {bsc['unlocked_blocks']} block(s).")
+                label, orig, new = plain_relaxation(bsc["constraint"], bsc["original"], bsc["relaxed"])
+                lines.append(f"Relaxing **{label}** from {orig} to {new} unlocks {bsc['unlocked_blocks']} block(s).")
             for s in rel.get("suggestions", []):
-                lines.append(f"- {s['constraint']}: {s['original']} → {s['relaxed']} unlocks {s['unlocked_blocks']}")
+                label, orig, new = plain_relaxation(s["constraint"], s["original"], s["relaxed"])
+                lines.append(f"- {label}: {orig} → {new} unlocks {s['unlocked_blocks']}")
     sql = state.get("sql_market_results") or {}
     lines.extend(_comparable_lines(sql))
     if "compute_town_price_timeseries" in sql:

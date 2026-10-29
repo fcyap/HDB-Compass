@@ -57,6 +57,45 @@ interface AgentChatProps {
   onSelectBlock?: (blockSummary: string) => void;
 }
 
+// Suggested questions on the welcome screen. Each is a complete question the system answers well (checked against
+// the real tools): a flat search, grants and budget, a search where nothing fits and a relaxation is suggested, and
+// blocks near a primary school. Short queries like "Ai Tong School 1km" were read as policy questions and got no map.
+const WELCOME_PROMPTS = [
+  {
+    title: 'Toa Payoh 4-room',
+    subtitle: 'Under $750k · 65+ yrs lease · 400m MRT',
+    tone: 'location',
+    icon: <Building size={14} />,
+    prompt: 'Find 4-room resale flats in Toa Payoh under $750,000 with at least 65 years of lease left, within 400m of an MRT station.',
+  },
+  {
+    title: 'Grants & max budget',
+    subtitle: 'SC couple · Ang Mo Kio 4-room',
+    tone: 'transit',
+    icon: <Sparkles size={14} />,
+    prompt:
+      "We're a Singapore citizen couple aged 32 and 30, first-timers with no kids. Our HFE income is $9,000 a month, " +
+      'we have $90,000 in CPF OA and $40,000 in cash, no other debts, have been continuously employed for 12 months, ' +
+      'and our grant and HDB loan eligibility is confirmed. No proximity grant applies. Find 4-room resale flats in ' +
+      'Ang Mo Kio under $750,000 with at least 65 years of lease left, within 400m of an MRT station. Use 65 years of ' +
+      'remaining lease for the calculation. What are our grants and maximum budget?',
+  },
+  {
+    title: 'Nothing fits?',
+    subtitle: 'Tampines · 70+ yrs lease · see what to relax',
+    tone: 'school',
+    icon: <Navigation size={14} />,
+    prompt: 'Find 4-room resale flats in Tampines under $700,000 with at least 70 years of lease left, within 400m of an MRT station.',
+  },
+  {
+    title: 'Near Ai Tong School',
+    subtitle: 'Blocks within 1km (P1 priority)',
+    tone: 'school',
+    icon: <School size={14} />,
+    prompt: 'Which HDB blocks are within 1km of Ai Tong School?',
+  },
+];
+
 export const AgentChat: React.FC<AgentChatProps> = ({
   messages,
   agentStatus,
@@ -156,57 +195,15 @@ export const AgentChat: React.FC<AgentChatProps> = ({
               commute to MRT stations, or amenity filters.
             </p>
             <div className="welcome-prompts-grid">
-              <button
-                className="welcome-prompt-card"
-                onClick={() => handleQuickPrompt('Ai Tong School 1km')}
-              >
-                <div className="prompt-card-icon school">
-                  <School size={14} />
-                </div>
-                <div className="prompt-card-text">
-                  <span className="prompt-title">Ai Tong School</span>
-                  <span className="prompt-subtitle">1km MOE Priority Boundary</span>
-                </div>
-              </button>
-
-              <button
-                className="welcome-prompt-card"
-                onClick={() => handleQuickPrompt('Catholic High School 1km')}
-              >
-                <div className="prompt-card-icon school">
-                  <School size={14} />
-                </div>
-                <div className="prompt-card-text">
-                  <span className="prompt-title">Catholic High School</span>
-                  <span className="prompt-subtitle">Bishan Primary 1 Buffer</span>
-                </div>
-              </button>
-
-              <button
-                className="welcome-prompt-card"
-                onClick={() => handleQuickPrompt('Ang Mo Kio MRT 300m')}
-              >
-                <div className="prompt-card-icon transit">
-                  <Zap size={14} />
-                </div>
-                <div className="prompt-card-text">
-                  <span className="prompt-title">Ang Mo Kio MRT</span>
-                  <span className="prompt-subtitle">300m Walk Proximity</span>
-                </div>
-              </button>
-
-              <button
-                className="welcome-prompt-card"
-                onClick={() => handleQuickPrompt('640 Rowell Road 500m')}
-              >
-                <div className="prompt-card-icon location">
-                  <Building size={14} />
-                </div>
-                <div className="prompt-card-text">
-                  <span className="prompt-title">Rowell Road</span>
-                  <span className="prompt-subtitle">500m Jalan Besar Buffer</span>
-                </div>
-              </button>
+              {WELCOME_PROMPTS.map((p) => (
+                <button key={p.title} className="welcome-prompt-card" onClick={() => handleQuickPrompt(p.prompt)}>
+                  <div className={`prompt-card-icon ${p.tone}`}>{p.icon}</div>
+                  <div className="prompt-card-text">
+                    <span className="prompt-title">{p.title}</span>
+                    <span className="prompt-subtitle">{p.subtitle}</span>
+                  </div>
+                </button>
+              ))}
             </div>
           </div>
         )}

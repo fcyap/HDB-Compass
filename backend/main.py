@@ -115,6 +115,24 @@ NODE_INFO = {
 }
 
 
+def honest_step(node_name: str, node_output: Dict[str, Any], desc: str) -> str:
+    """The trace must not claim a check that never ran. Member 5's guardrail and auditor fall back to pass-throughs
+    until agents/guardrails.py exists, and the policy search is a stand-in while it is mocked; say so."""
+    if node_name == "input_guardrail" and sv._INPUT_GUARDRAIL is None:
+        return "Not installed yet (pass-through): the message is not safety-checked."
+    if node_name == "runtime_auditor":
+        if sv._AUDITOR is None:
+            return "Not installed yet (pass-through): the answer is not independently checked."
+        verdict = node_output.get("auditor_verdict") or {}
+        if verdict.get("passed", True):
+            return "Answer check passed."
+        return f"Answer check asked for a rewrite: {verdict.get('critique') or 'no reason given'}"
+    if node_name == "policy_rag_agent" and \
+            sv.load_config().get("tools", {}).get("use_mock", {}).get("retrieve_hdb_policy_knowledge") == "mock":
+        return "Stand-in only (the real policy search is not built yet); no rules are quoted."
+    return desc
+
+
 @app.get("/")
 def read_root():
     return {
@@ -355,6 +373,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             step_title, step_desc = NODE_INFO.get(
                                 node_name, (node_name, f"Completed {node_name}")
                             )
+                            step_desc = honest_step(node_name, node_output, step_desc)
 
                             if node_name == "extract_constraints":
                                 c = node_output.get("user_constraints", {})
@@ -410,9 +429,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                     step_desc = f"Cross-agent synthesis complete with {n_markers} synchronized map markers and buffer."
 
                             elif node_name == "runtime_auditor":
-                                verdict = node_output.get("auditor_verdict", {})
-                                passed = verdict.get("passed", True)
-                                step_desc = f"Runtime audit completed: {'Verified (zero hallucinations)' if passed else 'Audit refinement required.'}"
+                                step_desc = honest_step(node_name, node_output, step_desc)
 
                             elif node_name == "finalize":
                                 msgs = node_output.get("messages", [])
