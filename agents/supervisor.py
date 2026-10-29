@@ -1538,24 +1538,33 @@ def user_request(state: HDBCompassState) -> str:
     return last_user_query(state)
 
 
-_FIGURE_RE = re.compile(r"\$\s?\d[\d,]*(?:\.\d+)?\s*(?:k|m)?\b|\b(?:Blk|Block)\s*\d{1,4}[A-Z]?\b", re.I)
+# Figures an opening sentence can state, in the forms people write them:
+#   money  "$655,000", "S$655k", "SGD 900,000", "600k", "655 thousand", "$1.2m", "95,000 dollars", "655,000"
+#   blocks "Blk 627", "Block 102"
+#   metres "384m", "400 metres" (compared with the distances in the facts)
+_MONEY_FIG = re.compile(r"(?:S?\$|\bSGD\s?)\s?\d[\d,]*(?:\.\d+)?\s*(?:k|m|thousand|million|mil)?\b"
+                        r"|\b\d[\d,]*(?:\.\d+)?\s*(?:k|thousand|million|mil|dollars)\b"
+                        r"|\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b", re.I)
+_BLOCK_FIG = re.compile(r"\b(?:Blk|Block)\s*(\d{1,4}[A-Z]?)\b", re.I)
+_METRE_FIG = re.compile(r"\b(\d{2,5})\s*(?:m|metres?|meters?)\b(?!\s*(?:dollars|budget))", re.I)
 
 
 def keep_supported_sentences(opening: str, facts: str) -> Tuple[str, int]:
-    """The model's opening with every sentence dropped that states a price or block number not in the code-written
-    facts, so it cannot contradict them. Returns (text, sentences dropped)."""
-    known_money = {round(n) for n, _ in _stated_numbers(facts)}
-    known_blocks = {b.upper() for b in re.findall(r"\b(?:Blk|Block)\s*(\d{1,4}[A-Z]?)\b", facts, re.I)}
+    """The model's opening with every sentence dropped that states a price, block number or distance not in the
+    code-written facts, so it cannot contradict them. Rounding within 0.2% ("$784k" for $784,366) is fine.
+    Returns (text, sentences dropped)."""
+    known_money = [n for n, _ in _stated_numbers(facts)]
+    known_plain = {float(x.replace(",", "")) for x in re.findall(r"\d[\d,]*(?:\.\d+)?", facts)}
+    known_blocks = {b.upper() for b in _BLOCK_FIG.findall(facts)}
     kept, dropped = [], 0
     for sentence in re.split(r"(?<=[.!?])\s+", opening.strip()):
-        bad = False
-        for fig in _FIGURE_RE.findall(sentence):
-            blk = re.match(r"(?:Blk|Block)\s*(\d{1,4}[A-Z]?)", fig, re.I)
-            if blk:
-                bad |= blk.group(1).upper() not in known_blocks
-            else:
-                # rounding such as "$784k" for $784,366 is fine (0.2%); a different price is not
-                bad |= not any(abs(n - v) <= max(1, 0.002 * v) for n, _ in _stated_numbers(fig) for v in known_money)
+        bad = any(b.upper() not in known_blocks for b in _BLOCK_FIG.findall(sentence))
+        rest = _BLOCK_FIG.sub(" ", sentence)
+        for fig in _MONEY_FIG.findall(rest):
+            values = [n for n, _ in _stated_numbers(fig.replace("dollars", "").replace("SGD", "").replace("S$", "$"))]
+            bad |= bool(values) and not any(abs(n - v) <= max(1, 0.002 * v) for n in values for v in known_money)
+        for metres in _METRE_FIG.findall(_MONEY_FIG.sub(" ", rest)):
+            bad |= float(metres) not in known_plain
         if bad:
             dropped += 1
         else:

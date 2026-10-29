@@ -21,9 +21,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 CHAT_LOG_DIR = PROJECT_ROOT / "data" / "local" / "chat_logs"   # gitignored
 
-# The last finished state per browser tab (session id from the frontend), so a reply such as "we have $25,000 in
-# cash" completes the earlier request even if the WebSocket reconnected in between (page reload, backend restart,
-# dev hot reload). Oldest sessions are dropped beyond SESSION_LIMIT.
+# The last finished state per page load (session id from the frontend), so a reply such as "we have $25,000 in cash"
+# completes the earlier request even if the WebSocket dropped and reconnected in between. Held in this process only:
+# a backend restart (including --reload on a file save) forgets every conversation, and a page reload starts a new
+# one. Oldest sessions are dropped beyond SESSION_LIMIT.
 SESSION_LIMIT = 200
 SESSIONS: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
 
@@ -367,6 +368,8 @@ async def websocket_endpoint(websocket: WebSocket):
                             final_state = chunk  # the full state after each step; the last one is the answer's
                             continue
                         for node_name, node_output in chunk.items():
+                            if node_output is None and node_name in ("input_guardrail", "runtime_auditor"):
+                                node_output = {}      # a pass-through stand-in returns nothing; still show its step
                             if not isinstance(node_output, dict):
                                 continue
 

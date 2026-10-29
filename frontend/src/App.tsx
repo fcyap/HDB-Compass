@@ -3,21 +3,12 @@ import { SplitScreenLayout } from './components/SplitScreenLayout';
 import { AgentChat, ChatMessage, LogMessage } from './components/AgentChat';
 import { InteractiveMap, MapViewport } from './components/InteractiveMap';
 
-// One id per browser tab: the backend keeps this tab's conversation under it, so a reconnect does not lose a
-// pending follow-up question. Clear starts a new conversation (the backend forgets it).
-function tabSessionId(): string {
-  try {
-    const existing = sessionStorage.getItem('hdb-compass-session');
-    if (existing) return existing;
-    const id = crypto.randomUUID();
-    sessionStorage.setItem('hdb-compass-session', id);
-    return id;
-  } catch {
-    return crypto.randomUUID();   // storage blocked: memory still lasts for this connection
-  }
-}
-
-const WS_URL = `ws://localhost:8000/ws?session=${encodeURIComponent(tabSessionId())}`;
+// One id per page load: the backend keeps this page's conversation under it, so a dropped WebSocket that reconnects
+// does not lose a pending follow-up question. It is deliberately not stored: a reload (which empties the chat on
+// screen) or a duplicated tab starts a new conversation, so the backend never applies a request the user can no
+// longer see. Clear also starts a new conversation (the backend forgets it).
+const SESSION_ID = crypto.randomUUID();
+const WS_URL = `ws://localhost:8000/ws?session=${encodeURIComponent(SESSION_ID)}`;
 
 // The chat opens on the mascot welcome (AgentChat) with no message; Clear returns to it.
 const INITIAL_MESSAGES: ChatMessage[] = [];
@@ -35,6 +26,7 @@ export function App() {
   const [agentStatus, setAgentStatus] = useState<string>('READY');
   const [wsConnected, setWsConnected] = useState<boolean>(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const pendingResetRef = useRef(false);
   const currentMsgIdRef = useRef<string | null>(null);
 
   // ---------------------------------------------------------------------------
@@ -50,6 +42,11 @@ export function App() {
       ws.onopen = () => {
         setWsConnected(true);
         setAgentStatus('READY');
+        if (pendingResetRef.current) {
+          // Clear was pressed while disconnected: tell the backend now, before the next question
+          ws.send(JSON.stringify({ reset: true }));
+          pendingResetRef.current = false;
+        }
       };
 
       ws.onmessage = (event) => {
@@ -242,9 +239,12 @@ export function App() {
   const [clearTrigger, setClearTrigger] = useState<number>(0);
 
   const handleClear = () => {
-    // start a fresh conversation: the backend forgets the previous request and any open follow-up question
+    // start a fresh conversation: the backend forgets the previous request and any open follow-up question.
+    // While disconnected the reset waits for the reconnect (onopen), so it is never lost.
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ reset: true }));
+    } else {
+      pendingResetRef.current = true;
     }
     setMessages(INITIAL_MESSAGES);
     setBufferGeoJSON(null);

@@ -330,3 +330,12 @@ def test_the_models_own_reading_is_kept_before_code_fills_it():
     assert out["model_constraints"]["towns"] == ["TOA PAYOH"] and out["model_constraints"]["max_budget_sgd"] is None
     assert out["user_constraints"]["max_budget_sgd"] == 750000                # code filled the gap afterwards
     assert sv.extract_constraints_node({"messages": [{"role": "user", "content": q}]})["model_constraints"] is None
+
+
+def test_opening_figures_are_checked_in_every_form():
+    facts = "- Blk 627 ANG MO KIO AVE 9 — median $655,000 — mrt 379m\n- Grants = **$85,000**\n- Max purchase price $784,366"
+    for bad in ("Blk 627 is the cheaper one at 600k.", "Your grants come to 95,000 dollars.",
+                "You can afford up to SGD 900,000.", "It is 250 metres from the MRT.", "You could stretch to $1.2m."):
+        assert sv.keep_supported_sentences(bad, facts)[1] == 1, bad
+    for good in ("Blk 627 is about $655k.", "Your budget tops out near $784k.", "It is 379m from the MRT.", "Grants total 85,000."):
+        assert sv.keep_supported_sentences(good, facts)[1] == 0, good
