@@ -35,6 +35,15 @@ from evaluation import architecture_metrics as M  # noqa: E402
 
 RESULTS_DIR = PROJECT_ROOT / "evaluation" / "results"
 QUERIES = PROJECT_ROOT / "evaluation" / "category_e_queries.json"
+VARIED = PROJECT_ROOT / "evaluation" / "category_e_varied.json"   # the same questions in four user styles (vary_category_e.py)
+
+
+def dataset_path(name: str) -> Path:
+    if not name:
+        return QUERIES
+    if name == "varied":
+        return VARIED
+    return Path(name).resolve()
 
 
 def load_variant(name: str):
@@ -194,11 +203,14 @@ def main() -> None:
     ap.add_argument("--rerun", action="store_true", help="ignore existing checkpoints")
     ap.add_argument("--summary-only", action="store_true")
     ap.add_argument("--rescore", action="store_true", help="recompute scores from stored state with the current metrics")
+    ap.add_argument("--dataset", default="", help="'varied' for evaluation/category_e_varied.json (or a path); default "
+                                                   "the 15 grounded questions")
     args = ap.parse_args()
 
     profile = active_profile()
     path = results_path(profile, args.tag)
-    items = json.loads(QUERIES.read_text())
+    queries = dataset_path(args.dataset)
+    items = json.loads(queries.read_text())
     if args.ids:
         wanted = set(args.ids.split(","))
         items = [i for i in items if i["id"] in wanted]
@@ -208,7 +220,7 @@ def main() -> None:
 
     if args.rescore:
         rows = list(load_done(path).values())
-        items_by_id = {i["id"]: i for i in json.loads(QUERIES.read_text())}
+        items_by_id = {i["id"]: i for i in json.loads(queries.read_text())}
         n = 0
         for r in rows:
             if r.get("status") == "ok" and r.get("state"):

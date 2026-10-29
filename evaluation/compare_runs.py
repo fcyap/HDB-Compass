@@ -7,6 +7,8 @@ claim such as "C answers most questions fully right" carries its spread. Rows th
 
     .venv/bin/python -m evaluation.compare_runs rep1 rep2 rep3          # results tags
     .venv/bin/python -m evaluation.compare_runs evaluation/results/prelim_vllm_..._rep1.jsonl ...
+
+For the varied-phrasing set (ids like "E1-01~casual") it also breaks each run down by style.
 """
 from __future__ import annotations
 
@@ -57,6 +59,24 @@ def counts(rows: List[Dict[str, Any]], variant: str) -> Dict[str, Any]:
     return out
 
 
+def style_table(runs: Dict[str, List[Dict[str, Any]]]) -> None:
+    """Fully right per phrasing style, for runs of the varied set (ids "E1-01~casual")."""
+    styles = sorted({r["id"].split("~", 1)[1] for rows in runs.values() for r in rows if "~" in r["id"]})
+    if not styles:
+        return
+    print("\n| Variant | Style | " + " | ".join(runs) + " |")
+    print("|---|---|" + "---|" * len(runs))
+    variants = sorted({r["variant"] for rows in runs.values() for r in rows})
+    for v in variants:
+        for st in styles:
+            cells = []
+            for rows in runs.values():
+                part = [r for r in rows if r["id"].endswith("~" + st)]
+                c = counts(part, v)
+                cells.append(f"{c['fully right'][0]}/{c['fully right'][1]}" if c["fully right"][1] else "–")
+            print(f"| {v} | {st} | " + " | ".join(cells) + " |")
+
+
 def main() -> None:
     paths = [resolve(a) for a in sys.argv[1:]]
     if not paths:
@@ -78,6 +98,7 @@ def main() -> None:
         if missing:
             print(f"| {v} | rows that never reached the model (left out) | " +
                   " | ".join(str(per[t]['unreachable']) for t in runs) + " | | |")
+    style_table(runs)
 
 
 if __name__ == "__main__":
