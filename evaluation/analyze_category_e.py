@@ -22,7 +22,10 @@ from typing import Any, Dict, List, Optional
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-ITEMS = {i["id"]: i for i in json.loads((PROJECT_ROOT / "evaluation" / "category_e_queries.json").read_text())}
+# the 15 grounded questions plus their varied-phrasing rewrites ("E1-01~casual"), so either kind of run can be analysed
+ITEMS = {i["id"]: i for name in ("category_e_queries.json", "category_e_varied.json")
+         if (PROJECT_ROOT / "evaluation" / name).exists()
+         for i in json.loads((PROJECT_ROOT / "evaluation" / name).read_text())}
 
 
 def load(path: Path) -> List[Dict[str, Any]]:
@@ -48,8 +51,8 @@ def f(x, d=2) -> str:
 
 
 def variant_table(rows: List[Dict[str, Any]]) -> str:
-    out = ["| Variant | Runs | Task success | Tool F1 | Param EM | Routing exact | CSR | Fabricated blocks (answer / map) | E1 map synced | Map precision | E2 trade-off offered | Latency P50 (s) | Latency P95 (s) | Mean tokens / query | Errors |",
-           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    out = ["| Variant | Runs | Task success | Tool F1 | Tool F1 (model-chosen calls) | Param EM | Routing exact | CSR | Fabricated blocks (answer / map) | E1 map synced | Map precision | E2 trade-off offered | Latency P50 (s) | Latency P95 (s) | Mean tokens / query | Answers with a code fallback | Errors |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for v in sorted({r["variant"] for r in rows}):
         rs = [r for r in rows if r["variant"] == v]
         ok = [r for r in rs if r.get("status") == "ok"]
@@ -61,6 +64,8 @@ def variant_table(rows: List[Dict[str, Any]]) -> str:
             v, str(len(rs)),
             f"{sum(1 for s in sc if s.get('task_success'))}/{len(rs)}",
             f(mean(s["tool_selection"]["f1"] for s in sc)),
+            f(mean(s["tool_selection_model_chosen"]["f1"] for s in sc if "tool_selection_model_chosen" in s))
+            if any((s.get("tool_calls_by_source") or {}).get("model") for s in sc) else "n/a",   # n/a: no model calls
             f(mean(s["parameter_em"]["rate"] for s in sc)),
             f(mean(routing)) if routing else "n/a",
             f(mean(s["csr"]["rate"] for s in sc)),
@@ -71,6 +76,7 @@ def variant_table(rows: List[Dict[str, Any]]) -> str:
             f(pct([r["latency_s"] for r in ok], 0.5), 1),
             f(pct([r["latency_s"] for r in ok], 0.95), 1),
             f(mean((r.get("tokens") or {}).get("total_tokens") for r in ok), 0).split(".")[0],
+            f"{sum(1 for r in ok if r.get('fallbacks'))}/{len(ok)}" if any("fallbacks" in r for r in ok) else "n/a",
             str(sum(1 for r in rs if r.get("status") != "ok") + sum(len(r["state_excerpt"].get("errors") or []) for r in ok)),
         ]) + " |")
     return "\n".join(out)
@@ -134,7 +140,7 @@ def per_query(rows: List[Dict[str, Any]]) -> str:
     by = {(r["variant"], r["id"]): r for r in rows}
     head = "| Query | " + " | ".join(f"{v}: ok / F1 / CSR / s" for v in vs) + " |"
     out = [head, "|---|" + "---|" * len(vs)]
-    for qid in sorted(ITEMS):
+    for qid in sorted({r['id'] for r in rows}):
         cells = []
         for v in vs:
             r = by.get((v, qid))
@@ -165,20 +171,20 @@ def pick_traces(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     by = {(r["variant"], r["id"]): r for r in rows if r.get("status") == "ok"}
     chosen: List[Dict[str, Any]] = []
     # 1. a query where A fabricates or violates constraints and C satisfies them
-    for qid in sorted(ITEMS):
+    for qid in sorted({r['id'] for r in rows}):
         a, c = by.get(("A", qid)), by.get(("C", qid))
         if a and c and (a["scores"].get("fabricated_blocks", 0) > 0 or (a["scores"]["csr"]["rate"] or 1) < 1) and c["scores"]["csr"]["rate"] == 1.0:
             chosen += [a, c]
             break
     # 2. a query where B never called a financial tool that was expected
-    for qid in sorted(ITEMS):
+    for qid in sorted({r['id'] for r in rows}):
         b = by.get(("B", qid))
         if b and "calculate_maximum_affordability" in b["scores"]["tool_selection"]["expected"] and \
                 not any(t.startswith("calculate_") for t in b["scores"]["tool_selection"]["predicted"]):
             chosen.append(b)
             break
     # 3. an E2 query where C offered a relaxation and A did not
-    for qid in sorted(q for q in ITEMS if q.startswith("E2")):
+    for qid in sorted(q for q in {r["id"] for r in rows} if q.startswith("E2")):
         a, c = by.get(("A", qid)), by.get(("C", qid))
         if c and c["scores"].get("relaxation_attempted") and a and not a["scores"].get("relaxation_attempted"):
             chosen += [c, a]
@@ -190,13 +196,26 @@ def pick_traces(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return uniq
 
 
-def tool_wiring() -> str:
-    """Which tools ran real or mocked, read from the config the run used (tools.use_mock)."""
-    from agents.supervisor import load_config
-    wiring = load_config().get("tools", {}).get("use_mock", {})
-    mocked = sorted(t for t, v in wiring.items() if v == "mock")
-    return (f"Real tools: {len(wiring) - len(mocked)} of {len(wiring)}; mocked: {', '.join(mocked) or 'none'}. "
-            "Market data from Member 1's DuckDB snapshot, spatial from Member 2's index.")
+def run_header(rows: List[Dict[str, Any]]) -> str:
+    """What produced these rows, from the settings each row recorded at run time (run_category_e_prelim.run_settings).
+    Older rows have none; then the current config is described and labelled as such."""
+    settings = [r["settings"] for r in rows if r.get("settings")]
+    if not settings:
+        from agents.supervisor import load_config
+        wiring = load_config().get("tools", {}).get("use_mock", {})
+        mocked = sorted(t for t, v in wiring.items() if v == "mock")
+        return (f"(Rows recorded no run settings; current config:) mocked tools: {', '.join(mocked) or 'none'}.")
+    commits = sorted({s.get("commit") or "?" for s in settings})
+    first = settings[0]
+    parts = [f"Code: {', '.join(commits)}" + (" (with uncommitted changes)" if any(s.get("uncommitted_changes") for s in settings) else "") + ".",
+             f"Mocked tools: {', '.join(first.get('mocked_tools') or []) or 'none'}.",
+             f"Code-written facts in C: {'on' if first.get('code_written_facts') else 'off'}; extraction reasoning pass: "
+             f"{'on' if first.get('extraction_reasoning') else 'off'}.",
+             "Runtime auditor: " + ("installed" if first.get("runtime_auditor_installed") else "not installed (pass-through)") +
+             "; input guardrail: " + ("installed" if first.get("input_guardrail_installed") else "not installed (pass-through)") + "."]
+    if len({json.dumps({k: v for k, v in s.items() if k != 'uncommitted_changes'}, sort_keys=True) for s in settings}) > 1:
+        parts.append("**Warning: these rows come from more than one code version or setting.**")
+    return " ".join(parts)
 
 
 def main() -> None:
@@ -207,15 +226,18 @@ def main() -> None:
     out_dir = PROJECT_ROOT / "evaluation" / "analysis"
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / (path.stem + ".md")
-    md = [f"# Experiment 1, preliminary: Category E ({len(ITEMS)} queries)", "",
+    md = [f"# Experiment 1, preliminary: Category E ({len({r['id'] for r in rows})} queries)", "",
           f"Model `{model}` via profile `{profile}`; {len(rows)} runs; source `{path.relative_to(PROJECT_ROOT)}`. "
-          f"{tool_wiring()} No runtime auditor yet (Member 5): Variant C runs with a pass-through auditor.", "",
+          + run_header(rows), "",
           f"![Accuracy and latency by architecture]({path.stem}_accuracy_latency.svg)", "",
           "## Per variant", "", variant_table(rows), "",
           "CSR = share of the blocks an answer presents as matches that satisfy every stated constraint, judged on the evidence "
           "that variant retrieved (a block with no price, lease or distance evidence fails that constraint; a block in no tool "
           "output is fabricated). Map precision = the same check on the blocks drawn on the map. Tool F1 leaves out the map "
-          "tool, which is scored by the map columns instead. Task success: an E1 answer recommends at least one block and every "
+          "tool, which is scored by the map columns instead. Tool F1 (model-chosen calls) counts only the calls the model chose "
+          "itself, not those made by a deterministic plan, the supervisor or a guard. Answers with a code fallback: answers "
+          "where the harness stood in for a model step (no valid tool call, writer failed, constraint reading failed). "
+          "Task success: an E1 answer recommends at least one block and every "
           "recommended block satisfies every constraint with none fabricated; an E2 answer presents nothing as a match and "
           "offers a concrete trade-off (C's structured relaxation, or the same advice in any variant's text).", "",
           "## Checked against the ground truth", "", ground_truth_table(rows), "",

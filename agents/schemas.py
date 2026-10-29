@@ -507,6 +507,9 @@ class ToolCallRecord(BaseModel):
     ok: bool = True
     error: Optional[str] = None
     latency_ms: Optional[float] = None
+    # "model": the model chose this call in its tool loop; "code": a deterministic plan, the supervisor (relaxation,
+    # map sync) or a guard made it. Tool Selection F1 can then be split by who chose the call.
+    source: Literal["model", "code"] = "code"
 
 
 # ---------------------------------------------------------------------------

@@ -214,3 +214,45 @@ def test_rows_that_lost_the_model_are_not_results():
     assert lost_model({"errors": ["extract_constraints[json_schema] failed: OpenAIConnectionError: Connection error."]})
     assert not lost_model({"errors": ["spatial: no valid tool call from model; deterministic plan used"]})
     assert not lost_model({})
+
+
+def test_any_unanswered_model_call_makes_a_row_not_a_result():
+    from evaluation.run_category_e_prelim import lost_model, model_fallbacks
+    for err in ("synthesize: LLM failed, template used: APITimeoutError",
+                "market_sql: LLM loop failed: InternalServerError: 500",
+                "extract_constraints[json_schema] failed: RateLimitError: slow down"):
+        assert lost_model({"errors": [err]}), err
+    both = {"errors": ["extract_constraints[json_schema] failed: ValueError: x",
+                       "extract_constraints[json_mode] failed: ValueError: y",
+                       "spatial: no valid tool call from model; deterministic plan used"]}
+    assert not lost_model(both)
+    fb = model_fallbacks(both)
+    assert len(fb) == 2 and any("code-only reading" in f for f in fb)
+    assert model_fallbacks({"errors": []}) == []
+
+
+def test_tool_calls_record_who_chose_them():
+    from unittest.mock import patch
+    from langchain_core.messages import AIMessage
+    from agents import supervisor as sv
+
+    class Model:
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, msgs):
+            if any(getattr(m, "type", "") == "tool" for m in msgs):
+                return AIMessage(content="done")
+            return AIMessage(content="", tool_calls=[{"name": "query_resale_blocks_by_criteria", "id": "1", "args": {
+                "towns": ["TOA PAYOH"], "flat_types": ["4 ROOM"], "max_price": 750000, "min_lease_years": 65}}])
+
+    with patch.object(sv, "get_llm", return_value=Model()):
+        outputs, log, errors, final = sv.run_react("market_sql", sv.tools_for_agent("market_sql"), "x", "q",
+                                                   {"towns": ["TOA PAYOH"]})
+    assert [r["source"] for r in log] == ["model"] and not errors
+    _, log2, _, _ = sv.run_react("market_sql", sv.tools_for_agent("market_sql"), "x", "q",
+                                 {"towns": ["TOA PAYOH"], "flat_types": ["4 ROOM"]})   # no model: the plan runs
+    assert log2 and all(r["source"] == "code" for r in log2)
+    s = M.score_item({"id": "x", "expected_mcp_calls": [{"tool": "query_resale_blocks_by_criteria"}]},
+                     {"variant": "C", "tool_call_log": log})
+    assert s["tool_selection_model_chosen"]["f1"] == 1.0 and s["tool_calls_by_source"]["model"] == 1

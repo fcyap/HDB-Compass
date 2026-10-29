@@ -839,7 +839,12 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
                         errors.append(f"{label}: model called unknown tool {name}")
                         msgs.append(ToolMessage(content=json.dumps({"error": f"unknown tool {name}"}), tool_call_id=tc["id"]))
                         continue
-                    result = runners[name](**guard_financial_args(name, args, c, outputs, runners))
+                    guarded = guard_financial_args(name, args, c, outputs, runners)   # may run the grant calculator (code)
+                    runners[name].source = "model"
+                    try:
+                        result = runners[name](**guarded)
+                    finally:
+                        runners[name].source = "code"
                     used_llm_tools = True
                     outputs[name] = result
                     msgs.append(ToolMessage(content=json.dumps(result, default=str)[:12000], tool_call_id=tc["id"]))

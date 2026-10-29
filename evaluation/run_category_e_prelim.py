@@ -117,10 +117,60 @@ def _token_totals(usage: Dict[str, Any]) -> Dict[str, int]:
     return tot
 
 
+# A model call that never got an answer: lost connection, timeout, server error or rate limit (the exception's type
+# name ends up in the node's error message). The nodes then fall back to their no-model plans, which score like a
+# perfect run, so such a row is not a model result and is rerun on resume.
+UNREACHABLE = ("ConnectionError", "Timeout", "TimedOut", "InternalServerError", "ServiceUnavailable",
+               "RateLimitError", "APIStatusError", "BadGateway", "GatewayTimeout")
+# The harness standing in for the model by design (the model made no valid tool call, the writer failed, the
+# constraint reading failed in both modes). The answer is then partly a no-model answer: kept, but counted.
+FALLBACK_MARKS = ("deterministic plan used", "template used", "failed after one repair")
+
+
+RUN_SETTINGS: Dict[str, Any] = {}   # filled once per run in main() (run_settings)
+
+
 def lost_model(state: Dict[str, Any]) -> bool:
-    """True when a model call could not reach the server (the 27 Oct run 4 lost its tunnel mid-run and the nodes fell
-    back to their no-model plans, which score like a perfect run). Such a row is not a model result."""
-    return any("ConnectionError" in str(e) for e in state.get("errors") or [])
+    return any(mark in str(e) for e in state.get("errors") or [] for mark in UNREACHABLE)
+
+
+def model_fallbacks(state: Dict[str, Any]) -> List[str]:
+    """Where code stood in for the model in this answer (empty when the model did every step)."""
+    errors = [str(e) for e in state.get("errors") or []]
+    out = [e for e in errors if any(mark in e for mark in FALLBACK_MARKS)]
+    if any("extract_constraints[json_schema] failed" in e for e in errors) and \
+            any("extract_constraints[json_mode] failed" in e for e in errors):
+        out.append("extract_constraints: both modes failed; code-only reading used")
+    return out
+
+
+def run_settings(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """What produced a result row: the code version and the switches that change answers. Stored in every row so
+    results from different code or settings are never mixed up (the analysis used to read the config at analysis
+    time, not at run time)."""
+    import os
+    import subprocess
+    from agents import supervisor as sv
+
+    def git(*args: str) -> str:
+        try:
+            return subprocess.run(["git", *args], cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=10).stdout.strip()
+        except Exception:  # noqa: BLE001
+            return ""
+    cfg = sv.load_config()
+    arch = cfg.get("architecture", {})
+    return {
+        "commit": git("rev-parse", "--short", "HEAD"),
+        "uncommitted_changes": bool(git("status", "--porcelain", "--untracked-files=no")),
+        "profile": profile.get("name"), "model": profile.get("model"),
+        "code_written_facts": bool(arch.get("code_written_facts", True)),
+        "extraction_reasoning": os.getenv("HDB_EXTRACTION_REASONING") == "1" or bool(arch.get("extraction_reasoning", False)),
+        "disclose_unbuilt_tools": bool(arch.get("disclose_unbuilt_tools", True)),
+        "mocked_tools": sorted(t for t, v in cfg.get("tools", {}).get("use_mock", {}).items() if v == "mock"),
+        "input_guardrail_installed": sv._INPUT_GUARDRAIL is not None,
+        "runtime_auditor_installed": sv._AUDITOR is not None,
+        "llm_timeout_s": os.getenv("LLM_TIMEOUT_S") or (cfg.get("llm", {}).get("profiles", {}).get(profile.get("name") or "", {}) or {}).get("timeout_s"),
+    }
 
 
 def run_one(mod, item: Dict[str, Any], variant: str, profile: Dict[str, Any], run_id: str) -> Dict[str, Any]:
@@ -134,7 +184,7 @@ def run_one(mod, item: Dict[str, Any], variant: str, profile: Dict[str, Any], ru
                "profile": profile["name"], "model": profile.get("model"), "latency_s": round(latency, 2),
                "tokens": _token_totals(cb.usage_metadata),
                "status": "ok", "scores": M.score_item(item, state), "state_excerpt": state_excerpt(state),
-               "state": rescore_state(state)}
+               "fallbacks": model_fallbacks(state), "settings": RUN_SETTINGS, "state": rescore_state(state)}
         if item.get("follow_up"):
             row["follow_up"] = run_follow_up(mod, item, state)
         if lost_model(state) or (row.get("follow_up") or {}).get("status") == "model_unreachable":
@@ -157,7 +207,7 @@ def run_follow_up(mod, item: Dict[str, Any], first_state: Dict[str, Any]) -> Dic
     try:
         with get_usage_metadata_callback() as cb:
             state = mod.run(item["follow_up"]["answer"], previous=first_state)
-        return {"status": "model_unreachable" if lost_model(state) else "ok",
+        return {"status": "model_unreachable" if lost_model(state) else "ok", "fallbacks": model_fallbacks(state),
                 "latency_s": round(time.perf_counter() - t0, 2), "tokens": _token_totals(cb.usage_metadata),
                 "scores": M.ground_truth_scores(follow_up_item(item), state),
                 "draft_response": (state.get("draft_response") or "")[:4000], "state": rescore_state(state)}
@@ -179,12 +229,17 @@ def summarise(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         a["mean_output_tokens"] = round(sum(outs) / len(outs)) if outs else None
         a["e1_with_candidates"] = sum(1 for r in ok if r["variant"] == v and r["sub_use_case"] == "E1" and r["state_excerpt"]["n_candidates"] > 0)
         a["e2_relaxation_attempted"] = sum(1 for r in ok if r["variant"] == v and r["sub_use_case"] == "E2" and r["scores"]["relaxation_attempted"])
+        a["answers_with_fallback"] = sum(1 for r in ok if r["variant"] == v and r.get("fallbacks"))
+        model_f1 = [r["scores"]["tool_selection_model_chosen"]["f1"] for r in ok
+                    if r["variant"] == v and "tool_selection_model_chosen" in r["scores"]]
+        a["tool_selection_f1_model_chosen"] = sum(model_f1) / len(model_f1) if model_f1 else None
     return agg
 
 
 def print_table(agg: Dict[str, Any]) -> None:
-    cols = ["n", "tool_selection_f1", "parameter_em_rate", "csr", "routing_exact_rate", "mean_tool_calls",
-            "latency_p50_s", "latency_p95_s", "mean_total_tokens", "errors", "e1_with_candidates", "e2_relaxation_attempted"]
+    cols = ["n", "tool_selection_f1", "tool_selection_f1_model_chosen", "parameter_em_rate", "csr", "routing_exact_rate",
+            "mean_tool_calls", "latency_p50_s", "latency_p95_s", "mean_total_tokens", "errors", "answers_with_fallback",
+            "e1_with_candidates", "e2_relaxation_attempted"]
     print("\nvariant | " + " | ".join(cols))
     for v, a in agg.items():
         cells = []
@@ -208,6 +263,8 @@ def main() -> None:
     args = ap.parse_args()
 
     profile = active_profile()
+    global RUN_SETTINGS
+    RUN_SETTINGS = run_settings(profile)
     path = results_path(profile, args.tag)
     queries = dataset_path(args.dataset)
     items = json.loads(queries.read_text())

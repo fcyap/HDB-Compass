@@ -75,6 +75,7 @@ class ToolRunner:
         self.fn = resolve_callable(tool_name)
         self.is_mock = load_config()["tools"]["use_mock"].get(tool_name, "mock") != "real"
         self.log: List[ToolCallRecord] = []
+        self.source = "code"   # set to "model" by the tool loop for a call the model chose (ToolCallRecord.source)
 
     def __call__(self, **kwargs: Any) -> Any:
         t0 = time.perf_counter()
@@ -82,7 +83,7 @@ class ToolRunner:
             validated = self.input_model(**kwargs)
         except ValidationError as e:
             rec = ToolCallRecord(agent=self.agent, tool=self.name, arguments=kwargs, ok=False,
-                                 error=f"invalid arguments: {e.errors()[:3]}", latency_ms=0.0)
+                                 error=f"invalid arguments: {e.errors()[:3]}", latency_ms=0.0, source=self.source)
             self.log.append(rec)
             return {"error": rec.error, "tool": self.name}
         try:
@@ -97,7 +98,8 @@ class ToolRunner:
         except Exception as e:  # noqa: BLE001 — surface tool failures to the LLM, don't crash the graph
             result, ok, err = {"error": str(e), "tool": self.name}, False, str(e)
         self.log.append(ToolCallRecord(agent=self.agent, tool=self.name, arguments=validated.model_dump(),
-                                       ok=ok, error=err, latency_ms=(time.perf_counter() - t0) * 1000))
+                                       ok=ok, error=err, latency_ms=(time.perf_counter() - t0) * 1000,
+                                       source=self.source))
         return result
 
     def as_langchain_tool(self) -> StructuredTool:

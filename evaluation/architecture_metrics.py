@@ -314,6 +314,12 @@ def score_item(item: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     row = {
         "id": item["id"], "variant": variant,
         "tool_selection": tool_selection_prf(item.get("expected_mcp_calls", []), state.get("tool_call_log", [])),
+        # the same score over only the calls the model chose (ToolCallRecord.source); rows recorded before the source
+        # tag existed have no model calls here, so compare like with like
+        "tool_selection_model_chosen": tool_selection_prf(
+            item.get("expected_mcp_calls", []), [r for r in state.get("tool_call_log", []) if r.get("source") == "model"]),
+        "tool_calls_by_source": {src: sum(1 for r in state.get("tool_call_log", []) if (r.get("source") or "unknown") == src)
+                                 for src in ("model", "code", "unknown")},
         "parameter_em": parameter_exact_match(item.get("expected_mcp_calls", []), state.get("tool_call_log", [])),
         "csr": csr,
         "fabricated_blocks": fabricated,
