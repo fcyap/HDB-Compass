@@ -61,6 +61,10 @@ HDB_TOWNS = [
 ]
 TOWN_ALIASES = {"TIONG BAHRU": "BUKIT MERAH", "KALLANG": "KALLANG/WHAMPOA", "WHAMPOA": "KALLANG/WHAMPOA",
                 "REDHILL": "BUKIT MERAH", "TELOK BLANGAH": "BUKIT MERAH", "COMMONWEALTH": "QUEENSTOWN"}
+# short forms people actually type, matched as whole upper-case words so "JE" never matches inside another word
+TOWN_SHORT = {"AMK": "ANG MO KIO", "TPY": "TOA PAYOH", "JE": "JURONG EAST", "JW": "JURONG WEST", "CCK": "CHOA CHU KANG",
+              "BP": "BUKIT PANJANG", "SK": "SENGKANG", "PG": "PUNGGOL"}
+NUMBER_WORDS = {"two": "2", "three": "3", "four": "4", "five": "5"}
 AMENITY_WORDS = {"mrt": "mrt", "train": "mrt", "hawker": "hawker", "bus stop": "bus_stop", "bus": "bus_stop",
                  "supermarket": "supermarket", "park": "park", "school": "school", "clinic": "clinic"}
 
@@ -94,12 +98,12 @@ def last_user_query(state: HDBCompassState) -> str:
 
 
 def _money(s: str) -> Optional[float]:
-    m = re.search(r"\$?\s?(\d[\d,]*(?:\.\d+)?)\s*(k|m)?\b", s, re.I)
+    m = re.search(r"\$?\s?(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million|mil)?\b", s, re.I)
     if not m:
         return None
     v = float(m.group(1).replace(",", ""))
     unit = (m.group(2) or "").lower()
-    return v * (1000 if unit == "k" else 1_000_000 if unit == "m" else 1)
+    return v * (1000 if unit in ("k", "thousand") else 1_000_000 if unit in ("m", "million", "mil") else 1)
 
 
 def rule_based_extract(query: str) -> ExtractedConstraints:
@@ -110,30 +114,54 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
     for alias, town in TOWN_ALIASES.items():
         if alias in qu and town not in towns:
             towns.append(town)
-    flat_types = [f"{n} ROOM" for n in re.findall(r"\b([2-5])[- ]room", q, re.I)]
+    for short, town in TOWN_SHORT.items():
+        if re.search(rf"\b{short}\b", q) and town not in towns:   # case-sensitive: "AMK", not "amk" inside a word
+            towns.append(town)
+    for word, digit in NUMBER_WORDS.items():
+        q = re.sub(rf"\b{word}(?=[- ]?(?:room|rm)\b)", digit, q, flags=re.I)
+    flat_types = [f"{n} ROOM" for n in re.findall(r"\b([2-5])\s*[- ]?\s*(?:room|rm)s?\b", q, re.I)]
     if re.search(r"\bexecutive\b", q, re.I):
         flat_types.append("EXECUTIVE")
     flat_types = list(dict.fromkeys(flat_types))
 
     budget = None
-    m = re.search(r"(?:under|below|less than|max(?:imum)?|up to|budget(?: of)?)\s*\$?\s?(\d[\d,]*(?:\.\d+)?\s*[km]?)", q, re.I)
-    if m:
-        budget = _money(m.group(1))
+    # "under 650k", "<650k", "budget up to $0.65m", "no more than 650 thousand"; a bare "400m" is metres, not money
+    for m in re.finditer(r"(?:under|below|less than|max(?:imum)?|up to|budget(?: of)?(?: up to)?|no more than|at most|<|≤)"
+                         r"\s*(\$)?\s?(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million|mil)?\b", q, re.I):
+        unit = (m.group(3) or "").lower()
+        if unit == "m" and not m.group(1) and float(m.group(2).replace(",", "")) >= 10:
+            continue                                                     # metres
+        value = _money(f"{m.group(2)}{unit}")
+        if value and value >= 50_000:                                    # an HDB budget, not a distance or an age
+            budget = value
+            break
 
     lease = None
-    m = re.search(r"(\d{2})\s*\+?\s*years?\s*(?:of\s*)?(?:remaining\s*)?lease|(?:at least|minimum|min)\s*(\d{2})\s*years", q, re.I)
-    if m:
-        lease = int(m.group(1) or m.group(2))
+    # "at least 60 yrs lease left", "65+ years of lease", "lease 65+ yrs", "remaining lease of 65 years or more"
+    for pat in (r"(?:at least|minimum|min\.?|>=|≥)\s*(\d{2})\s*(?:years?|yrs?)",
+                r"(\d{2})\s*\+\s*(?:years?|yrs?)",
+                r"\blease\s*(?:of\s*)?(?:at least\s*|>=\s*|≥\s*)?(\d{2})\s*\+?\s*(?:years?|yrs?)",
+                r"(\d{2})\s*(?:years?|yrs?)\s*(?:of\s*)?(?:remaining\s*)?lease"):
+        m = re.search(pat, q, re.I)
+        if m:
+            lease = int(m.group(1))
+            break
 
     radii: Dict[str, int] = {}
-    for m in re.finditer(r"(?:within\s*)?(\d+(?:\.\d+)?)\s*(km|m)\b\s*(?:of|from|to)\s+(?:an?\s+|the\s+)?([a-z /-]+?)(?=[,.;?!]|\s+(?:with|within|that|which|under|over|have|has)\b|\s+and\s+(?:\d|have|has|at\s+least)|$)", q, re.I):
+    for m in re.finditer(r"(?:within\s*)?(\d+(?:\.\d+)?)\s*(km|m)\b\s*(?:of|from|to)\s+(?:an?\s+|the\s+)?([a-z /-]+?)(?=[,.;?!]|\s+(?:with|within|that|which|under|over|have|has)\b|\s+and\s+(?:\d|have|has|at\s+least|within|no more than|max|≤|<)|$)", q, re.I):
         dist = float(m.group(1)) * (1000 if m.group(2).lower() == "km" else 1)
         targets = m.group(3).lower()
         for word, key in AMENITY_WORDS.items():
             if word in targets:
                 radii[key] = int(dist)
-    for m in re.finditer(r"\b(mrt|hawker|supermarket|bus stop|park)[a-z ]*?within\s*(\d+)\s*m\b", q, re.I):
+    # "MRT within 400m"; never across "and", so "mrt and within 500m of a hawker centre" is not read as the MRT limit
+    for m in re.finditer(r"\b(mrt|hawker|supermarket|bus stop|park)(?:(?!\band\b)[a-z ])*?within\s*(\d+)\s*m\b", q, re.I):
         radii[AMENITY_WORDS[m.group(1).lower()]] = int(m.group(2))
+    # "≤400m MRT", "no more than 400 metres from an MRT station", "max 500m to a hawker centre"
+    for m in re.finditer(r"(?:≤|<=|<|within|max(?:imum)?|no more than|at most)\s*(\d+(?:\.\d+)?)\s*(km|m|metres?|meters?)\b"
+                         r"\s*(?:of|from|to)?\s*(?:an?\s+|the\s+)?(mrt|train|hawker|supermarket|bus stop|park|clinic)", q, re.I):
+        dist = float(m.group(1)) * (1000 if m.group(2).lower() == "km" else 1)
+        radii.setdefault(AMENITY_WORDS[m.group(3).lower()], int(dist))
 
     school = None
     m = re.search(r"(?:of|near|to)\s+((?:[A-Z][a-zA-Z'’]+\s){1,4}(?:Primary School|School|Primary|High))", q)
@@ -142,7 +170,7 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
         radii.setdefault("school", 1000)
 
     income = None
-    m = re.search(r"(?:earn(?:ing)?|income(?: of)?|salary(?: of)?)\s*(?:is\s*)?\$?\s?(\d[\d,]*(?:\.\d+)?\s*k?)", q, re.I)
+    m = re.search(r"(?:earn(?:ing)?|income(?: of)?|salary(?: of)?)\s*(?:is\s*|:\s*)?\$?\s?(\d[\d,]*(?:\.\d+)?\s*k?)", q, re.I)
     if m:
         income = _money(m.group(1))
     if income is None:
@@ -224,7 +252,8 @@ def merge_constraints(prior: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, A
     return out
 
 
-_AGES_RE = re.compile(r"\b(?:aged?|are|am)\s+(\d{2})(?:\s*(?:and|&|,)\s*(\d{2}))?\b", re.I)
+# "aged 32 and 30", "we're 32 & 30", "ages: 32 and 30", "I am 38"
+_AGES_RE = re.compile(r"\b(?:aged?|ages?:?|are|am|we're|i'm|we are)\s+(\d{2})(?:\s*(?:and|&|,|/)\s*(\d{2}))?\b(?!\s*(?:years?|yrs?)\s+(?:of\s+)?(?:remaining\s+)?lease)(?!\s*k\b|\s*%)", re.I)
 _CASH_RE = re.compile(r"\$?\s?(\d[\d,]*(?:\.\d+)?)\s*(k)?\s*(?:sgd\s*)?(?:in\s+)?(?:cash|savings)\b"
                       r"|\b(?:cash|savings)\b[^\d\n,;.]{0,20}?\$?\s?(\d[\d,]*(?:\.\d+)?)\s*(k)?", re.I)
 # "$90,000 in CPF OA", "40k cpf", "cpf of ard 40k"; a comma or full stop in between ends the match
@@ -285,21 +314,23 @@ def stated_financial_inputs(text: str) -> Dict[str, Dict[str, Any]]:
     user says there are no children."""
     t = text or ""
     f: Dict[str, Any] = {}
-    if re.search(r"\bcitizen\b.{0,40}\b(?:permanent resident|PR)\b|\b(?:permanent resident|PR)\b.{0,40}\bcitizen\b", t, re.I):
+    citizen = r"(?:citizens?|singaporeans?|\bSC\b)"
+    if re.search(rf"{citizen}.{{0,40}}\b(?:permanent resident|PR)\b|\b(?:permanent resident|PR)\b.{{0,40}}{citizen}", t, re.I):
         f["citizenship_pair"] = "SC_PR"
-    elif re.search(r"\bsingle\s+(?:singapore(?:an)?\s+)?citizen\b", t, re.I):
+    elif re.search(rf"\bsingle\s+(?:singapore(?:an)?\s+)?{citizen}|\bi'?m single, (?:a )?singapore citizen", t, re.I):
         f["citizenship_pair"] = "SC_Single"
-    elif re.search(r"\bsingapore(?:an)?\s+citizen\s+couple\b|\bboth\s+(?:are\s+)?singapore(?:an)?\s+citizens\b", t, re.I):
+    elif re.search(r"\bsingapore(?:an)?\s+citizen\s+couple\b|\bboth\s+(?:are\s+)?singapore(?:an)?\s+citizens\b"
+                   r"|\bSC couple\b|\bboth\s+(?:are\s+)?singaporeans\b", t, re.I):
         f["citizenship_pair"] = "SC_SC"
-    if re.search(r"\bsecond[- ]timers?\b", t, re.I):
+    if re.search(r"\bsecond[- ]timers?\b|\b2nd[- ]timers?\b", t, re.I):
         f["first_timer_status"] = False
-    elif re.search(r"\bfirst[- ]timers?\b", t, re.I):
+    elif re.search(r"\bfirst[- ]?timers?\b|\b1st[- ]?timers?\b|\bfirst[- ]time (?:home )?buyers?\b", t, re.I):
         f["first_timer_status"] = True
     m = _AGES_RE.search(t)
     if m:
         ages = [int(a) for a in m.groups() if a]
         f.update(youngest_buyer_age=min(ages), oldest_buyer_age=max(ages), average_applicant_age=sum(ages) / len(ages))
-        if re.search(r"\bno (?:children|kids)\b", t, re.I):
+        if re.search(r"\bno (?:children|kids|child)\b|\bwithout (?:children|kids)\b", t, re.I):
             f["youngest_core_member_age"] = min(ages)
     rb = rule_based_extract(t)
     if rb.household_income is not None:
@@ -314,24 +345,31 @@ def stated_financial_inputs(text: str) -> Dict[str, Dict[str, Any]]:
         f["cash_savings"] = _re_amount(m)
     if re.search(r"\bno (?:other )?(?:debts?|loans?|monthly (?:debt|loan) (?:payments|obligations))\b", t, re.I):
         f["monthly_debt_obligations"] = 0.0
-    if re.search(r"(?:continuously employed|employed continuously).{0,30}\b12 months\b", t, re.I):
+    if re.search(r"(?:continuous(?:ly)?\s+(?:employ\w*|working)|(?:employ\w*|working)\s+(?:\w+\s+){0,2}continuously)"
+                 r".{0,40}\b(?:12|twelve)\s*(?:months?|mths?)\b"
+                 r"|(?:employ\w*|working)\s+(?:12|twelve)\s*(?:months?|mths?)\s+continuously", t, re.I):
         f["continuous_employment_12_months"] = True
-    if re.search(r"eligibility for (?:the )?grants?.{0,40}\bconfirmed\b"
-                 r"|grants?(?: and (?:an? )?(?:HDB |bank )?loan)? eligibility (?:is |are |has been |have been )?confirmed", t, re.I):
+    if re.search(r"eligibility for (?:the )?grants?.{0,40}\bconfirmed\b|\bgrants?\b.{0,30}\beligibility\b.{0,25}\bconfirmed\b", t, re.I):
         f["eligibility_confirmed"] = True
-    if re.search(r"eligibility for .{0,30}\b(?:HDB|bank) loan (?:is |has been )?confirmed|\b(?:HDB|bank) loan(?: eligibility)? (?:is |has been )?confirmed", t, re.I):
+    if re.search(r"eligibility for .{0,30}\b(?:HDB|bank) loan (?:is |has been )?confirmed"
+                 r"|\b(?:HDB|bank) loan\b.{0,15}\beligibility\b.{0,25}\bconfirmed\b"
+                 r"|\b(?:HDB|bank) loan(?: eligibility)? (?:is |has been )?confirmed", t, re.I):
         f["loan_eligibility_confirmed"] = True
     if re.search(r"\bbank loan\b", t, re.I):
         f["loan_type"] = "bank"
     elif re.search(r"\bHDB loan\b", t, re.I):
         f["loan_type"] = "hdb"
-    if re.search(r"\bno proximity (?:housing )?grant\b", t, re.I):
+    if re.search(r"\bno proximity (?:housing )?grant\b|\bno PHG\b|\bproximity (?:housing )?grant (?:does not|doesn't) apply\b", t, re.I):
         f["proximity"] = "none"
     if re.search(r"\bno (?:housing )?grants\b", t, re.I):
         f["total_grants"] = 0.0
-    m = re.search(r"(\d{2})\s*years of remaining lease for the .{0,30}calculation|\b(?:assume|use)\s+(\d{2})\s*years of remaining lease", t, re.I)
+    # the lease the user wants the calculation to assume: "use 65 yrs remaining lease for the calc", "calc w 65 yrs
+    # lease", "using a 65-year remaining lease", "assume 65 years of remaining lease"
+    m = re.search(r"(\d{2})\s*(?:years?|yrs?) of remaining lease for the .{0,30}calc"
+                  r"|\b(?:assume|use|using)\s+(?:a\s+)?(\d{2})[- ]?(?:years?|yrs?)\b(?:\s+of)?(?:\s+remaining)?\s+lease"
+                  r"|\bcalc\w*\s+(?:w|with|using)\s+(\d{2})\s*(?:years?|yrs?)\b(?:\s+of)?(?:\s+remaining)?\s+lease", t, re.I)
     if m:
-        f["remaining_lease_years"] = float(m.group(1) or m.group(2))
+        f["remaining_lease_years"] = float(next(g for g in m.groups() if g))
     m = re.search(r"interest rate of (\d+(?:\.\d+)?)\s*%|(\d+(?:\.\d+)?)\s*%\s*(?:p\.a\.|per annum|interest)", t, re.I)
     if m:
         f["interest_rate"] = float(m.group(1) or m.group(2))
@@ -368,13 +406,120 @@ def stated_financial_inputs(text: str) -> Dict[str, Dict[str, Any]]:
     return out
 
 
-def trusted_financial_inputs(model: Optional[Dict[str, Any]], stated: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """The model's financial_inputs reduced to what the user stated: stated facts override, the model's value for a
-    FACT_FIELDS field is dropped, and a section the user said nothing about is dropped whole."""
+_NUM_RE = re.compile(r"(?<![\w.])\$?\s?(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million|mil)?\b", re.I)
+_COUPLE = r"\b(?:we|we're|our|us|couple|wife|husband|spouse|partner|fianc[eé]e?|both)\b"
+_CITIZEN = r"(?:citizens?|singaporeans?|\bSC\b)"
+_NO_KIDS = r"\bno (?:children|kids|child)\b|\bwithout (?:children|kids)\b|\bchildless\b"
+
+
+def _stated_numbers(text: str) -> List[Tuple[float, bool]]:
+    """Every amount in the text as (value, had_unit): "150k" -> 150000, "$0.65m" -> 650000, "650 thousand", "32"."""
+    out = []
+    for m in _NUM_RE.finditer(text or ""):
+        unit = (m.group(2) or "").lower()
+        v = float(m.group(1).replace(",", ""))
+        if unit == "m" and v >= 10:          # "400m" is metres
+            out.append((v, False))
+            continue
+        mult = 1000 if unit in ("k", "thousand") else 1_000_000 if unit in ("m", "million", "mil") else 1
+        out.append((v * mult, bool(unit)))
+    return out
+
+
+def _number_stated(value: Any, text: str, plain_only: bool = False) -> bool:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return False
+    return any(abs(n - v) <= max(0.5, 0.005 * abs(v)) for n, unit in _stated_numbers(text) if not (plain_only and unit))
+
+
+def fact_is_grounded(field: str, value: Any, text: str) -> bool:
+    """True when the user's words support this calculator fact as read by the model. Numbers must appear in the text
+    in some form; yes/no and choice facts need a supporting phrase. Derived values are never taken from the model."""
+    t = text or ""
+    has = lambda pat: re.search(pat, t, re.I) is not None  # noqa: E731
+    if field in ("average_applicant_age", "ltv_ratio"):
+        return False                                   # worked out by code / the calculators
+    if field in ("youngest_buyer_age", "oldest_buyer_age"):
+        return _number_stated(value, t, plain_only=True)
+    if field == "youngest_core_member_age":
+        return _number_stated(value, t, plain_only=True) and has(_NO_KIDS)
+    if field == "monthly_debt_obligations":
+        if value == 0:
+            return has(r"\bno (?:other )?(?:debts?|loans?|outstanding loans?|car loans?|liabilities)\b|\bdebt[- ]free\b|\bzero debts?\b")
+        return _number_stated(value, t)
+    if field == "total_grants":
+        return (value == 0 and has(r"\bno (?:housing )?grants\b")) or \
+            (_number_stated(value, t) and has(r"\bgrants?\b"))
+    if field == "additional_buyer_stamp_duty":
+        return (value == 0 and has(r"\bno ABSD\b|\bno additional buyer'?s stamp duty\b")) or _number_stated(value, t)
+    if field == "interest_rate":
+        return _number_stated(value, t) and has(r"%|\binterest\b")
+    if field == "tenure_years":
+        return _number_stated(value, t, plain_only=True) and has(r"\btenure\b|[- ]year loan\b")
+    if field in ("monthly_income", "cpf_oa_balance", "cash_savings", "remaining_lease_years", "legal_and_valuation_fees"):
+        return _number_stated(value, t)
+    if field == "citizenship_pair":
+        pr = has(r"\bpermanent residents?\b|\bPR\b")
+        if value == "SC_PR":
+            return pr and has(_CITIZEN)
+        if value == "SC_SC":
+            return not pr and has(_CITIZEN) and has(_COUPLE)
+        if value == "SC_Single":
+            return not pr and has(_CITIZEN) and has(r"\bsingle\b") and not has(r"\b(?:wife|husband|spouse|fianc[eé]e?|couple)\b")
+        return False
+    if field == "first_timer_status":
+        if value is True:
+            return has(r"\bfirst[- ]?tim|\b1st[- ]?tim|\bfirst (?:home|flat)\b|\bnever owned\b")
+        return has(r"\bsecond[- ]?tim|\b2nd[- ]?tim|\bowned (?:a flat|an? hdb|property) before\b")
+    if field == "eligibility_confirmed":
+        return value is True and has(r"\beligib") and has(r"\bconfirm")
+    if field == "loan_eligibility_confirmed":
+        return value is True and has(r"\bloan\b") and has(r"\beligib") and has(r"\bconfirm")
+    if field == "continuous_employment_12_months":
+        return value is True and has(r"\b(?:employ\w*|working|work|job)\b") and \
+            has(r"\b(?:12|twelve)\s*(?:months?|mths?)\b|\b(?:a|one|1|past|last) year\b")
+    if field == "proximity":
+        if value == "none":
+            return has(r"\bno proximity\b|\bno PHG\b|\bproximity (?:housing )?grant (?:does not|doesn't|won't) apply"
+                       r"|\bnot (?:living )?near (?:my|our) parents\b")
+        return has(r"\bparents?\b|\bchildren\b") and has(r"\bnear\b|\bwith\b|\blive\b")
+    if field == "proximity_eligibility_confirmed":
+        return value is True and has(r"\bproximity\b") and has(r"\bconfirm")
+    return False
+
+
+def trusted_financial_inputs(model: Optional[Dict[str, Any]], stated: Dict[str, Dict[str, Any]],
+                             text: str = "") -> Optional[Dict[str, Any]]:
+    """The calculator facts to use: the model's reading kept only where the user's words support it
+    (fact_is_grounded), then the code's own reading on top (stated_financial_inputs; it wins where both read a
+    fact). A grounded fact goes to every calculator that takes it; the average age is worked out from the ages.
+    A section exists only when the user stated one of its facts; the upfront section only when code found a price.
+    With no text (or no model) this is the code's reading alone."""
+    from agents.schemas import TOOL_INPUT_MODEL
+    flat: Dict[str, Any] = {}
+    for sec in ("grants", "affordability"):
+        for k, v in ((model or {}).get(sec) or {}).items():
+            if v is None or k in flat:
+                continue
+            if k not in FACT_FIELDS or fact_is_grounded(k, v, text):
+                flat[k] = v
+    for sec in ("grants", "affordability"):
+        flat.update(stated.get(sec) or {})
+    ages = [flat[k] for k in ("youngest_buyer_age", "oldest_buyer_age") if isinstance(flat.get(k), (int, float))]
+    if ages:
+        flat["average_applicant_age"] = sum(ages) / len(ages)
     out: Dict[str, Dict[str, Any]] = {}
-    for sec, facts in stated.items():
-        extra = {k: v for k, v in ((model or {}).get(sec) or {}).items() if v is not None and k not in FACT_FIELDS}
-        out[sec] = {**extra, **facts}
+    for sec, tool in (("grants", "calculate_cpf_housing_grants"), ("affordability", "calculate_maximum_affordability")):
+        fields = set(TOOL_INPUT_MODEL[tool].model_fields)
+        vals = {k: v for k, v in flat.items() if k in fields}
+        if any(k in FACT_FIELDS for k in vals):
+            out[sec] = vals
+    if "upfront" in stated:
+        extra = {k: v for k, v in ((model or {}).get("upfront") or {}).items()
+                 if v is not None and (k not in FACT_FIELDS or fact_is_grounded(k, v, text))}
+        out["upfront"] = {**extra, **stated["upfront"]}
     return out or None
 
 
@@ -447,7 +592,8 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
         constraints["financial_inputs"] = extracted.financial_inputs.model_dump(exclude_unset=True)
     # calculator facts come from the user's own words in every turn so far, never from the model's reading of them
     users = " ".join(m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user")
-    constraints["financial_inputs"] = trusted_financial_inputs(constraints.get("financial_inputs"), stated_financial_inputs(users or query))
+    constraints["financial_inputs"] = trusted_financial_inputs(constraints.get("financial_inputs"),
+                                                               stated_financial_inputs(users or query), users or query)
     # a distance limit of 0 m is not a constraint: the model filled every amenity with 0 for an eligibility question,
     # which routed it to the map agent and produced "relax from 0 m to 150 m" suggestions
     constraints["amenity_radii_meters"] = {k: v for k, v in (constraints.get("amenity_radii_meters") or {}).items()

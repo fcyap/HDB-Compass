@@ -146,3 +146,39 @@ def test_never_ask_the_user_for_the_grant_total():
 def test_short_eligibility_phrasing_is_read():
     got = sv.stated_financial_inputs("We have $9,000 a month income and our grant and HDB loan eligibility is confirmed.")
     assert got["grants"]["eligibility_confirmed"] is True and got["affordability"]["loan_eligibility_confirmed"] is True
+
+
+def test_model_reading_kept_when_the_words_support_it():
+    q = ("hey, i'm single, a singapore citizen, 38, first timer, no kids. household income 5.5k a month (HFE assessed), "
+         "110k in cpf oa we can use, plus 50k cash. no other loans, been working continuously for the last 12 months, "
+         "and our grant and hdb loan eligibility is already confirmed. no proximity grant.")
+    model = {"grants": {"citizenship_pair": "SC_Single", "youngest_buyer_age": 38, "youngest_core_member_age": 38,
+                        "monthly_income": 5500.0, "eligibility_confirmed": True, "proximity": "none"},
+             "affordability": {"oldest_buyer_age": 38, "cash_savings": 50000.0, "cpf_oa_balance": 110000.0,
+                               "interest_rate": 2.6, "total_grants": 0.0}}
+    out = sv.trusted_financial_inputs(model, sv.stated_financial_inputs(q), q)
+    g, a = out["grants"], out["affordability"]
+    assert g["citizenship_pair"] == "SC_Single" and g["youngest_buyer_age"] == 38 and g["youngest_core_member_age"] == 38
+    assert a["youngest_buyer_age"] == 38 and a["average_applicant_age"] == 38   # spread to both calculators
+    assert a["cash_savings"] == 50000.0 and a["monthly_income"] == 5500.0
+    assert "interest_rate" not in a and "total_grants" not in a                  # not in the user's words
+
+
+def test_invented_facts_are_still_dropped():
+    q = "We are a married Singapore citizen couple earning $9,000 a month with $90,000 in CPF OA."
+    model = {"grants": {"citizenship_pair": "SC_Single", "youngest_buyer_age": 35, "eligibility_confirmed": True,
+                        "proximity": "none", "first_timer_status": True},
+             "affordability": {"cash_savings": 40000.0, "monthly_debt_obligations": 0.0, "monthly_income": 9000.0}}
+    out = sv.trusted_financial_inputs(model, sv.stated_financial_inputs(q), q)
+    g, a = out["grants"], out["affordability"]
+    assert g["citizenship_pair"] == "SC_SC"          # code's reading wins; SC_Single has no support anyway
+    for k in ("youngest_buyer_age", "eligibility_confirmed", "proximity", "first_timer_status"):
+        assert k not in g, k
+    assert "cash_savings" not in a and "monthly_debt_obligations" not in a and a["monthly_income"] == 9000.0
+
+
+def test_numbers_match_in_any_form():
+    for text, value in (("150k cash", 150000), ("budget $0.65m", 650000), ("650 thousand", 650000),
+                        ("$8,500 a month", 8500), ("8.5k/mth", 8500)):
+        assert sv._number_stated(value, text), text
+    assert not sv._number_stated(32, "we have 32k in cash", plain_only=True)   # an age is a plain number
