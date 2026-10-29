@@ -247,3 +247,67 @@ def test_opening_keeps_only_figures_from_the_facts():
     text, dropped = sv.keep_supported_sentences(
         "Blk 627 costs about $655k. Your grants total $85,000. Blk 999 is also nice. Blk 627 is $700,000.", facts)
     assert text == "Blk 627 costs about $655k. Your grants total $85,000." and dropped == 2
+
+
+# --- regressions found by the 30 Oct adversarial review -------------------------------------------------------------
+
+def test_a_comma_before_cash_or_cpf_is_not_part_of_the_amount():
+    aff = lambda t: sv.stated_financial_inputs(t)["affordability"]  # noqa: E731
+    assert aff("Income 9,000, cash 50k")["cash_savings"] == 50000
+    assert aff("Our income is 8000, CPF OA 90k")["cpf_oa_balance"] == 90000
+    assert aff("We're 32 & 30, cash 40k, cpf 90k")["cash_savings"] == 40000
+
+
+def test_a_later_message_corrects_an_earlier_fact():
+    st = sv.extract_constraints_node({"messages": [
+        {"role": "user", "content": "SC couple, first timers, income 9k, cash 40k, cpf 100k, aged 32 and 30, no kids"},
+        {"role": "assistant", "content": "..."},
+        {"role": "user", "content": "Sorry, correction: cash 60k and cpf 150k"}]})
+    a = st["user_constraints"]["financial_inputs"]["affordability"]
+    assert a["cash_savings"] == 60000 and a["cpf_oa_balance"] == 150000 and a["youngest_buyer_age"] == 30
+
+
+def test_pr_status_only_when_a_buyer_is_a_pr():
+    pair = lambda t: (sv.stated_financial_inputs(t).get("grants") or {}).get("citizenship_pair")  # noqa: E731
+    assert pair("Both are Singapore citizens, no PR") == "SC_SC"
+    assert pair("I'm a single Singapore citizen; my parents are PR") == "SC_Single"
+    assert pair("I'm Singaporean, my wife is Malaysian, not a PR") is None
+    for t in ("one Singapore citizen and one permanent resident", "SC + PR couple", "i'm a singapore citizen and my husband is a PR"):
+        assert pair(t) == "SC_PR", t
+
+
+def test_ages_are_the_buyers_own():
+    assert sv.buyer_ages("We are 30 minutes from work, aged 32 and 30") == [32, 30]
+    assert sv.buyer_ages("Our kids are 10 and 8. We're 40.") == [40]
+    assert sv.buyer_ages("Our parents are aged 65 and 62, we are 30 and 28") == [30, 28]
+    assert sv.buyer_ages("I'm 45 and my husband is 52") == [45, 52]
+
+
+def test_negated_first_timer_is_not_a_first_timer():
+    ft = lambda t: sv.stated_financial_inputs(t)["grants"]["first_timer_status"]  # noqa: E731
+    assert ft("We're not first-timers, we sold our 3-room") is False
+    assert ft("We are no longer first timers") is False
+    assert ft("both 1st timers") is True
+
+
+def test_search_patterns_do_not_misread_money_or_repayments():
+    assert sv.rule_based_extract("We have 1.2m to spend near an MRT in Bishan").amenity_radii_meters == {}
+    assert sv.rule_based_extract("We can afford $2,500 per month for the mortgage").household_income is None
+    for t in ("My budget is 600k for a 4-room in Bishan", "650k budget, 4rm Bishan", "Budget: $650,000", "budget around 650k"):
+        assert sv.rule_based_extract(t).max_budget_sgd in (600000, 650000), t
+
+
+def test_grounding_needs_the_number_beside_its_own_fact():
+    q7, q8 = ITEMS["E1-07"]["query"], ITEMS["E1-08"]["query"]
+    assert not sv.fact_is_grounded("cash_savings", 80000, q7)          # the $80,000 is CPF, not cash
+    assert sv.fact_is_grounded("cpf_oa_balance", 80000, q7)
+    assert not sv.fact_is_grounded("youngest_buyer_age", 65, q8)       # 65 is the lease, not an age
+
+
+def test_questions_requests_and_negations_do_not_state_a_fact():
+    for field, text in (("eligibility_confirmed", "Can you confirm if we are eligible for the grants?"),
+                        ("loan_eligibility_confirmed", "Please confirm whether we are eligible for an HDB loan."),
+                        ("first_timer_status", "This is not our first home; we sold our flat in 2020."),
+                        ("continuous_employment_12_months", "I started a new job last year after 6 months unemployed.")):
+        assert not sv.fact_is_grounded(field, True, text), text
+    assert sv.fact_is_grounded("eligibility_confirmed", True, "Our grant and HDB loan eligibility is confirmed.")

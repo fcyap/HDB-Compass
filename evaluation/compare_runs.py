@@ -31,6 +31,10 @@ def resolve(arg: str) -> Path:
     if p.suffix == ".jsonl":
         return p if p.is_absolute() else (Path.cwd() / p)
     hits = sorted(RESULTS.glob(f"prelim_*_{arg}.jsonl"))
+    if len(hits) > 1:
+        # "regcheck" also matches "..._varied_regcheck"; the exact tag is the shortest file name
+        shortest = min(len(h.stem) for h in hits)
+        hits = [h for h in hits if len(h.stem) == shortest]
     if len(hits) != 1:
         sys.exit(f"tag {arg!r} matches {len(hits)} result files in {RESULTS}")
     return hits[0]
@@ -78,10 +82,10 @@ def style_table(runs: Dict[str, List[Dict[str, Any]]]) -> None:
 
 
 def main() -> None:
-    paths = [resolve(a) for a in sys.argv[1:]]
-    if not paths:
+    if len(sys.argv) < 2:
         sys.exit(__doc__)
-    runs = {p.stem.rsplit("_", 1)[-1]: load(p) for p in paths}
+    # label each column with the tag as typed (or the file name), so "regcheck" and "varied_regcheck" stay apart
+    runs = {(Path(a).stem if a.endswith(".jsonl") else a): load(resolve(a)) for a in sys.argv[1:]}
     variants = sorted({r["variant"] for rows in runs.values() for r in rows})
     names = [n for n, _ in MEASURES] + ["follow-up"]
     print("| Variant | Measure | " + " | ".join(runs) + " | Mean | Range |")
