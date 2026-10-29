@@ -257,9 +257,10 @@ def mentions_amount(text: str, value: Optional[float], tol: float = 1.0) -> bool
 def asked_for_missing(draft: str, missing: List[str]) -> bool:
     """Every missing fact is named, and a sentence that names one actually asks for it. Boilerplate such as "please
     confirm with HDB" elsewhere in the answer does not count as asking."""
-    # boilerplate that is not asking the user anything ("please confirm with HDB", "an HFE letter")
-    draft = _re.sub(r"(?:please\s+)?confirm (?:it\s+)?with (?:hdb|the bank)|hdb flat eligibility \(hfe\) letter|hfe letter", " ",
-                    draft or "", flags=_re.I)
+    # boilerplate that is not asking the user anything ("please confirm with HDB", "an HFE letter", "confirm your loan
+    # eligibility with HDB or a bank", "please check with HDB for the latest rules"): advice to go to HDB, not a question
+    draft = _re.sub(r"(?:please\s+)?(?:confirm|check|verify)\b[^.?!\n]{0,60}?\bwith (?:hdb|the bank|a bank|your bank)\b[^.?!\n]*"
+                    r"|hdb flat eligibility \(hfe\) letter|hfe letter", " ", draft or "", flags=_re.I)
     low = draft.lower()
     words = {m: _MISSING_WORDS.get(m, (m.replace("_", " "),)) for m in missing}
     named = all(any(w in low for w in ws) for ws in words.values())

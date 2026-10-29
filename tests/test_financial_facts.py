@@ -278,7 +278,8 @@ def test_pr_status_only_when_a_buyer_is_a_pr():
 
 def test_ages_are_the_buyers_own():
     assert sv.buyer_ages("We are 30 minutes from work, aged 32 and 30") == [32, 30]
-    assert sv.buyer_ages("Our kids are 10 and 8. We're 40.") == [40]
+    assert sv.buyer_ages("Our kids are 10 and 8. I'm 40.") == [40]
+    assert sv.buyer_ages("Our kids are 10 and 8. We're 40.") == []      # a couple with one age: asked, not guessed
     assert sv.buyer_ages("Our parents are aged 65 and 62, we are 30 and 28") == [30, 28]
     assert sv.buyer_ages("I'm 45 and my husband is 52") == [45, 52]
 
@@ -375,7 +376,7 @@ def test_one_partner_correction_does_not_collapse_the_couple():
         {"role": "user", "content": "We are a Singapore citizen couple aged 32 and 30, first-timers, no kids. income 9k"},
         {"role": "assistant", "content": "..."}, {"role": "user", "content": "Sorry, my husband is 34, not 32."}]})
     a = st["user_constraints"]["financial_inputs"]["affordability"]
-    assert a["youngest_buyer_age"] == 30          # not collapsed to 34 (the model's grounded reading can apply 34)
+    assert "youngest_buyer_age" not in a and "oldest_buyer_age" not in a    # asked again, never collapsed to 34/34
     t = "We are a Singapore citizen couple aged 32 and 30. Sorry, my husband is 34, not 32."
     assert sv.fact_is_grounded("oldest_buyer_age", 34, t)
 
@@ -399,3 +400,131 @@ def test_opening_may_repeat_the_users_own_limits():
     user = "Find 4-room flats in Jurong East within 400m of an MRT station under 650k."
     assert sv.keep_supported_sentences("All are within 400m of an MRT station and under your 650k budget.", facts, user)[1] == 0
     assert sv.keep_supported_sentences("You could stretch to 1.2m.", facts, user)[1] == 1
+
+
+# --- third round: facts only from plain statements about the buyers; a contradiction is asked about ---------------------
+
+def _facts(text):
+    return {k: v for sec in sv.stated_financial_inputs(text).values() for k, v in sec.items()}
+
+
+def test_questions_doubts_plans_and_the_past_state_nothing():
+    assert sv.statements("We're an SC couple, 32 and 30, how much grant can we get?") == "We're an SC couple, 32 and 30."
+    for text, field in (("How much grant can first timers get? We're 30 and 28, income 8k.", "first_timer_status"),
+                        ("Do we need to have no debts?", "monthly_debt_obligations"),
+                        ("Do we pay no ABSD if we buy for $600k? We own a condo.", "additional_buyer_stamp_duty"),
+                        ("We are buying for $550,000 but not sure if no PHG applies", "proximity"),
+                        ("My bank loan was not approved, HDB loan eligibility to be confirmed", "loan_eligibility_confirmed"),
+                        ("We don't want a 30 year loan tenure", "tenure_years"),
+                        ("Income ceiling is $14,000 a month right?", "monthly_income"),
+                        ("Can a single Singapore citizen buy a 4 room resale? I'm 30 and engaged.", "citizenship_pair")):
+        assert field not in _facts(text), text
+    for field, value, text in (("eligibility_confirmed", True, "We're eligible I hope, waiting for HDB to confirm."),
+                               ("eligibility_confirmed", True, "Help me confirm our eligibility for grants"),
+                               ("continuous_employment_12_months", True, "I was working 12 months ago but now I'm freelancing"),
+                               ("total_grants", 80000, "We're hoping for 80k grants"),
+                               ("interest_rate", 25, "Downpayment 25% in cash, CPF 100k")):
+        assert not sv.fact_is_grounded(field, value, text), text
+
+
+def test_payments_shares_years_and_other_peoples_money_are_not_income_or_savings():
+    for text in ("Car loan $800/month. cash 40k", "I give my parents $500 a month allowance. single SC 36",
+                 "Ideally no more than $2,500 per month.", "Annual income 120k", "We earn $120,000 a year",
+                 "I earn 5k, wife earns 4k", "Salary 6k each so 12k total", "monthly income 7k (me) + 3k (wife)"):
+        assert "monthly_income" not in _facts(text), text
+    assert _facts("HFE assessed: $9,000/month, HDB loan eligibility confirmed.")["monthly_income"] == 9000
+    assert _facts("Together we bring home $9,000 a month and have no loans.")["monthly_income"] == 9000
+    assert "cash_savings" not in _facts("My parents have 200k in savings")
+    assert "cash_savings" not in _facts("I have 20k cash, my wife has 30k cash")
+    assert not sv.fact_is_grounded("monthly_income", 2500, "We can afford $2,500 per month for the mortgage")
+    assert not sv.fact_is_grounded("cash_savings", 120000, "our combined cpf oa is about 120k, savings minimal")
+    assert sv.fact_is_grounded("monthly_income", 8500, "Monthly HFE-assessed income is $8,500; CPF OA available is $120,000.")
+    assert sv.fact_is_grounded("monthly_debt_obligations", 600, "We owe 20k on a car loan, paying 600 per month")
+    assert not sv.fact_is_grounded("monthly_debt_obligations", 20000, "We owe 20k on a car loan, paying 600 per month")
+    assert "monthly_debt_obligations" not in _facts("We have no debts except a study loan of $300 a month.")
+
+
+def test_a_couple_needs_both_ages_and_parents_or_addresses_are_not_buyers():
+    own = lambda t: sorted(sv.buyer_ages(sv.statements(t, own=True)))  # noqa: E731
+    assert own("I'm 35 and my husband is 2 years older") == []
+    assert own("Me 33, wife 31, both citizens") == [31, 33]
+    assert own("I'm 52 years old and my wife is 50 years old") == [50, 52]
+    assert own("My husband's CPF is 60,000. Budget 600k.") == []
+    assert own("he is 24 months into his new job. I'm 31.") == [31]
+    for value, text in ((68, "Single Singapore citizen. My mother, 68, will live with me."),
+                        (70, "Single, 36. Buying with my 70 yo dad"), (45, "Looking in Tampines St 45, we're a SC couple"),
+                        (90, "Floor area at least 90 sqm, SC couple")):
+        assert not sv.fact_is_grounded("youngest_buyer_age", value, text), text
+
+
+def test_citizenship_only_when_the_buyers_state_it_without_contradiction():
+    for text, want in (("Explain the grant difference between a citizen and a PR. We are both Singaporeans.", "SC_SC"),
+                       ("Our friends are a citizen-PR couple. We are both Singapore citizens.", "SC_SC"),
+                       ("My wife is getting PR next year. I'm a Singapore citizen.", None),
+                       ("I'm SC and my husband holds PR", "SC_PR"), ("Singaporean and PR couple", "SC_PR"),
+                       ("We're a couple, one Singapore citizen, my wife is Malaysian", None), ("We're PRs, not citizens.", None),
+                       ("I'm a PR and single", None), ("Supposing my wife is a PR, how much grant", None),
+                       ("Both are Singapore citizens, no PR", "SC_SC")):
+        assert sv.citizenship_stated(text) == want, text
+    assert not sv.fact_is_grounded("citizenship_pair", "SC_SC", "I'm a Singapore citizen and my wife is a foreigner")
+
+
+def test_first_timer_only_when_nobody_owned_a_home():
+    for text, want in (("Neither of us are first timers", False), ("We don't count as first-timers", False),
+                       ("I'm a first timer but my husband owned a flat before", False),
+                       ("First time applying for BTO, but my husband owned a flat with his ex-wife.", None),
+                       ("we were first timers when we bought our BTO in 2015.", None), ("We sold our first flat in 2019", None),
+                       ("We have never owned a flat before.", True), ("both 1st timers, no kids", True)):
+        assert sv.first_timer_stated(text) == want, text
+
+
+def test_a_later_message_code_cannot_read_in_full_removes_the_old_fact():
+    def across(turns):
+        unsure = set()
+        r = sv.stated_across_turns(turns, unsure)
+        return {k: v for sec in r.values() for k, v in sec.items()}, unsure
+    r, _ = across(["cash 40k cpf 100k", "cash 60k"])
+    assert (r["cash_savings"], r["cpf_oa_balance"]) == (60000, 100000)
+    r, _ = across(["SC couple, 32 and 30, income 9k, cash 40k", "sorry cash is actually 60k"])
+    assert r["cash_savings"] == 60000
+    r, _ = across(["SC couple, income 9k, 4rm in Tampines under 600k", "also our car loan is $800 a month"])
+    assert r["monthly_income"] == 9000
+    r, unsure = across(["We are 32 and 30, SC couple, income 9k", "sorry, I'm 33 not 32"])
+    assert "oldest_buyer_age" not in r and "oldest_buyer_age" in unsure
+    r, _ = across(["We're 30 and 28, no kids, SC couple", "Oh we just had a baby last month, forgot to mention"])
+    assert "youngest_core_member_age" not in r
+    r, unsure = across(["cash 40k", "Oops, that 40k is in CPF, not cash"])
+    assert "cash_savings" not in r and "cash_savings" in unsure
+    # the model's reading of a removed fact is not used either
+    assert "oldest_buyer_age" not in (sv.trusted_financial_inputs(
+        {"affordability": {"oldest_buyer_age": 32, "youngest_buyer_age": 30}}, {}, "We are 32 and 30. sorry, I'm 33 not 32",
+        {"oldest_buyer_age", "youngest_buyer_age"}) or {}).get("affordability", {})
+
+
+def test_search_reading_skips_flat_age_walking_time_and_room_counts():
+    rb = sv.rule_based_extract
+    assert rb("at least 60 years old flat is fine, budget 450k").min_remaining_lease_years is None
+    assert rb("Within 10 min walk to MRT, under 40 min to CBD").max_commute_minutes == 40
+    assert rb("At least 2 rooms, budget under 500k, within 1km of Nan Hua Primary").flat_types == []
+    assert rb("We're PRs, not citizens. Income 9k").citizenship_scheme is None
+
+
+def test_opening_figures_must_match_the_right_fact():
+    facts = ("**2 candidate block(s)** match all stated constraints:\n"
+             "- Blk 228 JURONG EAST ST 21 (JURONG EAST) — median $532,500, 60 yrs lease — mrt 394m\n"
+             "- Blk 288B JURONG EAST ST 21 (JURONG EAST) — median $598,888, 73 yrs lease — mrt 107m\n"
+             "- Grants: EHG $10,000 + Family $80,000 + PHG $0 = **$90,000**\n"
+             "- Max purchase price $777,735 (loan $537,735, instalment $2,440/mth, binding: MSR)")
+    user = "SC couple, cash 40k, income 8,500. 4-room in Jurong East under $650,000 within 400m of an MRT station."
+    for bad in ("You can afford up to $650,000.", "Your grants come to $40,000.", "Blk 288B is 400m from the MRT.",
+                "Your max is $598,888.", "Blk 228 has 73 years of lease.", "Blocks 228 and 999 both fit.",
+                "Try 999 Jurong East St 21 as well.", "Blk 228 is a 3-minute walk to the MRT.", "Blk 228 is about 1.5 km away.",
+                "Your instalment would be about 2800 a month.", "You can borrow up to half a million dollars.",
+                "Yes, Blk 228 is within 200m of the MRT."):
+        assert sv.keep_supported_sentences(bad, facts, user)[1] == 1, bad
+    for good in ("All are within 400m of an MRT station and under your $650,000 budget.", "Blk 288B is about 110m from the MRT.",
+                 "Your grants come to $90,000.", "Your instalment would be about $2.4k a month.",
+                 "Blk 228 at 394m is within your 400m limit.", "Prices range from $532,500 to $598,888."):
+        assert sv.keep_supported_sentences(good, facts, user)[1] == 0, good
+    text, dropped = sv.keep_supported_sentences("Blk 228 at approx. $700k is fine. Blk 288B is 107m from the MRT.", facts, user)
+    assert text == "Blk 288B is 107m from the MRT." and dropped == 1

@@ -226,7 +226,8 @@ def run_one(mod, item: Dict[str, Any], variant: str, profile: Dict[str, Any], ru
     except Exception as e:  # noqa: BLE001 — a crash is a data point, not the end of the run
         return {"run": run_id, "variant": variant, "id": item["id"], "sub_use_case": item.get("sub_use_case"),
                 "profile": profile["name"], "model": profile.get("model"), "latency_s": round(time.perf_counter() - t0, 2),
-                "status": "error", "error": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc()[-2000:]}
+                "status": "error", "error": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc()[-2000:],
+                "settings": RUN_SETTINGS}
 
 
 def follow_up_item(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -318,17 +319,28 @@ def main() -> None:
 
     if args.rescore:
         rows = list(load_done(path).values())
-        items_by_id = {i["id"]: i for q in (QUERIES, VARIED, queries) if q.exists() for i in json.loads(q.read_text())}
-        n = 0
+        # each row is scored against the dataset it was run on (its settings name it); rows from before 30 Oct record
+        # none and are looked up in the known datasets by id
+        sets = {q.name: {i["id"]: i for i in json.loads(q.read_text())} for q in (QUERIES, VARIED, queries) if q.exists()}
+        any_set = {k: i for by_id in sets.values() for k, i in by_id.items()}
+        n = unnamed = 0
         for r in rows:
             if r.get("status") == "ok" and r.get("state"):
-                if r["id"] not in items_by_id:
-                    print(f"  skipped {r['id']}: not in the known datasets (pass the same --dataset it was run with)")
+                named = (r.get("settings") or {}).get("dataset")
+                if named and named not in sets:
+                    print(f"  skipped {r['id']}: it was run on {named}; pass --dataset with that file to rescore it")
                     continue
-                r["scores"] = M.score_item(items_by_id[r["id"]], r["state"]); n += 1
+                item = (sets[named] if named else any_set).get(r["id"])
+                if item is None:
+                    print(f"  skipped {r['id']}: not in {named or 'the known datasets'}")
+                    continue
+                unnamed += not named
+                r["scores"] = M.score_item(item, r["state"]); n += 1
                 fu = r.get("follow_up") or {}
-                if fu.get("status") == "ok" and fu.get("state") and items_by_id[r["id"]].get("follow_up"):
-                    fu["scores"] = M.ground_truth_scores(follow_up_item(items_by_id[r["id"]]), fu["state"])
+                if fu.get("status") == "ok" and fu.get("state") and item.get("follow_up"):
+                    fu["scores"] = M.ground_truth_scores(follow_up_item(item), fu["state"])
+        if unnamed:
+            print(f"  {unnamed} rows record no dataset (run before 30 Oct): scored against the dataset with the same id")
         path.rename(path.with_suffix(f".{datetime.now().strftime('%Y%m%d-%H%M%S')}.prescore.bak"))
         path.write_text("".join(json.dumps(r, default=str) + "\n" for r in rows))
         print(f"rescored {n} rows in {path}")
@@ -343,7 +355,9 @@ def main() -> None:
 
     # resume: only successful rows count as done; a crashed or timed-out row is run again
     existing = {} if args.rerun else load_done(path)
-    other_sets = {(r.get("settings") or {}).get("dataset") for r in existing.values()} - {DATASET_NAME}
+    # a crashed row from before 30 Oct records no settings; it is rerun, not taken as another dataset
+    other_sets = {(r.get("settings") or {}).get("dataset") for r in existing.values()
+                  if r.get("settings") or r.get("status") == "ok"} - {DATASET_NAME}
     if other_sets:
         named = ", ".join(sorted(s or "an unknown dataset (rows from before 30 Oct)" for s in other_sets))
         sys.exit(f"{path.name} already holds results for {named}; use another --tag for {DATASET_NAME}")

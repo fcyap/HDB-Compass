@@ -320,3 +320,11 @@ def test_a_failed_model_reading_scores_zero_not_missing():
                                    {"errors": ["extract_constraints[json_mode] failed: x"]})
     assert acc["search_correct"] == 0 and acc["reading_failed"]
     assert not M.asked_for_missing("More information needed — cash savings Please confirm with HDB", ["cash_savings"])
+
+
+def test_advice_to_check_with_hdb_is_not_asking_but_a_real_question_is():
+    assert not M.asked_for_missing("- **Confirm your loan eligibility** with HDB or a bank for final approval",
+                                   ["loan_eligibility_confirmed"])
+    assert not M.asked_for_missing("Cash savings not provided; please check with HDB for the latest rules.", ["cash_savings"])
+    assert M.asked_for_missing("Could you confirm your loan eligibility? Please confirm with HDB too.",
+                               ["loan_eligibility_confirmed"])
