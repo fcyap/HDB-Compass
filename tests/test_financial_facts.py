@@ -124,12 +124,12 @@ def test_zero_distance_limits_are_not_constraints():
     from unittest.mock import patch
 
     class Stub:
-        def with_structured_output(self, schema, method=None):
+        def with_structured_output(self, schema, method=None, include_raw=False):
             return self
 
         def invoke(self, _msgs):
             from agents.schemas import ExtractedConstraints
-            return ExtractedConstraints(amenity_radii_meters={"mrt": 0, "hawker": 0, "park": 400})
+            return {"parsed": ExtractedConstraints(amenity_radii_meters={"mrt": 0, "hawker": 0, "park": 400})}
 
     with patch.object(sv, "get_llm", return_value=Stub()):
         out = sv.extract_constraints_node({"messages": [{"role": "user", "content": "Can we apply for a BTO?"}]})
@@ -182,3 +182,36 @@ def test_numbers_match_in_any_form():
                         ("$8,500 a month", 8500), ("8.5k/mth", 8500)):
         assert sv._number_stated(value, text), text
     assert not sv._number_stated(32, "we have 32k in cash", plain_only=True)   # an age is a plain number
+
+
+def test_one_bad_field_does_not_discard_the_reading():
+    data = {"towns": ["TOA PAYOH"], "max_budget_sgd": 750000, "comparable_resale": {"flat_type": ""},
+            "financial_inputs": {"grants": {"monthly_income": 7800, "youngest_buyer_age": 5}}}
+    c, dropped = sv.lenient_constraints(data)
+    assert c.towns == ["TOA PAYOH"] and c.max_budget_sgd == 750000          # the good fields survive
+    assert "comparable_resale" in dropped and "financial_inputs.grants.youngest_buyer_age" in dropped
+    assert c.financial_inputs.grants.monthly_income == 7800                   # only the bad fact went
+
+
+def test_reply_that_is_not_json_gets_one_repair():
+    from langchain_core.messages import AIMessage
+
+    class Model:
+        def __init__(self):
+            self.calls = 0
+
+        def with_structured_output(self, schema, method=None, include_raw=False):
+            outer = self
+
+            class S:
+                def invoke(self, _m):
+                    outer.calls += 1
+                    return {"raw": AIMessage(content="Sure! towns: Bishan"), "parsed": None, "parsing_error": ValueError("x")}
+            return S()
+
+        def invoke(self, _m):
+            return AIMessage(content='```json\n{"towns": ["BISHAN"], "flat_types": ["4 ROOM"]}\n```')
+
+    c, notes = sv.read_constraints_with_model(Model(), [])
+    assert c.towns == ["BISHAN"] and c.flat_types == ["4 ROOM"]
+    assert any("repaired" in n for n in notes)

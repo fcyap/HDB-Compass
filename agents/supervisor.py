@@ -27,6 +27,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from pydantic import ValidationError
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.types import Send
 
@@ -556,6 +557,78 @@ def guard_financial_args(name: str, args: Dict[str, Any], c: Dict[str, Any], out
     return out
 
 
+def _json_object(text: str) -> Dict[str, Any]:
+    """The JSON object in a model reply, tolerating a <think> block, code fences or words around it."""
+    m = re.search(r"\{.*\}", strip_think(text), re.S)
+    if not m:
+        raise ValueError("no JSON object in the reply")
+    return json.loads(m.group(0))
+
+
+def lenient_constraints(data: Dict[str, Any]) -> Tuple[ExtractedConstraints, List[str]]:
+    """Validate the model's constraints field by field. A field that fails validation is dropped and named, rather
+    than the whole reading being thrown away: a blank comparable-sales flat type used to discard the towns, budget
+    and money facts read correctly beside it. Inside financial_inputs only the bad fact is dropped."""
+    data = dict(data or {})
+    dropped: List[str] = []
+    for _ in range(12):
+        try:
+            return ExtractedConstraints(**data), dropped
+        except ValidationError as e:
+            changed = False
+            for err in e.errors():
+                loc = [x for x in (err.get("loc") or ()) if not isinstance(x, int)]
+                if not loc or loc[0] not in data:
+                    continue
+                top = loc[0]
+                section = data.get(top).get(loc[1]) if top == "financial_inputs" and len(loc) >= 3 \
+                    and isinstance(data.get(top), dict) else None
+                if isinstance(section, dict) and loc[2] in section:
+                    data[top] = {**data[top], loc[1]: {k: v for k, v in section.items() if k != loc[2]}}
+                    dropped.append(".".join(str(x) for x in loc[:3]))
+                else:
+                    data.pop(top)
+                    dropped.append(str(top))
+                changed = True
+            if not changed:
+                break
+    return ExtractedConstraints(), dropped + ["(everything)"]
+
+
+def read_constraints_with_model(llm: Any, messages: List[Any]) -> Tuple[Optional[ExtractedConstraints], List[str]]:
+    """Structured constraint reading that degrades gracefully: invalid fields are dropped one by one
+    (lenient_constraints), and a reply that is not JSON at all gets one repair turn showing the model its own output
+    and the error. Returns (constraints or None, notes for the errors list)."""
+    notes: List[str] = []
+    for method in ("json_schema", "json_mode"):
+        try:
+            res = llm.with_structured_output(ExtractedConstraints, method=method, include_raw=True).invoke(messages)
+        except Exception as e:  # noqa: BLE001
+            notes.append(f"extract_constraints[{method}] failed: {type(e).__name__}: {str(e)[:120]}")
+            continue
+        if res.get("parsed") is not None:
+            return res["parsed"], notes
+        raw = res.get("raw")
+        text = raw.content if isinstance(getattr(raw, "content", None), str) else str(raw or "")
+        try:
+            data = _json_object(text)
+        except Exception as e:  # noqa: BLE001
+            try:
+                fix = llm.invoke(messages + [AIMessage(content=text[:4000]), HumanMessage(content=(
+                    f"That reply was not a valid JSON object ({type(e).__name__}: {str(e)[:120]}). "
+                    "Reply with only the corrected JSON object for the same schema."))])
+                data = _json_object(fix.content if isinstance(fix.content, str) else str(fix.content))
+                notes.append(f"extract_constraints[{method}]: repaired a reply that was not JSON")
+            except Exception as e2:  # noqa: BLE001
+                notes.append(f"extract_constraints[{method}] failed after one repair: {type(e2).__name__}: {str(e2)[:120]}")
+                continue
+        extracted, dropped = lenient_constraints(data)
+        if dropped:
+            notes.append(f"extract_constraints[{method}]: dropped invalid fields {', '.join(dropped)}")
+        return extracted, notes
+    return None, notes
+
+
 def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
     query = last_user_query(state)
     prior = state.get("prior_constraints")
@@ -570,13 +643,8 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
                    "those field names; facts already known: "
                    f"{json.dumps((prior or {}).get('financial_inputs') or {}, default=str)}. Leave everything else empty.")
     if llm is not None:
-        for method in ("json_schema", "json_mode"):
-            try:
-                structured = llm.with_structured_output(ExtractedConstraints, method=method)
-                extracted = structured.invoke([sys_msg(system), HumanMessage(content=query)])
-                break
-            except Exception as e:  # noqa: BLE001
-                errors.append(f"extract_constraints[{method}] failed: {type(e).__name__}: {str(e)[:120]}")
+        extracted, notes = read_constraints_with_model(llm, [sys_msg(system), HumanMessage(content=query)])
+        errors += notes
         if extracted is not None:
             # merge: regex fills anything the model left empty (cheap robustness)
             rb = rule_based_extract(query).model_dump()
