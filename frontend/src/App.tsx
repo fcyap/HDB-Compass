@@ -3,7 +3,21 @@ import { SplitScreenLayout } from './components/SplitScreenLayout';
 import { AgentChat, ChatMessage, LogMessage } from './components/AgentChat';
 import { InteractiveMap, MapViewport } from './components/InteractiveMap';
 
-const WS_URL = 'ws://localhost:8000/ws';
+// One id per browser tab: the backend keeps this tab's conversation under it, so a reconnect does not lose a
+// pending follow-up question. Clear starts a new conversation (the backend forgets it).
+function tabSessionId(): string {
+  try {
+    const existing = sessionStorage.getItem('hdb-compass-session');
+    if (existing) return existing;
+    const id = crypto.randomUUID();
+    sessionStorage.setItem('hdb-compass-session', id);
+    return id;
+  } catch {
+    return crypto.randomUUID();   // storage blocked: memory still lasts for this connection
+  }
+}
+
+const WS_URL = `ws://localhost:8000/ws?session=${encodeURIComponent(tabSessionId())}`;
 
 // The chat opens on the mascot welcome (AgentChat) with no message; Clear returns to it.
 const INITIAL_MESSAGES: ChatMessage[] = [];
