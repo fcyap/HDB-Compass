@@ -256,3 +256,52 @@ def test_tool_calls_record_who_chose_them():
     s = M.score_item({"id": "x", "expected_mcp_calls": [{"tool": "query_resale_blocks_by_criteria"}]},
                      {"variant": "C", "tool_call_log": log})
     assert s["tool_selection_model_chosen"]["f1"] == 1.0 and s["tool_calls_by_source"]["model"] == 1
+
+
+# --- regressions found by the 30 Oct adversarial review -------------------------------------------------------------
+
+def test_refused_calls_or_a_model_that_did_nothing_are_not_results():
+    from evaluation.run_category_e_prelim import lost_model, model_fallbacks
+    assert lost_model({"errors": ["synthesize: LLM failed, template used: NotFoundError"]})
+    nothing = {"errors": ["extract_constraints[json_schema] failed: ValueError: x",
+                          "extract_constraints[json_mode] failed: ValueError: y",
+                          "market_sql: no valid tool call from model; deterministic plan used",
+                          "synthesize: LLM failed, template used: SomethingOdd"],
+               "tool_call_log": [{"tool": "query_resale_blocks_by_criteria", "source": "code"}]}
+    assert lost_model(nothing)
+    repaired = {"errors": ["extract_constraints[json_schema] failed after one repair: ValueError: z"]}
+    assert not lost_model(repaired) and model_fallbacks(repaired) == []      # json_mode then read it: not a fallback
+
+
+def test_resume_only_reuses_rows_from_the_same_code_and_settings():
+    from evaluation.run_category_e_prelim import same_settings
+    now = {"commit": "abc", "code_fingerprint": "f1", "dataset": "category_e_queries.json", "code_written_facts": True}
+    assert same_settings(dict(now), now)
+    assert not same_settings({**now, "code_fingerprint": "f2"}, now)          # different uncommitted edits
+    assert not same_settings(None, now)                                       # rows that recorded nothing
+
+
+def test_boilerplate_please_does_not_count_as_asking_for_the_missing_fact():
+    draft = "- Affordability: more information needed — cash savings\n- Please confirm with HDB, for example with an HFE letter."
+    assert not M.asked_for_missing(draft, ["cash_savings"])
+    assert M.asked_for_missing(draft + "\nTo finish, please tell me your cash savings.", ["cash_savings"])
+
+
+def test_model_reading_is_scored_before_code_fills_it():
+    item = {"stated_constraints": {"towns": ["TOA PAYOH"], "flat_types": ["4 ROOM"], "max_budget_sgd": 750000,
+                                   "min_remaining_lease_years": 65, "amenity_radii_meters": {"mrt": 400}},
+            "financial_inputs": {"grants": {"citizenship_pair": "SC_PR"}, "affordability": {"cpf_oa_balance": 80000.0}}}
+    reading = {"towns": ["TOA PAYOH"], "flat_types": [], "max_budget_sgd": 750000, "min_remaining_lease_years": 65,
+               "amenity_radii_meters": {"mrt": 400, "hawker": 0},
+               "financial_inputs": {"grants": {"citizenship_pair": "SC_SC"}, "affordability": {"cpf_oa_balance": 80000.0,
+                                                                                            "cash_savings": 80000.0}}}
+    acc = M.model_reading_accuracy(item, {"model_constraints": reading})
+    assert acc == {"search_correct": 4, "search_total": 5, "facts_correct": 1, "facts_total": 2,
+                   "facts_wrong": 1, "facts_invented": 1}
+    assert M.model_reading_accuracy(item, {}) is None                        # no model, nothing to score
+
+
+def test_logs_without_a_source_tag_get_no_model_chosen_score():
+    s = M.score_item({"id": "x", "expected_mcp_calls": [{"tool": "query_resale_blocks_by_criteria"}]},
+                     {"variant": "C", "tool_call_log": [{"tool": "query_resale_blocks_by_criteria", "agent": "market_sql"}]})
+    assert "tool_selection_model_chosen" not in s

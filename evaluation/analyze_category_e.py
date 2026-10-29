@@ -50,6 +50,32 @@ def f(x, d=2) -> str:
     return "–" if x is None else (f"{x:.{d}f}" if isinstance(x, float) else str(x))
 
 
+def model_chosen_f1(ok: List[Dict[str, Any]]) -> str:
+    """Mean F1 over model-chosen calls, zeros included; n/a only when there is nothing to measure (no-model run, or
+    rows recorded before calls carried a source). Same rule as run_category_e_prelim.summarise."""
+    vals = [r["scores"]["tool_selection_model_chosen"]["f1"] for r in ok if "tool_selection_model_chosen" in r["scores"]
+            and (r.get("settings") or {}).get("profile", r.get("profile")) != "none"]
+    return f(mean(vals)) if vals else "n/a"
+
+
+def model_reading_table(rows: List[Dict[str, Any]]) -> str:
+    """How well the model alone read each question, before code filled gaps or overrode money facts."""
+    out = ["| Variant | Questions | Search fields right | Stated money facts right | Money facts wrong | Money facts invented |",
+           "|---|---|---|---|---|---|"]
+    any_rows = False
+    for v in sorted({r["variant"] for r in rows}):
+        reads = [r["scores"]["extraction_model_only"] for r in rows
+                 if r["variant"] == v and r.get("status") == "ok" and (r.get("scores") or {}).get("extraction_model_only")]
+        if not reads:
+            continue
+        any_rows = True
+        st, sc = sum(x["search_total"] for x in reads), sum(x["search_correct"] for x in reads)
+        ft, fc = sum(x["facts_total"] for x in reads), sum(x["facts_correct"] for x in reads)
+        out.append(f"| {v} | {len(reads)} | {sc}/{st} ({sc / st:.0%}) | " + (f"{fc}/{ft} ({fc / ft:.0%})" if ft else "–") +
+                   f" | {sum(x['facts_wrong'] for x in reads)} | {sum(x['facts_invented'] for x in reads)} |")
+    return "\n".join(out) if any_rows else "No model reading recorded (no-model run, Variant A, or rows from before 30 Oct)."
+
+
 def variant_table(rows: List[Dict[str, Any]]) -> str:
     out = ["| Variant | Runs | Task success | Tool F1 | Tool F1 (model-chosen calls) | Param EM | Routing exact | CSR | Fabricated blocks (answer / map) | E1 map synced | Map precision | E2 trade-off offered | Latency P50 (s) | Latency P95 (s) | Mean tokens / query | Answers with a code fallback | Errors |",
            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
@@ -64,8 +90,7 @@ def variant_table(rows: List[Dict[str, Any]]) -> str:
             v, str(len(rs)),
             f"{sum(1 for s in sc if s.get('task_success'))}/{len(rs)}",
             f(mean(s["tool_selection"]["f1"] for s in sc)),
-            f(mean(s["tool_selection_model_chosen"]["f1"] for s in sc if "tool_selection_model_chosen" in s))
-            if any((s.get("tool_calls_by_source") or {}).get("model") for s in sc) else "n/a",   # n/a: no model calls
+            model_chosen_f1(ok),
             f(mean(s["parameter_em"]["rate"] for s in sc)),
             f(mean(routing)) if routing else "n/a",
             f(mean(s["csr"]["rate"] for s in sc)),
@@ -200,6 +225,7 @@ def run_header(rows: List[Dict[str, Any]]) -> str:
     """What produced these rows, from the settings each row recorded at run time (run_category_e_prelim.run_settings).
     Older rows have none; then the current config is described and labelled as such."""
     settings = [r["settings"] for r in rows if r.get("settings")]
+    missing = sum(1 for r in rows if not r.get("settings"))
     if not settings:
         from agents.supervisor import load_config
         wiring = load_config().get("tools", {}).get("use_mock", {})
@@ -215,6 +241,9 @@ def run_header(rows: List[Dict[str, Any]]) -> str:
              "; input guardrail: " + ("installed" if first.get("input_guardrail_installed") else "not installed (pass-through)") + "."]
     if len({json.dumps({k: v for k, v in s.items() if k != 'uncommitted_changes'}, sort_keys=True) for s in settings}) > 1:
         parts.append("**Warning: these rows come from more than one code version or setting.**")
+    if missing:
+        parts.append(f"**Warning: {missing} of {len(rows)} rows recorded no settings (run before 30 Oct); they may come "
+                     "from other code.**")
     return " ".join(parts)
 
 
@@ -241,6 +270,10 @@ def main() -> None:
           "recommended block satisfies every constraint with none fabricated; an E2 answer presents nothing as a match and "
           "offers a concrete trade-off (C's structured relaxation, or the same advice in any variant's text).", "",
           "## Checked against the ground truth", "", ground_truth_table(rows), "",
+          "## The model's own reading", "", model_reading_table(rows), "",
+          "Before code fills gaps or overrides money facts: how many of the five search fields (towns, flat types, budget, "
+          "lease, distances) and of the stated money facts the model read correctly by itself. Code's patterns were tuned "
+          "on the varied-phrasing set, so on that set this table, not the fully-right rate, shows how the model copes.", "",
           "Fully right: E1 names exactly the true blocks and the calculators' grant total and maximum price (within $1), or, "
           "where a fact was left out, asks for it without inventing a budget; E2 presents no match and names the number "
           "of the single change that unlocks blocks. Follow-up: after the user supplies the missing fact, the second answer "

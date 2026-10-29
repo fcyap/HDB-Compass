@@ -311,3 +311,22 @@ def test_questions_requests_and_negations_do_not_state_a_fact():
                         ("continuous_employment_12_months", "I started a new job last year after 6 months unemployed.")):
         assert not sv.fact_is_grounded(field, True, text), text
     assert sv.fact_is_grounded("eligibility_confirmed", True, "Our grant and HDB loan eligibility is confirmed.")
+
+
+def test_the_models_own_reading_is_kept_before_code_fills_it():
+    from unittest.mock import patch
+    from agents.schemas import ExtractedConstraints
+
+    class Stub:
+        def with_structured_output(self, schema, method=None, include_raw=False):
+            return self
+
+        def invoke(self, _msgs):
+            return {"parsed": ExtractedConstraints(towns=["TOA PAYOH"])}       # the model reads only the town
+
+    q = "Find 4-room resale flats in Toa Payoh under $750,000"
+    with patch.object(sv, "get_llm", return_value=Stub()):
+        out = sv.extract_constraints_node({"messages": [{"role": "user", "content": q}]})
+    assert out["model_constraints"]["towns"] == ["TOA PAYOH"] and out["model_constraints"]["max_budget_sgd"] is None
+    assert out["user_constraints"]["max_budget_sgd"] == 750000                # code filled the gap afterwards
+    assert sv.extract_constraints_node({"messages": [{"role": "user", "content": q}]})["model_constraints"] is None

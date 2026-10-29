@@ -54,3 +54,6 @@ class HDBCompassState(TypedDict, total=False):
     clarification: Optional[Dict[str, Any]]          # {"needed": [calculator fields], "question": str}
     prior_constraints: Optional[Dict[str, Any]]
     pending_clarification: Optional[Dict[str, Any]]
+    # The model's own constraint reading before code fills gaps or overrides money facts (None without a model).
+    # Scored separately, so a result shows how much the model read and how much code supplied.
+    model_constraints: Optional[Dict[str, Any]]

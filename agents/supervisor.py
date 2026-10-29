@@ -779,6 +779,7 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
     pending = state.get("pending_clarification")
     llm = get_llm()
     extracted: Optional[ExtractedConstraints] = None
+    model_reading: Optional[Dict[str, Any]] = None
     errors: List[str] = []
     system = EXTRACT_SYSTEM
     if pending:
@@ -803,6 +804,9 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
         extracted, notes = read_constraints_with_model(llm, messages)
         errors += notes
         if extracted is not None:
+            model_reading = extracted.model_dump()
+            if extracted.financial_inputs is not None:
+                model_reading["financial_inputs"] = extracted.financial_inputs.model_dump(exclude_unset=True)
             # merge: regex fills anything the model left empty (cheap robustness)
             rb = rule_based_extract(query).model_dump()
             merged = extracted.model_dump()
@@ -831,7 +835,7 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
             constraints = merge_constraints(constraints, {"financial_inputs": answers})
     if prior:
         constraints = merge_constraints(prior, constraints)
-    return {"user_constraints": constraints, "errors": errors}
+    return {"user_constraints": constraints, "errors": errors, "model_constraints": model_reading}
 
 
 # ---------------------------------------------------------------------------

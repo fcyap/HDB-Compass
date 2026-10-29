@@ -25,7 +25,7 @@ import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -81,7 +81,7 @@ def state_excerpt(state: Dict[str, Any]) -> Dict[str, Any]:
 RESCORE_KEYS = ["variant", "messages", "clarification", "user_constraints", "active_subagents", "tool_call_log", "sql_market_results",
                 "spatial_block_candidates", "financial_breakdown", "rag_policy_passages",
                 "candidate_blocks_intersection", "relaxation", "map_ui_payload", "draft_response",
-                "auditor_verdict", "errors"]
+                "auditor_verdict", "errors", "model_constraints"]
 
 
 def rescore_state(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -121,17 +121,35 @@ def _token_totals(usage: Dict[str, Any]) -> Dict[str, int]:
 # name ends up in the node's error message). The nodes then fall back to their no-model plans, which score like a
 # perfect run, so such a row is not a model result and is rerun on resume.
 UNREACHABLE = ("ConnectionError", "Timeout", "TimedOut", "InternalServerError", "ServiceUnavailable",
-               "RateLimitError", "APIStatusError", "BadGateway", "GatewayTimeout")
+               "RateLimitError", "APIStatusError", "BadGateway", "GatewayTimeout",
+               # the server answered but refused: wrong model name, bad key, request too long
+               "NotFoundError", "AuthenticationError", "PermissionDenied", "BadRequestError", "UnprocessableEntity",
+               "APIError")
 # The harness standing in for the model by design (the model made no valid tool call, the writer failed, the
 # constraint reading failed in both modes). The answer is then partly a no-model answer: kept, but counted.
-FALLBACK_MARKS = ("deterministic plan used", "template used", "failed after one repair")
+FALLBACK_MARKS = ("deterministic plan used", "template used")   # both-modes reading failure is detected below
 
 
 RUN_SETTINGS: Dict[str, Any] = {}   # filled once per run in main() (run_settings)
+DATASET_NAME = "category_e_queries.json"
+
+
+def same_settings(a: Optional[Dict[str, Any]], b: Dict[str, Any]) -> bool:
+    """Rows from the same code and switches (the recorded time-free settings all match)."""
+    return bool(a) and all(a.get(k) == v for k, v in b.items())
 
 
 def lost_model(state: Dict[str, Any]) -> bool:
-    return any(mark in str(e) for e in state.get("errors") or [] for mark in UNREACHABLE)
+    """No usable answer from the model: an unanswered or refused call, or (whatever the error) an answer in which the
+    model did nothing at all: no constraint reading, no tool call it chose, and the writer fell back to the template."""
+    errors = [str(e) for e in state.get("errors") or []]
+    if any(mark in e for e in errors for mark in UNREACHABLE):
+        return True
+    read_nothing = any("extract_constraints[json_schema] failed" in e for e in errors) and \
+        any("extract_constraints[json_mode] failed" in e for e in errors)
+    wrote_nothing = any("template used" in e for e in errors)
+    chose_nothing = not any(r.get("source") == "model" for r in state.get("tool_call_log") or [])
+    return read_nothing and wrote_nothing and chose_nothing
 
 
 def model_fallbacks(state: Dict[str, Any]) -> List[str]:
@@ -159,9 +177,16 @@ def run_settings(profile: Dict[str, Any]) -> Dict[str, Any]:
             return ""
     cfg = sv.load_config()
     arch = cfg.get("architecture", {})
+    import hashlib
+    # the exact code: commit plus a fingerprint of uncommitted edits and new Python files, so two different
+    # uncommitted versions of the same commit are told apart
+    edits = git("diff", "HEAD") + "\n".join(sorted(f for f in git("ls-files", "--others", "--exclude-standard").splitlines()
+                                                  if f.endswith(".py")))
     return {
         "commit": git("rev-parse", "--short", "HEAD"),
-        "uncommitted_changes": bool(git("status", "--porcelain", "--untracked-files=no")),
+        "uncommitted_changes": bool(edits.strip()),
+        "code_fingerprint": hashlib.sha1(edits.encode()).hexdigest()[:12] if edits.strip() else "clean",
+        "dataset": DATASET_NAME,
         "profile": profile.get("name"), "model": profile.get("model"),
         "code_written_facts": bool(arch.get("code_written_facts", True)),
         "extraction_reasoning": os.getenv("HDB_EXTRACTION_REASONING") == "1" or bool(arch.get("extraction_reasoning", False)),
@@ -230,15 +255,22 @@ def summarise(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         a["e1_with_candidates"] = sum(1 for r in ok if r["variant"] == v and r["sub_use_case"] == "E1" and r["state_excerpt"]["n_candidates"] > 0)
         a["e2_relaxation_attempted"] = sum(1 for r in ok if r["variant"] == v and r["sub_use_case"] == "E2" and r["scores"]["relaxation_attempted"])
         a["answers_with_fallback"] = sum(1 for r in ok if r["variant"] == v and r.get("fallbacks"))
+        # n/a (None) when there is nothing to measure: a no-model run, or rows recorded before calls carried a source
         model_f1 = [r["scores"]["tool_selection_model_chosen"]["f1"] for r in ok
-                    if r["variant"] == v and "tool_selection_model_chosen" in r["scores"]]
+                    if r["variant"] == v and "tool_selection_model_chosen" in r["scores"]
+                    and (r.get("settings") or {}).get("profile", r.get("profile")) != "none"]
         a["tool_selection_f1_model_chosen"] = sum(model_f1) / len(model_f1) if model_f1 else None
+        reads = [r["scores"].get("extraction_model_only") for r in ok if r["variant"] == v and r["scores"].get("extraction_model_only")]
+        a["model_reading_search_rate"] = (sum(x["search_correct"] for x in reads) / sum(x["search_total"] for x in reads)) if reads else None
+        facts = sum(x["facts_total"] for x in reads)
+        a["model_reading_facts_rate"] = (sum(x["facts_correct"] for x in reads) / facts) if facts else None
     return agg
 
 
 def print_table(agg: Dict[str, Any]) -> None:
-    cols = ["n", "tool_selection_f1", "tool_selection_f1_model_chosen", "parameter_em_rate", "csr", "routing_exact_rate",
-            "mean_tool_calls", "latency_p50_s", "latency_p95_s", "mean_total_tokens", "errors", "answers_with_fallback",
+    cols = ["n", "tool_selection_f1", "tool_selection_f1_model_chosen", "model_reading_search_rate",
+            "model_reading_facts_rate", "parameter_em_rate", "csr", "routing_exact_rate", "mean_tool_calls",
+            "latency_p50_s", "latency_p95_s", "mean_total_tokens", "errors", "answers_with_fallback",
             "e1_with_candidates", "e2_relaxation_attempted"]
     print("\nvariant | " + " | ".join(cols))
     for v, a in agg.items():
@@ -263,10 +295,11 @@ def main() -> None:
     args = ap.parse_args()
 
     profile = active_profile()
-    global RUN_SETTINGS
+    queries = dataset_path(args.dataset)
+    global RUN_SETTINGS, DATASET_NAME
+    DATASET_NAME = queries.name
     RUN_SETTINGS = run_settings(profile)
     path = results_path(profile, args.tag)
-    queries = dataset_path(args.dataset)
     items = json.loads(queries.read_text())
     if args.ids:
         wanted = set(args.ids.split(","))
@@ -277,7 +310,7 @@ def main() -> None:
 
     if args.rescore:
         rows = list(load_done(path).values())
-        items_by_id = {i["id"]: i for i in json.loads(queries.read_text())}
+        items_by_id = {i["id"]: i for q in (QUERIES, VARIED, queries) if q.exists() for i in json.loads(q.read_text())}
         n = 0
         for r in rows:
             if r.get("status") == "ok" and r.get("state"):
@@ -298,7 +331,15 @@ def main() -> None:
         return
 
     # resume: only successful rows count as done; a crashed or timed-out row is run again
-    done = {} if args.rerun else {k: r for k, r in load_done(path).items() if r.get("status") == "ok"}
+    existing = {} if args.rerun else load_done(path)
+    other_sets = {(r.get("settings") or {}).get("dataset") for r in existing.values()} - {None, DATASET_NAME}
+    if other_sets:
+        sys.exit(f"{path.name} already holds results for {', '.join(sorted(other_sets))}; use another --tag for {DATASET_NAME}")
+    # only rows from this exact code and these settings count as done; others (or rows that recorded none) are rerun
+    done = {k: r for k, r in existing.items() if r.get("status") == "ok" and same_settings(r.get("settings"), RUN_SETTINGS)}
+    stale = sum(1 for r in existing.values() if r.get("status") == "ok") - len(done)
+    if stale:
+        print(f"{stale} earlier rows come from other code or settings (or recorded none): rerunning them")
     if args.rerun and path.exists():
         path.rename(path.with_suffix(f".{datetime.now().strftime('%Y%m%d-%H%M%S')}.bak.jsonl"))
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

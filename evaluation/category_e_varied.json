@@ -2499,7 +2499,7 @@
     "id": "E1-05~casual",
     "category": "E",
     "sub_use_case": "E1",
-    "query": "hey, i'm single, a singapore citizen, 38, first timer, no kids. household income 5.5k a month (HFE assessed), 110k in cpf oa we can use, plus 50k cash. no other loans, been working continuously for the last 12 months, and our grant and hdb loan eligibility is already confirmed. no proximity grant. looking for a resale 3-room in tampines under 500k, at least 60 yrs lease left, within 400m of an mrt. use 60 yrs remaining lease for the calc. what grants do we get and what's our max budget? show them on the map pls",
+    "query": "hey, i'm single, a singapore citizen, 38, first timer, no kids. my income 5.5k a month (HFE assessed), 110k in cpf oa i can use, plus 50k cash. no other loans, been working continuously for the last 12 months, and my grant and hdb loan eligibility is already confirmed. no proximity grant. looking for a resale 3-room in tampines under 500k, at least 60 yrs lease left, within 400m of an mrt. use 60 yrs remaining lease for the calc. what grants do i get and what's my max budget? show them on the map pls",
     "initial_map_state": null,
     "stated_constraints": {
       "towns": [

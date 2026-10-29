@@ -94,11 +94,14 @@ def casual(spec) -> str:
               f"{spec['lease']} yrs lease left, {s['near']}")
     if not hh:
         return f"hi! any {search[len('looking for a '):]}? if nothing fits, what should we relax?"
-    money = f"household income {k(hh['income'])} a month (HFE assessed), {k(hh['cpf'])} in cpf oa we can use"
+    we, our, us = ("i", "my", "me") if hh["single"] else ("we", "our", "us")   # a single buyer speaks for themself
+    money = (f"{'my' if hh['single'] else 'household'} income {k(hh['income'])} a month (HFE assessed), "
+             f"{k(hh['cpf'])} in cpf oa {we} can use")
     money += f", plus {k(hh['cash'])} cash" if hh["cash"] else ""
-    return (f"hey, {hh['who']}. {money}. no other loans, been working continuously for the last 12 months, and our "
+    return (f"hey, {hh['who']}. {money}. no other loans, been working continuously for the last 12 months, and {our} "
             f"grant and hdb loan eligibility is already confirmed. no proximity grant. {search}. use {spec['lease']} "
-            f"yrs remaining lease for the calc. what grants do we get and what's our max budget? show them on the map pls")
+            f"yrs remaining lease for the calc. what grants do {we} get and what's {our} max budget? show them on the "
+            f"map pls")
 
 
 def shorthand(spec) -> str:

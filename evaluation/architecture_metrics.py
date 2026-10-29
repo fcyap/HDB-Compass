@@ -255,9 +255,14 @@ def mentions_amount(text: str, value: Optional[float], tol: float = 1.0) -> bool
 
 
 def asked_for_missing(draft: str, missing: List[str]) -> bool:
+    """Every missing fact is named, and a sentence that names one actually asks for it. Boilerplate such as "please
+    confirm with HDB" elsewhere in the answer does not count as asking."""
     low = (draft or "").lower()
-    named = all(any(w in low for w in _MISSING_WORDS.get(m, (m.replace("_", " "),))) for m in missing)
-    return named and bool(_ASK_CUE.search(draft or ""))
+    words = {m: _MISSING_WORDS.get(m, (m.replace("_", " "),)) for m in missing}
+    named = all(any(w in low for w in ws) for ws in words.values())
+    sentences = _re.split(r"(?<=[.!?])\s+|\n+", draft or "")
+    asks = any(_ASK_CUE.search(s) and any(w in s.lower() for ws in words.values() for w in ws) for s in sentences)
+    return named and asks
 
 
 def ground_truth_scores(item: Dict[str, Any], state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -305,6 +310,48 @@ def routing_accuracy(expected_agents: List[str], active_subagents: List[str], va
     return {"applicable": True, "exact": exp == act, "expected": sorted(exp), "actual": sorted(act)}
 
 
+SEARCH_FIELDS = ("towns", "flat_types", "max_budget_sgd", "min_remaining_lease_years", "amenity_radii_meters")
+
+
+def _same(a: Any, b: Any) -> bool:
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return abs(float(a) - float(b)) <= max(0.5, 0.005 * abs(float(b)))
+    if isinstance(a, list) and isinstance(b, list):
+        return sorted(map(str, a)) == sorted(map(str, b))
+    if isinstance(a, dict) and isinstance(b, dict):
+        a = {k: v for k, v in a.items() if v}          # a 0 m distance is no constraint
+        return set(a) == set(b) and all(_same(a[k], b[k]) for k in b)
+    return a == b
+
+
+def model_reading_accuracy(item: Dict[str, Any], state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """How well the MODEL alone read the question, before code filled gaps or overrode money facts
+    (state["model_constraints"]). The search fields and the stated money facts are compared with the question's own
+    stated values; a money fact the model gave that the question does not state is counted as invented. This is the
+    measure that shows whether the model, not the code patterns, copes with a phrasing. None without a model."""
+    reading = state.get("model_constraints")
+    stated = item.get("stated_constraints")
+    if not reading or not stated:
+        return None
+    search_ok = sum(1 for f in SEARCH_FIELDS if _same(reading.get(f) or ([] if isinstance(stated.get(f), list) else
+                                                      {} if isinstance(stated.get(f), dict) else None), stated.get(f)))
+    facts_total = facts_ok = wrong = invented = 0
+    want = item.get("financial_inputs") or {}
+    got = reading.get("financial_inputs") or {}
+    for sec in ("grants", "affordability"):
+        w, g = want.get(sec) or {}, got.get(sec) or {}
+        for k, v in w.items():
+            facts_total += 1
+            if k in g and g[k] is not None:
+                facts_ok += _same(g[k], v)
+                wrong += not _same(g[k], v)
+        # only calculator facts count as invented (flat type, loan type and the like are not facts about the buyer)
+        from agents.supervisor import FACT_FIELDS
+        invented += sum(1 for k, v in g.items() if v is not None and k not in w and k in FACT_FIELDS)
+    return {"search_correct": search_ok, "search_total": len(SEARCH_FIELDS), "facts_correct": facts_ok,
+            "facts_total": facts_total, "facts_wrong": wrong, "facts_invented": invented}
+
+
 def score_item(item: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     """One row of the Experiment 1 results table."""
     variant = state.get("variant", "?")
@@ -314,10 +361,12 @@ def score_item(item: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     row = {
         "id": item["id"], "variant": variant,
         "tool_selection": tool_selection_prf(item.get("expected_mcp_calls", []), state.get("tool_call_log", [])),
-        # the same score over only the calls the model chose (ToolCallRecord.source); rows recorded before the source
-        # tag existed have no model calls here, so compare like with like
-        "tool_selection_model_chosen": tool_selection_prf(
-            item.get("expected_mcp_calls", []), [r for r in state.get("tool_call_log", []) if r.get("source") == "model"]),
+        # the same score over only the calls the model chose (ToolCallRecord.source); left out for logs recorded
+        # before the source tag existed, which cannot say who chose a call
+        **({"tool_selection_model_chosen": tool_selection_prf(
+            item.get("expected_mcp_calls", []), [r for r in state.get("tool_call_log", []) if r.get("source") == "model"])}
+           if any("source" in r for r in state.get("tool_call_log", [])) else {}),
+        "extraction_model_only": model_reading_accuracy(item, state),
         "tool_calls_by_source": {src: sum(1 for r in state.get("tool_call_log", []) if (r.get("source") or "unknown") == src)
                                  for src in ("model", "code", "unknown")},
         "parameter_em": parameter_exact_match(item.get("expected_mcp_calls", []), state.get("tool_call_log", [])),
