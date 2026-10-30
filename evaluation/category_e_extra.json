@@ -3,7 +3,7 @@
     "id": "E1-X01",
     "category": "E",
     "sub_use_case": "E1",
-    "query": "Hi, my wife and I are both Singapore citizens, 29 and 28, married, buying our first home, no kids yet. We earn $7,200 a month combined (that's the HFE-assessed figure), have $70,000 in our CPF ordinary accounts and $30,000 in cash. No car loan or other debts, we've both been working continuously for the past 12 months, and HDB has confirmed our eligibility for the grants and an HDB loan. We don't qualify for the proximity grant. We'd like a 4-room resale in Sengkang under $600,000, at least 80 years of lease left, no more than 400m from an MRT station. Assume an 80-year remaining lease for the sums. Which blocks work, what grants can we get and what's the most we can pay? Please put them on the map.",
+    "query": "Hi, my wife and I are both Singapore citizens, 29 and 28, married, buying our first home, no kids yet. We earn $7,200 a month combined (that's the HFE-assessed figure), have $70,000 in our CPF ordinary accounts and $30,000 in cash. No car loan or other debts, we've both been working continuously for the past 12 months, and HDB has confirmed our eligibility for the grants and an HDB loan. We don't qualify for the proximity grant. We'd like a 4-room resale in Sengkang under $600,000, at least 80 years of lease left, no more than 400m from an MRT or LRT station. Assume an 80-year remaining lease for the sums. Which blocks work, what grants can we get and what's the most we can pay? Please put them on the map.",
     "initial_map_state": null,
     "stated_constraints": {
       "towns": [
@@ -233,7 +233,7 @@
     "id": "E1-X03",
     "category": "E",
     "sub_use_case": "E1",
-    "query": "We're a married couple, both Singapore citizens aged 33 and 31, buying our first flat, no children. Our combined HFE-assessed income is $10,500 a month, we have $140,000 in CPF OA between us and $70,000 cash in the bank. No other loans, both continuously employed for the last 12 months, and our grant and HDB loan eligibility has been confirmed. No proximity grant. We're looking for a 5-room resale in Punggol under $750,000 with at least 80 years of lease, within 400m of an MRT station. Say we buy one for $720,000 and it's valued at $710,000, with an HDB loan of $520,000, legal and valuation fees of $3,500 and no ABSD. Using 80 years of remaining lease, what grants do we get, what's our maximum budget, how much is the stamp duty and how much cash do we need upfront? Map the blocks too.",
+    "query": "We're a married couple, both Singapore citizens aged 33 and 31, buying our first flat, no children. Our combined HFE-assessed income is $10,500 a month, we have $140,000 in CPF OA between us and $70,000 cash in the bank. No other loans, both continuously employed for the last 12 months, and our grant and HDB loan eligibility has been confirmed. No proximity grant. We're looking for a 5-room resale in Punggol under $750,000 with at least 80 years of lease, within 400m of an MRT or LRT station. Say we buy one for $720,000 and it's valued at $710,000, with an HDB loan of $520,000, legal and valuation fees of $3,500 and no ABSD. Using 80 years of remaining lease, what grants do we get, what's our maximum budget, how much is the stamp duty and how much cash do we need upfront? Map the blocks too.",
     "initial_map_state": null,
     "stated_constraints": {
       "towns": [
@@ -877,7 +877,7 @@
     "id": "E2-X01",
     "category": "E",
     "sub_use_case": "E2",
-    "query": "Is there any 4-room resale in Hougang under $700,000 that still has at least 70 years of lease and is within 400m of an MRT station? If nothing fits, what should I compromise on?",
+    "query": "Is there any 4-room resale in Hougang under $600,000 that still has at least 65 years of lease and is within 400m of an MRT station? If nothing fits, what should I compromise on?",
     "initial_map_state": null,
     "stated_constraints": {
       "towns": [
@@ -886,8 +886,8 @@
       "flat_types": [
         "4 ROOM"
       ],
-      "max_budget_sgd": 700000.0,
-      "min_remaining_lease_years": 70,
+      "max_budget_sgd": 600000.0,
+      "min_remaining_lease_years": 65,
       "amenity_radii_meters": {
         "mrt": 400
       }
@@ -909,8 +909,8 @@
           "flat_types": [
             "4 ROOM"
           ],
-          "max_price": 700000.0,
-          "min_lease_years": 70
+          "max_price": 600000.0,
+          "min_lease_years": 65
         }
       },
       {
@@ -934,38 +934,39 @@
         "lease_reference_month": "2026-09",
         "financial_rule_version": null
       },
-      "price_query_blocks": 82,
+      "price_query_blocks": 36,
       "distance_filter_blocks": 82,
       "affordability_cap": null,
       "matching_block_keys": [],
       "relaxations": [
         {
           "constraint": "max_budget_sgd",
-          "original": 700000,
-          "relaxed": 770000.0,
-          "unlocked_blocks": 0,
-          "unlocked_block_keys": []
+          "original": 600000,
+          "relaxed": 660000.0,
+          "unlocked_blocks": 1,
+          "unlocked_block_keys": [
+            "547 HOUGANG ST 51"
+          ]
         },
         {
           "constraint": "amenity_radii_meters.mrt",
           "original": 400,
           "relaxed": 550,
-          "unlocked_blocks": 5,
+          "unlocked_blocks": 3,
           "unlocked_block_keys": [
-            "996C BUANGKOK CRES",
-            "470A UPP SERANGOON CRES",
-            "994C BUANGKOK LINK",
-            "994A BUANGKOK LINK",
-            "994B BUANGKOK LINK"
+            "315 HOUGANG AVE 5",
+            "557 HOUGANG ST 51",
+            "551 HOUGANG ST 51"
           ]
         },
         {
           "constraint": "min_remaining_lease_years",
-          "original": 70,
-          "relaxed": 65,
-          "unlocked_blocks": 1,
+          "original": 65,
+          "relaxed": 60,
+          "unlocked_blocks": 2,
           "unlocked_block_keys": [
-            "547 HOUGANG ST 51"
+            "526 HOUGANG AVE 6",
+            "444 HOUGANG AVE 8"
           ]
         }
       ],
@@ -973,13 +974,11 @@
         "constraint": "amenity_radii_meters.mrt",
         "original": 400,
         "relaxed": 550,
-        "unlocked_blocks": 5,
+        "unlocked_blocks": 3,
         "unlocked_block_keys": [
-          "996C BUANGKOK CRES",
-          "470A UPP SERANGOON CRES",
-          "994C BUANGKOK LINK",
-          "994A BUANGKOK LINK",
-          "994B BUANGKOK LINK"
+          "315 HOUGANG AVE 5",
+          "557 HOUGANG ST 51",
+          "551 HOUGANG ST 51"
         ]
       }
     }

@@ -9,7 +9,10 @@ the question gives. Ground truth comes from the same real tools the agents call 
 calculators, Member 2's distance filter and school check), joined the way ground_category_e.py does it.
 
 A spec is rejected unless it meets its definition (E1: at least one block meets everything, every calculator has
-the status the question is designed for; E2: no block meets everything and one relaxation step unlocks one). How
+the status the question is designed for; E2: no block meets everything and one relaxation step unlocks one), or if
+the truth could be measuring something other than what the words ask: a price query (first or relaxed) cut off at the
+result limit, a school tool that measured from a different school, or a block counted as near "an MRT station" when
+only an LRT stop is near it (Member 2's index files LRT stops under "mrt", so such questions say "MRT or LRT"). How
 the no-model extractor reads the wording is printed as a note only: these questions must not be shaped to fit it.
 
     .venv/bin/python -m evaluation.ground_category_e_extra            # check and write evaluation/category_e_extra.json
@@ -22,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -45,7 +49,8 @@ HOUSEHOLDS: Dict[str, Dict[str, Any]] = {
 }
 
 SPECS: List[Dict[str, Any]] = [
-    # (a) a town not used before; full financial facts, said the way a couple would say them
+    # (a) a town not used before; full financial facts, said the way a couple would say them. The stations near
+    # Sengkang and Punggol blocks are mostly LRT stops, which the distance filter counts as "mrt", so these say LRT.
     dict(id="E1-X01", sub="E1", town="SENGKANG", ft="4 ROOM", budget=600000, lease=80, radii={"mrt": 400},
          hh="sc_sc_29_28", calc_lease=80,
          query="Hi, my wife and I are both Singapore citizens, 29 and 28, married, buying our first home, no kids yet. "
@@ -53,7 +58,7 @@ SPECS: List[Dict[str, Any]] = [
                "accounts and $30,000 in cash. No car loan or other debts, we've both been working continuously for the "
                "past 12 months, and HDB has confirmed our eligibility for the grants and an HDB loan. We don't qualify "
                "for the proximity grant. We'd like a 4-room resale in Sengkang under $600,000, at least 80 years of "
-               "lease left, no more than 400m from an MRT station. Assume an 80-year remaining lease for the sums. "
+               "lease left, no more than 400m from an MRT or LRT station. Assume an 80-year remaining lease for the sums. "
                "Which blocks work, what grants can we get and what's the most we can pay? Please put them on the map."),
     # (a) + (b) another new town, with a primary-school distance limit (search only)
     dict(id="E1-X02", sub="E1", town="PASIR RIS", ft="4 ROOM", budget=600000, lease=60, radii={},
@@ -70,7 +75,7 @@ SPECS: List[Dict[str, Any]] = [
                "Our combined HFE-assessed income is $10,500 a month, we have $140,000 in CPF OA between us and $70,000 "
                "cash in the bank. No other loans, both continuously employed for the last 12 months, and our grant and "
                "HDB loan eligibility has been confirmed. No proximity grant. We're looking for a 5-room resale in "
-               "Punggol under $750,000 with at least 80 years of lease, within 400m of an MRT station. Say we buy one "
+               "Punggol under $750,000 with at least 80 years of lease, within 400m of an MRT or LRT station. Say we buy one "
                "for $720,000 and it's valued at $710,000, with an HDB loan of $520,000, legal and valuation fees of "
                "$3,500 and no ABSD. Using 80 years of remaining lease, what grants do we get, what's our maximum "
                "budget, how much is the stamp duty and how much cash do we need upfront? Map the blocks too."),
@@ -95,8 +100,8 @@ SPECS: List[Dict[str, Any]] = [
                "and loan, map what you find, and tell me my grants and maximum budget.",
          answer="I have $95,000 in my CPF ordinary account."),
     # (e) a relaxation case in a new town (search only)
-    dict(id="E2-X01", sub="E2", town="HOUGANG", ft="4 ROOM", budget=700000, lease=70, radii={"mrt": 400},
-         query="Is there any 4-room resale in Hougang under $700,000 that still has at least 70 years of lease and is "
+    dict(id="E2-X01", sub="E2", town="HOUGANG", ft="4 ROOM", budget=600000, lease=65, radii={"mrt": 400},
+         query="Is there any 4-room resale in Hougang under $600,000 that still has at least 65 years of lease and is "
                "within 400m of an MRT station? If nothing fits, what should I compromise on?"),
 ]
 
@@ -144,12 +149,33 @@ def school_blocks(school: str) -> List[str]:
     return keys
 
 
-def school_in_local_index(school: str) -> bool:
-    """The school tool falls back to an online geocoder for a name missing from the local index; ground truth must
-    not depend on the network, so the question names a school the index holds."""
+def school_problems(school: str) -> List[str]:
+    """The school tool falls back to an online geocoder for a name missing from the local index, and otherwise measures
+    from the first school whose name contains the query less "primary" and "school" ("Punggol Primary School" finds
+    Punggol Cove). Ground truth must depend on neither, so the tool's blocks must be exactly the blocks within 1 km of
+    the named school's own entry in the index."""
     from mcp_server.spatial_onemap_tools import get_spatial_index
-    names = [s["name"].upper() for s in get_spatial_index()["payload"]["schools"]]
-    return school.upper() in names
+    index = get_spatial_index()["payload"]
+    named = [s for s in index["schools"] if s["name"].upper() == school.upper()]
+    if not named:
+        return [f"{school} is not in the local spatial index"]
+    sx, sy = named[0]["x"], named[0]["y"]
+    near = {block_key(b["block"], b["street"]) for b in index["blocks"] if math.hypot(b["x"] - sx, b["y"] - sy) <= 1000}
+    got = set(school_blocks(school))
+    if got != near:
+        return [f"the school tool's blocks differ from those within 1 km of {school} ({len(got ^ near)} differ): it "
+                "measured from another school"]
+    return []
+
+
+def lrt_only_blocks(keys: List[str], radius: float) -> List[str]:
+    """Keys of blocks that are within the radius of a station only because Member 2's index files LRT stops under
+    "mrt". A question whose truth counts such blocks must say LRT, or the truth answers a different question."""
+    from mcp_server.spatial_onemap_tools import get_spatial_index
+    index = get_spatial_index()["payload"]
+    mrt = [(a["x"], a["y"]) for a in index["amenities"] if a["category"].lower() == "mrt" and "LRT" not in a["name"].upper()]
+    where = {block_key(b["block"], b["street"]): (b["x"], b["y"]) for b in index["blocks"]}
+    return [k for k in keys if k in where and min(math.hypot(x - where[k][0], y - where[k][1]) for x, y in mrt) > radius]
 
 
 def search(spec: Dict[str, Any], cap: Optional[float] = None) -> Tuple[List[str], Dict[str, Any], Optional[int]]:
@@ -259,8 +285,8 @@ def ground(spec: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
         coverage = amenity_coverage(spec["town"], spec["radii"])
         if not all(coverage.values()):
             problems.append(f"no amenity data in town: {coverage}")
-    if spec.get("school") and not school_in_local_index(spec["school"]):
-        problems.append(f"{spec['school']} is not in the local spatial index")
+    if spec.get("school"):
+        problems += school_problems(spec["school"])
     truth: Dict[str, Any] = {
         "data": {"snapshot_id": meta.get("snapshot_id"), "window": f"{meta.get('window_start_month')}..{meta.get('window_end_month')}",
                  "lease_reference_month": meta.get("lease_reference_month"),
@@ -297,7 +323,7 @@ def ground(spec: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     else:
         if keys:
             problems.append(f"E2 has {len(keys)} matching block(s)")
-        rel = relaxations(spec)
+        rel = relaxations(spec, problems)
         truth["relaxations"] = rel
         best = max(rel, key=lambda r: r["unlocked_blocks"])
         truth["best_single_change"] = best if best["unlocked_blocks"] > 0 else None
@@ -305,6 +331,15 @@ def ground(spec: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
             problems.append("no single relaxation step unlocks a block")
         behaviour = ("Say that no block meets every constraint, present nothing as a match, and offer the single change that "
                      "unlocks blocks with its number.")
+    if spec["radii"].get("mrt") and "LRT" not in spec["query"]:
+        # a question that says only "MRT" must not count a block that is near an LRT stop and no MRT station
+        mrt = spec["radii"]["mrt"]
+        counted = [(keys, mrt)] + [(r["unlocked_block_keys"], r["relaxed"] if r["constraint"] == "amenity_radii_meters.mrt" else mrt)
+                                   for r in truth.get("relaxations", [])]
+        lrt = sorted({k for ks, radius in counted for k in lrt_only_blocks(ks, radius)})
+        if lrt:
+            problems.append(f"{len(lrt)} counted block(s) are near an LRT stop but no MRT station, e.g. {lrt[0]}: "
+                            "say 'MRT or LRT station' in the question")
     agents, calls = expected_calls(spec, facts)
     item = {"id": spec["id"], "category": "E", "sub_use_case": spec["sub"], "query": spec["query"], "initial_map_state": None,
             "stated_constraints": {"towns": [spec["town"]], "flat_types": [spec["ft"]], "max_budget_sgd": float(spec["budget"]),
