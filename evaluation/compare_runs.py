@@ -28,7 +28,8 @@ RESULTS = PROJECT_ROOT / "evaluation" / "results"
 MEASURES = [("fully right", lambda gt: gt.get("success")),
             ("exact blocks", lambda gt: gt.get("blocks_exact")),
             ("E1 grants and max price", lambda gt: gt.get("grants_correct") and gt.get("max_price_correct")
-             if "grants_correct" in gt else None)]
+             if "grants_correct" in gt else None),
+            ("E1 stamp duty and upfront cash", lambda gt: gt.get("upfront_correct"))]
 
 
 def resolve(arg: str) -> Path:

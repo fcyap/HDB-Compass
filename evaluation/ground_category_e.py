@@ -9,7 +9,7 @@ same tools the agents call:
 A spec is rejected unless it meets its definition:
   E1  at least one block meets every constraint after the affordability cap; price query not truncated;
       grant and affordability results have the status the question is designed for.
-  E2  no block meets every constraint, the price query is not truncated, every amenity in the question has data
+  E2  no block meets every constraint, no price query (first or relaxed) is truncated, every amenity in the question has data
       in that town, and at least one single relaxation step unlocks a block (so a trade-off exists).
 
     .venv/bin/python -m evaluation.ground_category_e            # check and write evaluation/category_e_queries.json
@@ -162,19 +162,23 @@ def amenity_coverage(town: str, radii: Dict[str, int]) -> Dict[str, bool]:
     return {k: bool(tool("filter_blocks_by_amenity_proximity")(towns=[town], amenity_constraints={k: 2000})) for k in radii}
 
 
-def relaxations(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
+def relaxations(spec: Dict[str, Any], problems: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """One search per single relaxation step. A relaxed price query cut off at the result limit could undercount the
+    blocks a step unlocks, so it is added to problems (when given) and the spec is rejected like a cut-off first query."""
     steps = load_config()["architecture"]["relaxation_steps"]
     town, ft, budget, lease, radii = spec["town"], spec["ft"], spec["budget"], spec["lease"], spec["radii"]
     out = []
     relaxed_budget = round(budget * (1 + steps["max_budget_sgd_pct"] / 100), -3)
-    out.append(("max_budget_sgd", budget, relaxed_budget, search(town, ft, relaxed_budget, lease, radii)[3]))
+    out.append(("max_budget_sgd", budget, relaxed_budget, search(town, ft, relaxed_budget, lease, radii)))
     for k, v in radii.items():
         r = {**radii, k: v + steps["amenity_radius_meters"]}
-        out.append((f"amenity_radii_meters.{k}", v, v + steps["amenity_radius_meters"], search(town, ft, budget, lease, r)[3]))
+        out.append((f"amenity_radii_meters.{k}", v, v + steps["amenity_radius_meters"], search(town, ft, budget, lease, r)))
     relaxed_lease = max(0, lease - steps["min_remaining_lease_years"])
-    out.append(("min_remaining_lease_years", lease, relaxed_lease, search(town, ft, budget, relaxed_lease, radii)[3]))
-    return [{"constraint": c, "original": o, "relaxed": n, "unlocked_blocks": len(keys), "unlocked_block_keys": keys}
-            for c, o, n, keys in out]
+    out.append(("min_remaining_lease_years", lease, relaxed_lease, search(town, ft, budget, relaxed_lease, radii)))
+    if problems is not None:
+        problems += [f"relaxed {c} price query truncated at the result limit" for c, _, _, found in out if found[1].get("truncated")]
+    return [{"constraint": c, "original": o, "relaxed": n, "unlocked_blocks": len(found[3]), "unlocked_block_keys": found[3]}
+            for c, o, n, found in out]
 
 
 def finance(facts: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
@@ -269,7 +273,7 @@ def ground(spec: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     else:
         if keys:
             problems.append(f"E2 has {len(keys)} matching block(s)")
-        rel = relaxations(spec)
+        rel = relaxations(spec, problems)
         truth["relaxations"] = rel
         best = max(rel, key=lambda r: r["unlocked_blocks"])
         truth["best_single_change"] = best if best["unlocked_blocks"] > 0 else None

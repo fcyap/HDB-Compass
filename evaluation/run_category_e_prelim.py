@@ -43,6 +43,7 @@ RESULTS_DIR = PROJECT_ROOT / "evaluation" / "results"
 QUERIES = PROJECT_ROOT / "evaluation" / "category_e_queries.json"
 VARIED = PROJECT_ROOT / "evaluation" / "category_e_varied.json"   # the same questions in four user styles (vary_category_e.py)
 CATEGORY_C = PROJECT_ROOT / "evaluation" / "category_c_queries.json"   # Member 3's 15 policy questions (read only)
+EXTRA = PROJECT_ROOT / "evaluation" / "category_e_extra.json"     # new towns, school, upfront cost (ground_category_e_extra.py)
 
 
 def dataset_path(name: str) -> Path:
@@ -52,6 +53,8 @@ def dataset_path(name: str) -> Path:
         return VARIED
     if name == "category_c":
         return CATEGORY_C
+    if name == "extra":
+        return EXTRA
     return Path(name).resolve()
 
 
@@ -351,9 +354,9 @@ def main() -> None:
     ap.add_argument("--rerun", action="store_true", help="ignore existing checkpoints")
     ap.add_argument("--summary-only", action="store_true")
     ap.add_argument("--rescore", action="store_true", help="recompute scores from stored state with the current metrics")
-    ap.add_argument("--dataset", default="", help="'varied' for evaluation/category_e_varied.json, 'category_c' for "
-                                                   "Member 3's policy questions (or a path); default the 15 grounded "
-                                                   "Category E questions")
+    ap.add_argument("--dataset", default="", help="'varied' for evaluation/category_e_varied.json, 'extra' for "
+                                                   "evaluation/category_e_extra.json, 'category_c' for Member 3's policy "
+                                                   "questions (or a path); default the 15 grounded Category E questions")
     args = ap.parse_args()
 
     profile = active_profile()
@@ -375,7 +378,7 @@ def main() -> None:
         rows = list(load_done(path).values())
         # each row is scored against the dataset it was run on (its settings name it); rows from before 30 Oct record
         # none and are looked up in the known datasets by id
-        known = (QUERIES, VARIED, CATEGORY_C, queries)
+        known = (QUERIES, VARIED, EXTRA, CATEGORY_C, queries)
         sets = {q.name: {i["id"]: i for i in json.loads(q.read_text())} for q in known if q.exists()}
         shas = {q.name: hashlib.sha1(q.read_bytes()).hexdigest()[:12] for q in known if q.exists()}
         any_set = {k: i for by_id in sets.values() for k, i in by_id.items()}
