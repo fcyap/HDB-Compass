@@ -96,14 +96,20 @@ which returns deterministic fixtures with the same shapes.
 
 If a tool module fails to import (a missing package, a syntax error), only its own tools are affected: the registry
 prints one loud warning and every call to those tools returns `{"status": "unavailable", "error": "<import error>"}`
-(logged as a failed call), while the rest of the graph keeps answering.
+(logged as a failed call), while the rest of the graph keeps answering. The answer says what could not be checked
+(`supervisor.NOT_CHECKED`, e.g. "Prices, remaining leases and flat types could not be checked"), and when a block
+search could not run, the blocks are said to match only "the constraints that could be checked".
 
 **Tools that run only when asked.** `calculate_bsd_and_upfront_outlay` and `query_comparable_resale_transactions`
-run only when the user's own words ask for them (`supervisor.requested_tools`: upfront costs, stamp duty or BSD, cash
-needed, a down payment or a price they are buying for; comparables, recent transactions or similar flats). Code records
-the asks in `user_constraints["requested_tools"]`; the no-model plans, the financial sequence and the evidence gate
-follow it, and Variant C's specialists are offered those two tools only when asked. Variants A and B keep the full
-tool list, so their models' unasked calls still count against Tool F1.
+run only when the user's own words ask for them (`supervisor.requested_tools`, read sentence by sentence: upfront or
+initial costs, stamp duty or BSD, cash or CPF needed, a down payment or a price they are buying for; comparables,
+recent or nearby transactions, similar flats, or what flats sold or went for). Coordinates the user typed, read into
+`comparable_resale` and checked against their words, are an ask for comparable sales too. A refusal ("we don't care
+about stamp duty") or a rules question ("the ABSD rules") is not an ask. Code records the asks in
+`user_constraints["requested_tools"]`; the no-model plans, the financial sequence and the evidence gate follow it,
+and Variant C's specialists are offered those two tools only when asked. `requested_tools` is never shown to a model
+(`supervisor.constraints_for_model`), and Variants A and B keep the full tool list, so their models' unasked calls
+still count against Tool F1.
 
 ### Block identity
 

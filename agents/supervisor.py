@@ -782,7 +782,9 @@ MONEY_FIELDS = ("cash_savings", "cpf_oa_balance", "monthly_income")
 FIN_TOOL_SECTION = {"calculate_cpf_housing_grants": "grants", "calculate_maximum_affordability": "affordability",
                     "calculate_bsd_and_upfront_outlay": "upfront"}
 _AMOUNT = r"\$\s?(\d[\d,]*(?:\.\d+)?)\s*(k)?"
-_PURCHASE_PRICE = r"(?:buy(?:ing)?|purchas(?:e|ing))\b[^$.]{0,40}\bfor " + _AMOUNT   # "buying a 4-room for $600k"
+# "buying a 4-room for $600k"; not a budget ("looking to buy in Tampines for $600k or less", "for $600k max")
+_PURCHASE_PRICE = (r"(?:buy(?:ing)?|purchas(?:e|ing))\b[^$.]{0,40}\bfor " + _AMOUNT
+                   + r"(?!\d|[,.]\d|\s*k\b)(?!\s*(?:(?:or|and)\s+(?:less|lower|below|under|cheaper)|max\w*|at most|tops)\b)")
 # the lease the user wants the calculation to assume: "use 65 yrs remaining lease for the calc", "calc w 65 yrs lease",
 # "using a 65-year remaining lease", "assume 65 years of remaining lease"
 _CALC_LEASE = (r"(\d{2})\s*(?:years?|yrs?) of remaining lease for the .{0,30}calc"
@@ -1381,6 +1383,9 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
             vals.pop(k, None)
     # read by code from every user message so far, so an ask in the first turn still counts after a follow-up reply
     constraints["requested_tools"] = requested_tools(users or query)
+    comparables = "query_comparable_resale_transactions"
+    if comparables not in constraints["requested_tools"] and coordinates_stated(constraints.get("comparable_resale"), users or query):
+        constraints["requested_tools"].append(comparables)
     return {"user_constraints": constraints, "errors": errors, "model_constraints": model_reading}
 
 
@@ -1439,26 +1444,80 @@ AGENT_SYSTEM = {
 # Tools that run only when the user asks for them in so many words. The plans used to cost the budget for stamp duty
 # whenever a budget or income was given, and to pull comparable sales whenever comparable_resale was filled, so a
 # search-and-budget question got an upfront-costs section nobody asked for (and lost Tool F1 precision: no Category E
-# question expects either call). "Cash savings" or "resale transaction" alone is not an ask.
+# question expects either call). "Cash savings" or "resale transaction" alone is not an ask. The patterns are read one
+# sentence at a time (requested_tools), so ".{0,60}" never reaches into the next sentence.
 _ASKS_UPFRONT = re.compile(
-    r"\bup[- ]?front\b|\boutlays?\b|\bstamp dut(?:y|ies)\b|\b(?:BSD|ABSD)\b|\bdown[- ]?payments?\b"
-    r"|\bhow much\s+(?:[\w-]+\s+){0,3}?cash\b|\bcash\s+(?:needed|required|outlay|up[- ]?front)\b|" + _PURCHASE_PRICE, re.I)
+    r"\bup[- ]?front\b|(?<!monthly )\boutlays?\b|\bdown[- ]?payments?\b|\bstamp dut(?:y|ies)\b|\b(?:BSD|ABSD)\b"
+    # "how much cash do we need", "how much would we need in cash and CPF", "how much do I need to pay in cash"
+    r"|\bhow much\s+(?:cash|CPF)\b(?!\s+savings).{0,40}?\b(?:need|needed|required|pay|put down|set aside)\b"
+    r"|\bhow much\b.{0,40}?\b(?:need|pay|put down|fork out|set aside|come up with)\b.{0,30}?\b(?:cash|CPF)\b(?!\s+savings)"
+    # "cash needed", "the total cash and CPF needed", "the initial costs", "the costs of buying"
+    r"|\b(?:cash|CPF)(?:\s+(?:and|or|&|\+|plus)\s+(?:cash|CPF))?\s+(?:[\w-]+\s+){0,2}?(?:needed|required|outlay|up[- ]?front)\b"
+    r"|\b(?:initial|one[- ]?(?:time|off)|closing|completion|buying|purchase)\s+(?:[\w-]+\s+)?(?:costs?|fees|expenses|outlay)\b"
+    r"|\bcosts?\s+(?:of|for|involved in)\s+(?:the\s+)?(?:buying|purchas\w*|completing|completion)\b"
+    r"|" + _PURCHASE_PRICE, re.I)
+_NO_BUYER_WORDS = r"(?:(?!\b(?:I|I'm|I'll|I'd|we|we're|we'll|we'd|you|you're|to)\b).)"   # words with no buyer as the subject
 _ASKS_COMPARABLES = re.compile(
     r"\bcomparables?\b|\bcomps\b|\bsimilar\s+(?:[\w-]+\s+){0,2}?(?:flats?|units?|homes?|ones)\b"
     r"|\brecent(?:ly)?\s+(?:[\w-]+\s+){0,2}?(?:transactions?|sales?|sold|transacted)\b"
-    r"|\b(?:transactions?|sales?)\s+(?:[\w-]+\s+){0,3}?(?:recently|lately)\b"
-    r"|\bcompar\w*\s+(?:[\w-]+\s+){0,2}?(?:sales|transactions)\b|\b(?:nearby|neighbou?ring)\s+(?:[\w-]+\s+)?(?:sales|transactions)\b"
-    r"|\b(?:sales|transactions)\s+(?:around|near|nearby|close to|within)\b"
-    r"|\bwhat\s+(?:did|do|have)\s+(?:[\w-]+\s+){0,3}?(?:sell|sold|go|gone)\s+for\b", re.I)
+    r"|\btransactions?\s+(?:[\w-]+\s+){0,3}?(?:recently|lately)\b|\btransactions?\s+(?:around|near|nearby|close to|within)\b"
+    r"|\bcompar\w*\s+(?:[\w-]+\s+){0,2}?(?:sales|transactions)\b"
+    r"|\b(?:nearby|neighbou?ring|surrounding)\s+(?:[\w-]+\s+){0,2}?(?:sales|transactions|resale prices?)\b"
+    # sales or prices at a place given by a distance or coordinates: "resale prices within 500m of latitude 1.33"
+    r"|\b(?:sales|prices?)\s+(?:within\s+\d+\s*k?m\b|(?:around|near|close to|at)\s+(?:lat\w*|-?\d{1,3}\.\d{3,}))"
+    # what flats sold for: "how much did 4-room flats near ... sell for", "what are flats around ... going for",
+    # "what prices did nearby flats fetch"; not "which flats should we go for" or "flats that go for under $600k"
+    r"|\b(?:flats?|units?|homes?|ones|they|blocks?|HDBs?|apartments?)\b" + _NO_BUYER_WORDS + r"{0,60}?"
+    r"\b(?:(?:sell|sold|selling|go|going|gone|went|transact(?:ed)?)\s+for\b(?!\s+(?:under|below|less|at most|no more|up to)\b|\s*\$)"
+    r"|fetch(?:ed|es|ing)?\b)"
+    r"|\bhow much\s+(?:did|do|does|have|has|were|was|are|is)\b" + _NO_BUYER_WORDS + r"{0,60}?"
+    r"\b(?:sell|sold|selling|go|going|gone|went|transact(?:ed)?)\s+for\b"
+    r"|\bwhat\s+(?:did\s+)?(?:people|buyers|others)\s+(?:pay|paid)\b", re.I)
 OPTIONAL_TOOLS = {"calculate_bsd_and_upfront_outlay": _ASKS_UPFRONT,
                   "query_comparable_resale_transactions": _ASKS_COMPARABLES}
+# What turns a match into a non-ask: the user turning it down just before ("we don't care about stamp duty"), a
+# question about the rules ("what are the ABSD rules for PR couples": the policy search answers that, not the
+# calculator), and a "how much ... need ... CPF" about the loan or income ("how much would I pay monthly from CPF"),
+# which affordability covers.
+_TURNED_DOWN = re.compile(r"\b(?:(?:don'?t|do not|doesn'?t|does not)(?!\s+forget\b)|no need|not (?:interested|asking|"
+                          r"worried|bothered|concerned)|never ?mind|skip|ignore|leave out|(?<!n't )(?<!not )forget)\b"
+                          r"\W+(?:[\w'-]+\W+){0,3}$", re.I)   # "don't forget the stamp duty" is still an ask
+_DUTY_RULES = re.compile(r"\b(?:rules?|polic(?:y|ies)|regulations?|regime|remissions?|exemptions?|appl(?:y|ies)|works?)\b",
+                         re.I)
+_LOAN_WORDS = re.compile(r"\b(?:month\w*|instal\w*|loan|mortgage|earn|income|salary)\b", re.I)
+
+
+def _is_ask(name: str, sentence: str, m: re.Match) -> bool:
+    if _TURNED_DOWN.search(sentence[:m.start()].rsplit(",", 1)[-1]):
+        return False
+    if name != "calculate_bsd_and_upfront_outlay":
+        return True
+    said = m.group(0)
+    if re.fullmatch(r"stamp dut(?:y|ies)|A?BSD", said, re.I):
+        # rule words within three words either side: "the ABSD rules", "rules for stamp duty", "does BSD apply"
+        around = " ".join(sentence[:m.start()].split()[-3:] + sentence[m.end():].split()[:3])
+        return not _DUTY_RULES.search(around)
+    return not (said.lower().startswith("how much") and _LOAN_WORDS.search(said))
 
 
 def requested_tools(text: str) -> List[str]:
     """The optional tools (OPTIONAL_TOOLS) the user's words ask for: upfront costs (upfront, stamp duty or BSD, cash
-    needed, down payment, or a price they are buying for) and comparable sales (comparables, recent transactions,
-    similar flats)."""
-    return [name for name, asks in OPTIONAL_TOOLS.items() if asks.search(text or "")]
+    needed, a down payment, the initial costs, or a price they are buying for) and comparable sales (comparables,
+    recent or nearby transactions, similar flats, what flats sold for). Read sentence by sentence; a match the user
+    turns down ("we don't care about stamp duty") or that asks about the rules ("the ABSD rules") is not an ask."""
+    sentences = re.split(r"(?<=[.?!;])\s+|\n+", text or "")   # "1.3329" has no space after its point, so stays whole
+    return [name for name, asks in OPTIONAL_TOOLS.items()
+            if any(_is_ask(name, s, m) for s in sentences for m in asks.finditer(s))]
+
+
+def coordinates_stated(where: Optional[Dict[str, Any]], text: str) -> bool:
+    """Whether comparable_resale's latitude and longitude are both numbers the user typed. Comparable sales are the
+    only tool that takes coordinates, so a user who gives them is asking for those sales whatever words they use. The
+    model reads them; code checks they are the user's own numbers."""
+    if not where or where.get("latitude") is None or where.get("longitude") is None:
+        return False
+    typed = [float(x) for x in re.findall(r"-?\d{1,3}\.\d{2,}", text or "")]
+    return all(any(abs(x - float(where[k])) < 1e-4 for x in typed) for k in ("latitude", "longitude"))
 
 
 def asked_for(name: str, c: Dict[str, Any], query: str = "") -> bool:
@@ -1471,6 +1530,16 @@ def asked_for(name: str, c: Dict[str, Any], query: str = "") -> bool:
         return True
     asked = c.get("requested_tools")
     return name in (asked if asked is not None else requested_tools(query))
+
+
+CODE_ONLY_KEYS = ("requested_tools",)
+
+
+def constraints_for_model(c: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The constraints as a model is shown them. requested_tools is code's reading for code and is never shown: it
+    names the optional tools, so it would steer which tools A's and B's models pick (their unasked calls must still
+    count against Tool F1), and live prompts stay as they were before it existed."""
+    return None if c is None else {k: v for k, v in c.items() if k not in CODE_ONLY_KEYS}
 
 
 def _scheme_to_pair(scheme: Optional[str]) -> Tuple[str, bool]:
@@ -1547,7 +1616,7 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
         try:
             bound = llm.bind_tools([r.as_langchain_tool() for r in runners.values()])
             msgs: List[Any] = [sys_msg(system_prompt),
-                               HumanMessage(content=f"User query: {query}\n\nExtracted constraints (JSON): {json.dumps(c)}")]
+                               HumanMessage(content=f"User query: {query}\n\nExtracted constraints (JSON): {json.dumps(constraints_for_model(c))}")]
             for _ in range(max_iter):
                 ai: AIMessage = bound.invoke(msgs)
                 msgs.append(ai)
@@ -1893,9 +1962,12 @@ def template_response(state: HDBCompassState) -> str:
         blocks or _sql_blocks(state) is not None
         or state.get("spatial_block_candidates") is not None
     )
+    # a search tool that could not be loaded checked nothing, so the blocks meet only the constraints that were checked
+    partial = any(t in BLOCK_FILTERS for t in unavailable_tools(state))
     if searched:
         if blocks:
-            lines.append(f"**{len(blocks)} candidate block(s)** match all stated constraints:")
+            lines.append(f"**{len(blocks)} candidate block(s)** match "
+                         f"{'the constraints that could be checked' if partial else 'all stated constraints'}:")
             for b in blocks[:LISTED_BLOCKS]:
                 price = f" — median ${b['median_resale_price']:,.0f}" if b.get("median_resale_price") else ""
                 lease = f", {b['median_remaining_lease_years']:.0f} yrs lease" if b.get("median_remaining_lease_years") else ""
@@ -1905,7 +1977,8 @@ def template_response(state: HDBCompassState) -> str:
             if len(blocks) > LISTED_BLOCKS:
                 lines.append(f"- …and {len(blocks) - LISTED_BLOCKS} more, all shown on the map.")
         else:
-            lines.append("**No block satisfies every constraint at once.**")
+            lines.append("**No block satisfies every constraint that could be checked.**" if partial
+                         else "**No block satisfies every constraint at once.**")
             rel = state.get("relaxation") or {}
             if rel.get("best_single_change"):
                 bsc = rel["best_single_change"]
@@ -1914,6 +1987,7 @@ def template_response(state: HDBCompassState) -> str:
             for s in rel.get("suggestions", []):
                 label, orig, new = plain_relaxation(s["constraint"], s["original"], s["relaxed"])
                 lines.append(f"- {label}: {orig} → {new} unlocks {s['unlocked_blocks']}")
+    lines.extend(not_checked_lines(state))   # straight after the blocks, so what was not checked is read with them
     sql = state.get("sql_market_results") or {}
     lines.extend(_comparable_lines(sql))
     if "compute_town_price_timeseries" in sql:
@@ -2039,6 +2113,36 @@ def unbuilt_tools_used(state: HDBCompassState) -> List[str]:
     return sorted(mocked & called)
 
 
+# What a tool checks, for the answer to say when its module could not be loaded (tool_registry: status
+# "unavailable"). Its result is dropped like any error (slot_outputs), so without this note a broken price search left
+# spatial-only blocks listed as matching "all stated constraints" and a broken calculator's section simply vanished.
+NOT_CHECKED = {
+    "query_resale_blocks_by_criteria": "Prices, remaining leases and flat types",
+    "compute_town_price_timeseries": "Town price trends",
+    "query_comparable_resale_transactions": "Comparable resale sales",
+    "compare_bto_launch_vs_resale": "BTO launch prices",
+    "filter_blocks_by_amenity_proximity": "Distances to amenities",
+    "verify_primary_school_distance": "Distances to the primary school",
+    "compute_dual_transit_commute": "Commute times",
+    "calculate_cpf_housing_grants": "Housing grants",
+    "calculate_maximum_affordability": "The maximum budget",
+    "calculate_bsd_and_upfront_outlay": "Upfront costs",
+    "retrieve_hdb_policy_knowledge": "HDB policy rules",
+}
+BLOCK_FILTERS = ("query_resale_blocks_by_criteria", "filter_blocks_by_amenity_proximity",
+                 "verify_primary_school_distance", "compute_dual_transit_commute")
+
+
+def unavailable_tools(state: HDBCompassState) -> List[str]:
+    """Tools this answer called whose module could not be loaded (see NOT_CHECKED)."""
+    return sorted({t.get("tool") for t in state.get("tool_call_log") or []
+                   if str(t.get("error") or "").startswith("unavailable:") and t.get("tool") in NOT_CHECKED})
+
+
+def not_checked_lines(state: HDBCompassState) -> List[str]:
+    return [f"- {NOT_CHECKED[t]} could not be checked: that tool is unavailable right now." for t in unavailable_tools(state)]
+
+
 def synthesis_evidence(state: HDBCompassState) -> Tuple[Dict[str, Any], str]:
     """What the final writing step may see, by architecture.
     C (and the default): the supervisor's join is the ONLY source of blocks. Raw price-query rows are withheld, so the
@@ -2046,12 +2150,14 @@ def synthesis_evidence(state: HDBCompassState) -> Tuple[Dict[str, Any], str]:
     B: no join in code by design. The writer gets the data agent's own reconciliation plus the raw price AND distance
       results, and must do the join itself."""
     unbuilt = unbuilt_tools_used(state)
-    base = {"user_constraints": state.get("user_constraints"),
+    base = {"user_constraints": constraints_for_model(state.get("user_constraints")),
             "financial_breakdown": state.get("financial_breakdown"),
             "rag_policy_passages": [] if "retrieve_hdb_policy_knowledge" in unbuilt else state.get("rag_policy_passages")}
     if unbuilt:
         base["not_available_yet"] = [UNBUILT_NOTES[t] for t in unbuilt]
-    sql = {k: v for k, v in (state.get("sql_market_results") or {}).items() if k not in unbuilt}
+    if unavailable_tools(state):   # only then, so every other prompt stays as it was
+        base["could_not_check"] = [line[2:] for line in not_checked_lines(state)]
+    sql ={k: v for k, v in (state.get("sql_market_results") or {}).items() if k not in unbuilt}
     if state.get("variant") == "B":
         notes = [n.get("text", "") for n in state.get("subagent_notes") or [] if n.get("agent") == "data"]
         return ({**base, "data_agent_summary": notes[-1] if notes else "", "sql_market_results": sql,
@@ -2062,6 +2168,8 @@ def synthesis_evidence(state: HDBCompassState) -> Tuple[Dict[str, Any], str]:
     counts = {"price_and_lease_matches": len(sql_rows) if sql_rows is not None else None,
               "distance_matches": len(spatial) if spatial is not None else None,
               "blocks_meeting_every_constraint": len(matches)}
+    if any(t in BLOCK_FILTERS for t in unavailable_tools(state)):   # a search that could not run checked nothing
+        counts["blocks_meeting_the_constraints_that_could_be_checked"] = counts.pop("blocks_meeting_every_constraint")
     market_context = {k: v for k, v in sql.items() if k != "query_resale_blocks_by_criteria"}
     searched = ({"market_sql", "spatial"} & set(state.get("active_subagents") or [])) or sql_rows is not None \
         or spatial is not None or matches or (state.get("user_constraints") or {}).get("towns")
@@ -2192,6 +2300,9 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     log: List[Dict[str, Any]] = []
     payload = build_map_payload(blocks, c, log) if blocks else {}
     evidence, rule = synthesis_evidence(state)
+    unchecked = (" Some tools could not run: say plainly what could_not_check lists, and never say the blocks meet "
+                 "every constraint or give a figure those tools would have produced.") if evidence.get("could_not_check") else ""
+    rule += unchecked
     clar = clarification_needed(state)
     if clar:
         evidence["clarification_needed"] = clar
@@ -2210,7 +2321,8 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
                         "(one or two sentences that answer the question directly) and, when there are several options, the "
                         "trade-offs between them (price vs lease vs distance). Do not repeat or change any price, grant, "
                         "budget, distance, lease, count or relaxation figure: write no numbers except block names exactly as the "
-                        "facts give them (any other sentence with a number is removed), and do not contradict the facts.")
+                        "facts give them (any other sentence with a number is removed), and do not contradict the facts."
+                        + unchecked)
             msgs = [sys_msg(SYNTH_SYSTEM),
                     HumanMessage(content=f"User query: {user_request(state)}\n\n{rule}\n\nEvidence JSON:\n{json.dumps(evidence, default=str)[:24000]}")]
             if verdict and not verdict.get("passed", True) and verdict.get("critique"):

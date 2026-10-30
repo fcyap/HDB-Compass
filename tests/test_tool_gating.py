@@ -3,8 +3,9 @@ Tool selection and robustness tests (tests/test_tool_gating.py). Owned by Member
 
   * Upfront costs and comparable sales run only when the user asks for them, on every path that can call them
     (the no-model plans, the real financial sequence, the evidence gate and Variant C's tool lists), and a user who
-    does ask still gets them.
-  * A tool module that fails to import makes only its own tools unavailable, with one loud warning.
+    does ask still gets them, in whatever common words they ask. No model prompt names the asks.
+  * A tool module that fails to import makes only its own tools unavailable, with one loud warning, and the answer
+    says what could not be checked.
   * Member 5's hook module: absent is quiet, present but broken is loud and recorded in the answer and run settings.
   * HDB_CODE_WRITTEN_FACTS overrides architecture.code_written_facts for one run, and the run settings record it.
 
@@ -68,6 +69,55 @@ def test_requested_tools_reads_only_explicit_asks(text, asked):
     assert sv.requested_tools(text) == asked
 
 
+# asks the first version of the gate missed (the review of 31 Oct): each lost a section the user had before the gate
+@pytest.mark.parametrize("text,asked", [
+    ("How much did 4-room flats near latitude 1.3329, longitude 103.7436 sell for in the last 12 months?", [COMPARABLES]),
+    ("What have 4-room flats within 500m of 1.3329, 103.7436 been selling for?", [COMPARABLES]),
+    ("Show resale prices within 500m of latitude 1.3329, longitude 103.7436 in the last 12 months.", [COMPARABLES]),
+    ("What prices did nearby 4-room flats fetch over the past year?", [COMPARABLES]),
+    ("What are 4-room flats around 1.3329, 103.7436 going for these days?", [COMPARABLES]),
+    ("How much did Blk 123 sell for?", [COMPARABLES]),
+    ("Find a 4-room flat in Tampines under $600k. We earn $9,000 a month. "
+     "How much would we need in cash and CPF to complete the purchase?", [UPFRONT]),
+    ("How much do I need to pay in cash for a $600k flat?", [UPFRONT]),
+    ("What's the total cash and CPF needed for the purchase?", [UPFRONT]),
+    ("What are the initial costs of buying a $600k 4-room?", [UPFRONT]),
+    ("We are buying a 4-room in Bishan for $650k, near MRT.", [UPFRONT]),
+    ("We don't have a car, so what is the BSD on $600k?", [UPFRONT]),   # the refusal is about something else
+    ("Don't forget the stamp duty.", [UPFRONT]),
+])
+def test_requested_tools_reads_other_phrasings_of_an_ask(text, asked):
+    assert sv.requested_tools(text) == asked
+
+
+@pytest.mark.parametrize("text", [
+    "how much cash savings should I keep as buffer?",
+    "How much cash can I use from savings?",
+    "Looking to buy in Tampines for $600k or less, near MRT",            # a budget, not a purchase price
+    "Looking to buy a flat for $600k max",
+    "What are the ABSD rules for PR couples?",                           # a policy question
+    "Does stamp duty apply to a resale flat?",
+    "we don't care about stamp duty, just find flats in Tampines",
+    "Forget the comparables, just find flats in Tampines.",
+    "How much would I need to pay monthly from CPF?",                    # the loan, which affordability covers
+    "How much do we need to earn to afford a $600k flat with CPF?",
+    "How have prices in Tampines changed recently? Sales have been slow lately",
+    "Tampines flats near MRT, with sales near the MRT",
+    "Which flats should we go for?",
+    "Find flats that go for under $600k in Bishan",
+    "Find 4-room flats with prices around 600k in Bishan",
+    "Find 4-room flats with sales near 1 million in Bishan",
+])
+def test_requested_tools_ignores_words_that_are_not_an_ask(text):
+    assert sv.requested_tools(text) == []
+
+
+def test_a_budget_is_not_read_as_a_purchase_price():
+    assert "upfront" not in sv.stated_financial_inputs("Looking to buy in Tampines for $600k or less, near MRT")
+    got = sv.stated_financial_inputs("We are buying a 4-room in Bishan for $650k, near MRT.")
+    assert got["upfront"]["purchase_price"] == 650000.0
+
+
 def test_no_category_e_question_asks_for_the_optional_tools():
     varied = json.loads((PROJECT_ROOT / "evaluation" / "category_e_varied.json").read_text())
     for item in list(ITEMS.values()) + varied:
@@ -97,6 +147,34 @@ def test_comparables_need_coordinates_and_an_ask():
     assert COMPARABLES not in dict(sv.deterministic_plan("market_sql", c, "Find 4-room flats in Tampines."))
     assert COMPARABLES in dict(sv.deterministic_plan("market_sql", c, "What did similar flats sell for recently?"))
     assert COMPARABLES not in dict(sv.deterministic_plan("market_sql", {"towns": ["TAMPINES"]}, "recent sales?"))
+
+
+class ReadsCoordinates:
+    """A model whose constraint reading fills comparable_resale with the given coordinates."""
+
+    def __init__(self, where):
+        self.where = where
+
+    def with_structured_output(self, schema, method=None, include_raw=False):
+        return self
+
+    def invoke(self, _msgs):
+        from agents.schemas import ExtractedConstraints
+        return {"parsed": ExtractedConstraints(comparable_resale=self.where)}
+
+
+@pytest.mark.parametrize("where,asked", [
+    ({"latitude": 1.3329, "longitude": 103.7436, "flat_type": "4 ROOM"}, [COMPARABLES]),   # the user's own numbers
+    ({"latitude": 1.35, "longitude": 103.85, "flat_type": "4 ROOM"}, []),                  # numbers the model made up
+])
+def test_coordinates_the_user_typed_are_an_ask_for_comparables(where, asked):
+    # words the patterns do not know, so only the coordinates can make it an ask
+    text = "4-room flats at 1.3329, 103.7436: what's the damage over the last year?"
+    assert sv.requested_tools(text) == []
+    with patch.object(sv, "get_llm", return_value=ReadsCoordinates(where)):
+        out = sv.extract_constraints_node({"messages": [{"role": "user", "content": text}]})
+    assert out["user_constraints"]["requested_tools"] == asked
+    assert not sv.coordinates_stated({"latitude": 1.3329, "longitude": None}, text)
 
 
 # --- 1. the real financial sequence and the evidence gate -------------------------------------------------------
@@ -139,8 +217,12 @@ class ToolListModel:
 
 
 @pytest.mark.usefixtures("mock_domain_tools")
-@pytest.mark.parametrize("agent,optional,ask", [("financial", UPFRONT, "how much stamp duty do we pay?"),
-                                                ("market_sql", COMPARABLES, "what did similar flats sell for?")])
+@pytest.mark.parametrize("agent,optional,ask", [
+    ("financial", UPFRONT, "how much stamp duty do we pay?"),
+    ("financial", UPFRONT, "How much would we need in cash and CPF to complete the purchase?"),
+    ("market_sql", COMPARABLES, "what did similar flats sell for?"),
+    ("market_sql", COMPARABLES, "How much did 4-room flats near latitude 1.35, longitude 103.85 sell for in the last 12 months?"),
+])
 def test_variant_c_specialist_offers_optional_tools_only_when_asked(agent, optional, ask):
     c = {"towns": ["TAMPINES"], "household_income": 9000.0, "max_budget_sgd": 680000.0, "comparable_resale": COORDS}
     model = ToolListModel()
@@ -153,6 +235,35 @@ def test_variant_c_specialist_offers_optional_tools_only_when_asked(agent, optio
                       "user_constraints": {**c, "requested_tools": sv.requested_tools(ask)}})
         assert optional in model.offered
     assert optional in [r["tool"] for r in asked["tool_call_log"]]
+
+
+# --- 1. requested_tools is code's reading for code: no model is shown it ------------------------------------------
+class PromptRecorder(ToolListModel):
+    """Records every prompt it is sent, reads no constraints (code's reading fills them) and calls no tool."""
+
+    def __init__(self):
+        super().__init__()
+        self.prompts = []
+
+    def with_structured_output(self, schema, method=None, include_raw=False):
+        return ReadsCoordinates(None)
+
+    def invoke(self, msgs):
+        self.prompts.append(" ".join(str(m.content) for m in msgs))
+        return AIMessage(content="done")
+
+
+@pytest.mark.usefixtures("mock_domain_tools")
+@pytest.mark.parametrize("mod", [A, B, C])
+def test_no_model_prompt_names_the_requested_tools(mod):
+    model = PromptRecorder()
+    with patch.object(sv, "get_llm", return_value=model):
+        state = mod.run("Find a 4-room flat in Tampines under $680k. What is the stamp duty?")
+    assert state["user_constraints"]["requested_tools"] == [UPFRONT]    # code still has it
+    tool_prompts = [p for p in model.prompts if "Extracted constraints (JSON)" in p]
+    assert tool_prompts and not [p for p in model.prompts if "requested_tools" in p]
+    evidence, _ = sv.synthesis_evidence(state)
+    assert "requested_tools" not in evidence["user_constraints"]
 
 
 # --- 1. end to end on the real tools: no unasked section, and the asker still gets it ---------------------------
@@ -170,6 +281,14 @@ def test_variant_c_fully_right_answer_keeps_its_upfront_section_when_asked():
     state = C.run(E1_ASKS)
     assert state["user_constraints"]["requested_tools"] == [UPFRONT]
     assert "Upfront funding" in state["draft_response"] and "Grants:" in state["draft_response"]
+
+
+def test_variant_c_costs_the_budget_for_a_cash_and_cpf_ask():
+    # the review's case: the ask is several words from "cash", and the budget is the price to cost
+    state = C.run("Find a 4-room flat in Tampines under $600k. We earn $9,000 a month. "
+                  "How much would we need in cash and CPF to complete the purchase?")
+    assert [r["arguments"]["purchase_price"] for r in state["tool_call_log"] if r["tool"] == UPFRONT] == [600000.0]
+    assert "Upfront funding" in state["draft_response"]
 
 
 def test_an_ask_in_the_first_turn_survives_the_follow_up_reply():
@@ -211,6 +330,49 @@ def test_variant_a_still_answers_when_one_tool_module_is_broken():
     assert not log["query_resale_blocks_by_criteria"]["ok"]
     assert log["filter_blocks_by_amenity_proximity"]["ok"]           # the other tools still ran
     assert state["draft_response"] and "sql_market_results" not in state   # the error never became evidence
+
+
+@pytest.mark.usefixtures("mock_domain_tools", "broken_market_module")
+@pytest.mark.parametrize("mod", [A, C])
+def test_answer_says_what_a_broken_search_could_not_check(mod):
+    # the blocks come from the distance search alone, so they are not said to match every stated constraint
+    draft = mod.run(MOCK_E2)["draft_response"]
+    assert "match all stated constraints" not in draft and "constraints that could be checked" in draft
+    assert "Prices, remaining leases and flat types could not be checked: that tool is unavailable right now." in draft
+
+
+@pytest.fixture
+def broken_financial_module(tmp_path, monkeypatch):
+    (tmp_path / "broken_financial_tools_fake.py").write_text('raise ImportError("simulated: a syntax error")\n')
+    monkeypatch.syspath_prepend(str(tmp_path))
+    for name in tr.tools_for_agent("financial"):
+        monkeypatch.setitem(tr.REAL_IMPL, name, ("broken_financial_tools_fake", name))
+        monkeypatch.setitem(sv.load_config()["tools"]["use_mock"], name, "real")
+    monkeypatch.setattr(tr, "_WARNED", set())
+
+
+@pytest.mark.usefixtures("broken_financial_module")
+def test_answer_says_which_calculations_a_broken_module_could_not_do():
+    state = C.run(E1_ASKS)
+    draft = state["draft_response"]
+    for what in ("Upfront costs", "Housing grants", "The maximum budget"):
+        assert f"{what} could not be checked: that tool is unavailable right now." in draft
+    assert "match all stated constraints" in draft      # the calculators filter no block, so the search stands
+    evidence, _ = sv.synthesis_evidence(state)           # the model writing the opening is told as well
+    assert len(evidence["could_not_check"]) == 3
+    ran = {"user_constraints": {}, "tool_call_log": [{"tool": UPFRONT, "ok": False, "error": "invalid arguments: x"}]}
+    assert "could_not_check" not in sv.synthesis_evidence(ran)[0]   # an ordinary failed call changes no prompt
+
+
+@pytest.mark.usefixtures("mock_domain_tools", "broken_market_module")
+def test_model_writing_the_opening_is_told_what_could_not_be_checked():
+    model = PromptRecorder()
+    with patch.object(sv, "get_llm", return_value=model):
+        C.run(MOCK_E2)
+    final = model.prompts[-1]
+    assert "never say the blocks meet every constraint" in final
+    assert "Prices, remaining leases and flat types could not be checked" in final
+    assert '"blocks_meeting_the_constraints_that_could_be_checked"' in final and "every_constraint\"" not in final
 
 
 # --- 3. Member 5's hook module ----------------------------------------------------------------------------------
