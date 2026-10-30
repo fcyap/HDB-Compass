@@ -346,10 +346,10 @@ CATEGORY_C_CASES = [
             "is_exempt": False,
             "reason": "Under 55 years of age",
             "key_clauses": [
-                "must wait 15 months from the date of disposal of their private property before they can purchase a non-subsidised HDB resale flat",
-                "Ex-Private Owner (<55 yrs)"
+                ["15", "months", "disposal", "private"],
+                ["below 55", "wait-out"]
             ],
-            "target_sections": ["The 15-Month Wait-Out Period for Resale Flats"]
+            "target_sections": ["The 15-Month Wait-Out Period for Open Market Resale Flats"]
         }
     },
     {

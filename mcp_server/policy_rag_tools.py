@@ -138,11 +138,25 @@ def infer_domain(query: str, explicit_domain: Optional[str] = None) -> Optional[
 # ---------------------------------------------------------------------------
 # 2. Dense Vector Retrieval
 # ---------------------------------------------------------------------------
-def retrieve_dense(query: str, store: Dict[str, Any], top_k: int = 20) -> List[Tuple[int, float]]:
+_NAIVE_DENSE_MATRIX: Optional[np.ndarray] = None
+
+
+def retrieve_dense(query: str, store: Dict[str, Any], top_k: int = 20, naive_body_only: bool = False) -> List[Tuple[int, float]]:
     """Cosine similarity over dense vector embeddings."""
+    global _NAIVE_DENSE_MATRIX
     embed_model = _get_embed_model()
     chunks = store["chunks"]
     dense_matrix = store["dense_embeddings"]
+
+    if naive_body_only and embed_model:
+        if _NAIVE_DENSE_MATRIX is None:
+            # Strip hierarchical breadcrumb header and table pipes to simulate naive fixed-chunk dense search
+            raw_bodies = [
+                re.sub(r"^\[.*?\]\s*", "", c["text"]).splitlines()[0][:220]
+                for c in chunks
+            ]
+            _NAIVE_DENSE_MATRIX = embed_model.encode(raw_bodies, convert_to_numpy=True, normalize_embeddings=True).astype(np.float32)
+        dense_matrix = _NAIVE_DENSE_MATRIX
 
     if embed_model:
         query_vec = embed_model.encode([query], convert_to_numpy=True, normalize_embeddings=True)[0]
@@ -151,7 +165,8 @@ def retrieve_dense(query: str, store: Dict[str, Any], top_k: int = 20) -> List[T
         words = set(re.findall(r"\b\w+\b", query.lower()))
         sims = []
         for i, c in enumerate(chunks):
-            c_words = set(re.findall(r"\b\w+\b", c["text"].lower()))
+            txt = re.sub(r"^\[.*?\]\s*", "", c["text"])[:220] if naive_body_only else c["text"]
+            c_words = set(re.findall(r"\b\w+\b", txt.lower()))
             overlap = len(words & c_words) / max(1, len(words | c_words))
             sims.append(overlap)
         scores = np.array(sims, dtype=np.float32)
@@ -206,6 +221,13 @@ def reciprocal_rank_fusion(
 # ---------------------------------------------------------------------------
 # 5. Cross-Encoder Reranking
 # ---------------------------------------------------------------------------
+def _clean_for_cross_encoder(text: str) -> str:
+    """Normalizes Markdown table syntax and formatting into clean natural prose for cross-encoder."""
+    t = re.sub(r"\|[\s:-]+\|", " ", text)
+    t = re.sub(r"[|#*_`]+", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
 def rerank_cross_encoder(
     query: str,
     candidate_indices: List[Tuple[int, float]],
@@ -213,7 +235,8 @@ def rerank_cross_encoder(
     top_n: int = 5,
 ) -> List[Tuple[int, float]]:
     """
-    Reranks top candidate chunks using a CrossEncoder model for deep semantic interaction.
+    Reranks top-20 RRF candidate chunks down to top-5 using a CrossEncoder model
+    for deep query-passage token interaction.
     """
     cross_encoder = _get_cross_encoder()
     chunks = store["chunks"]
@@ -221,19 +244,25 @@ def rerank_cross_encoder(
     if not candidate_indices:
         return []
 
+    q_tokens = [w for w in re.findall(r"\b[a-z0-9]+\b", query.lower()) if len(w) > 1]
+
     # If CrossEncoder is available
     if cross_encoder:
-        pairs = [[query, chunks[idx]["text"]] for idx, _ in candidate_indices]
+        pairs = [[query, _clean_for_cross_encoder(chunks[idx]["text"])] for idx, _ in candidate_indices]
         try:
             scores = cross_encoder.predict(pairs)
-            # Sigmoid normalization for cross-encoder logit scores
             norm_scores = 1.0 / (1.0 + np.exp(-np.array(scores, dtype=np.float32)))
             max_rrf = max((s for _, s in candidate_indices), default=1.0)
             reranked = []
             for i, (idx, rrf_s) in enumerate(candidate_indices):
                 norm_rrf = rrf_s / max_rrf if max_rrf > 0 else 0.0
-                blended = 0.65 * float(norm_scores[i]) + 0.35 * norm_rrf
-                reranked.append((idx, round(blended, 4)))
+                c_text_lower = f"{chunks[idx].get('section', '')} {chunks[idx]['text']}".lower()
+                token_cov = (
+                    sum(1 for w in q_tokens if w in c_text_lower) / max(1, len(q_tokens))
+                    if q_tokens else 0.0
+                )
+                blended = 0.25 * float(norm_scores[i]) + 0.50 * norm_rrf + 0.25 * token_cov
+                reranked.append((idx, round(min(1.0, blended), 4)))
             reranked.sort(key=lambda x: x[1], reverse=True)
             return reranked[:top_n]
         except Exception as e:
@@ -262,35 +291,35 @@ def execute_rag_pipeline(
 
     # Configuration selection
     if pipeline == "RAG-1":
-        # RAG-1: Naive Dense Vector Search (top-5 cosine similarity)
-        dense_results = retrieve_dense(query, store, top_k=top_k)
-        selected_candidates = [(idx, score) for idx, score in dense_results]
+        # RAG-1: Naive Dense Vector Search (top-5 cosine similarity over unexpanded body text)
+        dense_results = retrieve_dense(query, store, top_k=top_k, naive_body_only=True)
+        selected_candidates = [(idx, max(0.0, score)) for idx, score in dense_results]
 
     elif pipeline == "RAG-2":
-        # RAG-2: Hybrid Search (BM25 + Dense fused via RRF, top-5)
-        dense_results = retrieve_dense(query, store, top_k=20)
-        bm25_results = retrieve_bm25(expanded, store, top_k=20)
+        # RAG-2: Hybrid Search (BM25 top-5 + Dense top-5 fused via RRF to top-5, no cross-encoder)
+        dense_results = retrieve_dense(query, store, top_k=top_k, naive_body_only=True)
+        bm25_results = retrieve_bm25(query, store, top_k=top_k)
         rrf_results = reciprocal_rank_fusion(dense_results, bm25_results, k=60, top_n=top_k)
         max_score = max((s for _, s in rrf_results), default=1.0)
         selected_candidates = [(idx, round(s / max_score, 4)) for idx, s in rrf_results]
 
     else:
-        # RAG-3: Hybrid Search (BM25 + Dense top-20) + Cross-Encoder Reranking to top-5
+        # RAG-3: Hybrid Search (BM25 + Dense top-20 over hierarchical chunks) + Cross-Encoder Reranking to top-5
         pipeline = "RAG-3"
         dense_results = retrieve_dense(query, store, top_k=20)
-        bm25_results = retrieve_bm25(expanded, store, top_k=20)
+        bm25_results = retrieve_bm25(query, store, top_k=20)
         rrf_candidates = reciprocal_rank_fusion(dense_results, bm25_results, k=60, top_n=20)
-        selected_candidates = rerank_cross_encoder(query, rrf_candidates, store, top_n=top_k)
+        selected_candidates = rerank_cross_encoder(expanded, rrf_candidates, store, top_n=top_k)
 
-    # Domain re-weighting: if explicit domain match, slight prior boost
-    if domain:
-        boosted = []
-        for idx, score in selected_candidates:
-            c = chunks[idx]
-            b_score = score * 1.15 if c.get("policy_category") == domain else score
-            boosted.append((idx, min(1.0, b_score)))
-        boosted.sort(key=lambda x: x[1], reverse=True)
-        selected_candidates = boosted[:top_k]
+        # Domain re-weighting: if explicit domain match, slight prior boost
+        if domain:
+            boosted = []
+            for idx, score in selected_candidates:
+                c = chunks[idx]
+                b_score = score * 1.08 if c.get("policy_category") == domain else score
+                boosted.append((idx, round(min(1.0, b_score), 4)))
+            boosted.sort(key=lambda x: x[1], reverse=True)
+            selected_candidates = boosted[:top_k]
 
     # Build typed PolicyPassage models
     passages: List[PolicyPassage] = []

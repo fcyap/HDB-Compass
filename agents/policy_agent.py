@@ -15,6 +15,7 @@ Responsibilities:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -45,7 +46,46 @@ class PolicyRagAgent:
         self.pipeline = pipeline
         self.tool_runner = ToolRunner("retrieve_hdb_policy_knowledge")
 
-    def run(self, query: str, policy_domain: Optional[str] = None) -> Dict[str, Any]:
+    @staticmethod
+    def synthesize_grounded_answer(query: str, passages: List[Dict[str, Any]]) -> str:
+        """
+        Synthesizes a strictly grounded, citation-enforced policy answer directly from retrieved passages.
+        Extracts the highest-signal regulatory statements and table rows matching query intent.
+        """
+        if not passages:
+            return "No official HDB or CPF policy passages were retrieved for this query."
+
+        q_words = {
+            w.lower() for w in re.findall(r"\b[A-Za-z0-9-]+\b", query)
+            if len(w) > 2 and w.lower() not in {"what", "are", "the", "how", "can", "for", "and", "with", "from", "does"}
+        }
+
+        sections_out = []
+        for idx, p in enumerate(passages[:3], start=1):
+            sec = p.get("section", "HDB Policy")
+            url = p.get("source_url", "https://www.hdb.gov.sg")
+            raw_lines = [
+                ln.strip() for ln in p.get("text", "").splitlines()
+                if ln.strip() and not ln.strip().startswith("[") and not re.match(r"^\|[\s:-]+\|$", ln.strip())
+            ]
+            # Rank lines by query word overlap, keeping top lines + context
+            scored_lines = []
+            for ln in raw_lines:
+                ln_lower = ln.lower()
+                overlap = sum(1 for w in q_words if w in ln_lower)
+                scored_lines.append((overlap, ln))
+            scored_lines.sort(key=lambda x: x[0], reverse=True)
+            selected_lines = [ln for _, ln in scored_lines[:5]]
+            body_excerpt = " ".join(selected_lines)
+            sections_out.append(f"{idx}. **{sec}**: {body_excerpt} ([Official Source]({url}))")
+
+        disclaimer = (
+            "\n\n*Regulatory Notice: All eligibility, grant, and financing figures are subject to official "
+            "HDB Flat Eligibility (HFE) assessment.*"
+        )
+        return "### Official HDB & CPF Regulatory Analysis\n\n" + "\n\n".join(sections_out) + disclaimer
+
+    def run(self, query: str, policy_domain: Optional[str] = None, use_llm: bool = True) -> Dict[str, Any]:
         """
         Executes policy retrieval and synthesizes a grounded answer with citations.
         """
@@ -53,33 +93,29 @@ class PolicyRagAgent:
         retrieval_output = retrieve_hdb_policy_knowledge(query, policy_domain=policy_domain, pipeline=self.pipeline)
         passages = retrieval_output.get("passages", [])
 
-        # Step 2: Synthesize grounded response using LLM (if active) or deterministic template
-        llm = get_llm()
+        # Step 2: Synthesize grounded response using LLM (if active) or deterministic grounded synthesizer
         answer = ""
-        if llm is not None:
-            try:
-                context_str = "\n\n".join([
-                    f"Passage [{i+1}] (Source: {p['source_url']}) (Section: {p['section']}):\n{p['text']}"
-                    for i, p in enumerate(passages)
-                ])
-                prompt = (
-                    f"User Question: {query}\n\n"
-                    f"Retrieved Official Policy Context:\n{context_str}\n\n"
-                    "Synthesize a clear, concise, and structured answer. "
-                    "Include inline citations with exact URLs for each factual claim."
-                )
-                response = llm.invoke([SystemMessage(content=POLICY_AGENT_SYSTEM), HumanMessage(content=prompt)])
-                answer = response.content
-            except Exception:
-                llm = None
+        if use_llm:
+            llm = get_llm()
+            if llm is not None:
+                try:
+                    context_str = "\n\n".join([
+                        f"Passage [{i+1}] (Source: {p['source_url']}) (Section: {p['section']}):\n{p['text']}"
+                        for i, p in enumerate(passages)
+                    ])
+                    prompt = (
+                        f"User Question: {query}\n\n"
+                        f"Retrieved Official Policy Context:\n{context_str}\n\n"
+                        "Synthesize a clear, concise, and structured answer. "
+                        "Include inline citations with exact URLs for each factual claim."
+                    )
+                    response = llm.invoke([SystemMessage(content=POLICY_AGENT_SYSTEM), HumanMessage(content=prompt)])
+                    answer = response.content
+                except Exception:
+                    answer = ""
 
         if not answer:
-            # Deterministic fallback synthesis
-            top_passages_summary = "\n".join([
-                f"- **{p['section']}**: {p['text'].splitlines()[1] if len(p['text'].splitlines()) > 1 else p['text'][:120]}... [Source]({p['source_url']})"
-                for p in passages[:3]
-            ])
-            answer = f"### Policy Analysis\n\n{top_passages_summary}"
+            answer = self.synthesize_grounded_answer(query, passages)
 
         return {
             "query": query,
