@@ -782,6 +782,7 @@ MONEY_FIELDS = ("cash_savings", "cpf_oa_balance", "monthly_income")
 FIN_TOOL_SECTION = {"calculate_cpf_housing_grants": "grants", "calculate_maximum_affordability": "affordability",
                     "calculate_bsd_and_upfront_outlay": "upfront"}
 _AMOUNT = r"\$\s?(\d[\d,]*(?:\.\d+)?)\s*(k)?"
+_PURCHASE_PRICE = r"(?:buy(?:ing)?|purchas(?:e|ing))\b[^$.]{0,40}\bfor " + _AMOUNT   # "buying a 4-room for $600k"
 # the lease the user wants the calculation to assume: "use 65 yrs remaining lease for the calc", "calc w 65 yrs lease",
 # "using a 65-year remaining lease", "assume 65 years of remaining lease"
 _CALC_LEASE = (r"(\d{2})\s*(?:years?|yrs?) of remaining lease for the .{0,30}calc"
@@ -852,7 +853,7 @@ def stated_financial_inputs(text: str, context: str = "") -> Dict[str, Dict[str,
     if len(flat_types) == 1:
         f["flat_type"] = flat_types[0]
     upfront: Dict[str, Any] = {}
-    m = re.search(r"(?:buy(?:ing)?|purchas(?:e|ing))\b[^$.]{0,40}\bfor " + _AMOUNT, s, re.I)
+    m = re.search(_PURCHASE_PRICE, s, re.I)
     if m:
         upfront["purchase_price"] = _amount(m)
     for field, pattern in (("market_valuation", r"valued at " + _AMOUNT), ("loan_amount", r"loan of " + _AMOUNT),
@@ -1378,6 +1379,8 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
     for vals in (constraints.get("financial_inputs") or {}).values():
         for k in unsure:
             vals.pop(k, None)
+    # read by code from every user message so far, so an ask in the first turn still counts after a follow-up reply
+    constraints["requested_tools"] = requested_tools(users or query)
     return {"user_constraints": constraints, "errors": errors, "model_constraints": model_reading}
 
 
@@ -1422,7 +1425,8 @@ AGENT_SYSTEM = {
     "spatial": "You are the Geospatial & Commute agent. Use your tools to find HDB blocks meeting amenity-distance, "
                "school-boundary and commute constraints. Pass towns exactly as given. Reply with a short summary when done.",
     "financial": "You are the Financial & Grant Calculator agent. Never do arithmetic yourself: call the calculators "
-                 "for grants, affordability (MSR/LTV) and upfront outlay (BSD). Never invent eligibility confirmations "
+                 "for grants, affordability (MSR/LTV) and, when the user asks for upfront costs, upfront outlay (BSD). "
+                 "Never invent eligibility confirmations "
                  "or infer citizenship/first-timer status from legacy citizenship_scheme. Pass grant results forward once; "
                  "real affordability already includes grants. Supply actual valuation, loan and quoted fees for upfront "
                  "costs. Unknown funds/debts/grants are not zero. Report missing inputs and unsupported scenarios, "
@@ -1430,6 +1434,43 @@ AGENT_SYSTEM = {
     "policy_rag": "You are the Regulatory Policy RAG agent. Call retrieve_hdb_policy_knowledge with the user's regulatory "
                   "question, then answer ONLY from the returned passages with inline [source] citations.",
 }
+
+
+# Tools that run only when the user asks for them in so many words. The plans used to cost the budget for stamp duty
+# whenever a budget or income was given, and to pull comparable sales whenever comparable_resale was filled, so a
+# search-and-budget question got an upfront-costs section nobody asked for (and lost Tool F1 precision: no Category E
+# question expects either call). "Cash savings" or "resale transaction" alone is not an ask.
+_ASKS_UPFRONT = re.compile(
+    r"\bup[- ]?front\b|\boutlays?\b|\bstamp dut(?:y|ies)\b|\b(?:BSD|ABSD)\b|\bdown[- ]?payments?\b"
+    r"|\bhow much\s+(?:[\w-]+\s+){0,3}?cash\b|\bcash\s+(?:needed|required|outlay|up[- ]?front)\b|" + _PURCHASE_PRICE, re.I)
+_ASKS_COMPARABLES = re.compile(
+    r"\bcomparables?\b|\bcomps\b|\bsimilar\s+(?:[\w-]+\s+){0,2}?(?:flats?|units?|homes?|ones)\b"
+    r"|\brecent(?:ly)?\s+(?:[\w-]+\s+){0,2}?(?:transactions?|sales?|sold|transacted)\b"
+    r"|\b(?:transactions?|sales?)\s+(?:[\w-]+\s+){0,3}?(?:recently|lately)\b"
+    r"|\bcompar\w*\s+(?:[\w-]+\s+){0,2}?(?:sales|transactions)\b|\b(?:nearby|neighbou?ring)\s+(?:[\w-]+\s+)?(?:sales|transactions)\b"
+    r"|\b(?:sales|transactions)\s+(?:around|near|nearby|close to|within)\b"
+    r"|\bwhat\s+(?:did|do|have)\s+(?:[\w-]+\s+){0,3}?(?:sell|sold|go|gone)\s+for\b", re.I)
+OPTIONAL_TOOLS = {"calculate_bsd_and_upfront_outlay": _ASKS_UPFRONT,
+                  "query_comparable_resale_transactions": _ASKS_COMPARABLES}
+
+
+def requested_tools(text: str) -> List[str]:
+    """The optional tools (OPTIONAL_TOOLS) the user's words ask for: upfront costs (upfront, stamp duty or BSD, cash
+    needed, down payment, or a price they are buying for) and comparable sales (comparables, recent transactions,
+    similar flats)."""
+    return [name for name, asks in OPTIONAL_TOOLS.items() if asks.search(text or "")]
+
+
+def asked_for(name: str, c: Dict[str, Any], query: str = "") -> bool:
+    """Whether a tool may run for this question. Only the optional tools need an ask: in the user's messages as the
+    extraction step recorded it (c["requested_tools"]), or in the query itself where no extraction ran. A purchase
+    price code read from the user's words (financial_inputs.upfront) is an ask for upfront costs."""
+    if name not in OPTIONAL_TOOLS:
+        return True
+    if name == "calculate_bsd_and_upfront_outlay" and (c.get("financial_inputs") or {}).get("upfront"):
+        return True
+    asked = c.get("requested_tools")
+    return name in (asked if asked is not None else requested_tools(query))
 
 
 def _scheme_to_pair(scheme: Optional[str]) -> Tuple[str, bool]:
@@ -1446,7 +1487,7 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
     plan: List[Tuple[str, Dict[str, Any]]] = []
     towns = c.get("towns") or []
     if agent == "market_sql":
-        if c.get("comparable_resale"):
+        if c.get("comparable_resale") and asked_for("query_comparable_resale_transactions", c, query):
             plan.append(("query_comparable_resale_transactions", c["comparable_resale"]))
         if towns:
             plan.append(("query_resale_blocks_by_criteria", dict(
@@ -1478,8 +1519,9 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
                                                               monthly_income=income, near_parents_4km=near_parents)))
             plan.append(("calculate_maximum_affordability", dict(monthly_income=income, cpf_oa_balance=c.get("cpf_oa_balance") or 0.0,
                                                                  cash_savings=c.get("cash_savings") or 0.0, loan_type="hdb")))
-        if c.get("max_budget_sgd") or income:
-            plan.append(("calculate_bsd_and_upfront_outlay", dict(purchase_price=c.get("max_budget_sgd") or 0.0, loan_type="hdb", total_grants=0.0)))
+        price = ((c.get("financial_inputs") or {}).get("upfront") or {}).get("purchase_price") or c.get("max_budget_sgd")
+        if (price or income) and asked_for("calculate_bsd_and_upfront_outlay", c, query):
+            plan.append(("calculate_bsd_and_upfront_outlay", dict(purchase_price=price or 0.0, loan_type="hdb", total_grants=0.0)))
     elif agent == "policy_rag":
         plan.append(("retrieve_hdb_policy_knowledge", dict(query=c.get("policy_question") or query, policy_domain=None)))
     return plan
@@ -1583,7 +1625,7 @@ def run_financial_sequence(runners, constraints, query):
         aff = outputs[aff_name] = runners[aff_name](**aff_args)
         if aff.get("status") == "ok" and upfront_args.get("loan_type", "hdb") == aff_args.get("loan_type", "hdb"):
             upfront_args.setdefault("ltv_ratio", aff["ltv_ratio"])
-    if upfront_name in runners:
+    if upfront_name in runners and asked_for(upfront_name, constraints, query):   # never cost the budget unasked
         if "purchase_price" not in upfront_args and constraints.get("max_budget_sgd") is not None:
             upfront_args["purchase_price"] = constraints["max_budget_sgd"]
         if upfront_args.get("purchase_price", 0) > 0:
@@ -1640,8 +1682,11 @@ def requested_outputs(agent: str, outputs: Dict[str, Any], c: Dict[str, Any], qu
     """Evidence gate for Variant C's market and spatial specialists: a tool's result becomes evidence only when the
     extracted constraints call for that tool (deterministic_plan). In the 27 Oct rerun the spatial agent ran the school
     check with school_name null and the commute check with blank workplaces, and their empty results filtered every
-    block out (E1-04); the market agent pulled comparable sales at coordinates it made up. The calls stay in the
-    tool-call log, so tool-selection metrics still count them."""
+    block out (E1-04); the market agent pulled comparable sales at coordinates it made up. The financial agent's
+    upfront costs count only when the user asked for them (asked_for). The calls stay in the tool-call log, so
+    tool-selection metrics still count them."""
+    if agent == "financial":
+        return {name: out for name, out in outputs.items() if asked_for(name, c, query)}
     if agent not in ("market_sql", "spatial"):
         return outputs
     asked = {name for name, _ in deterministic_plan(agent, c, query)}
@@ -1651,8 +1696,12 @@ def requested_outputs(agent: str, outputs: Dict[str, Any], c: Dict[str, Any], qu
 def make_specialist_node(agent: str) -> Callable[[HDBCompassState], Dict[str, Any]]:
     def node(state: HDBCompassState) -> Dict[str, Any]:
         c = state.get("user_constraints", {})
-        outputs, log, errors, final = run_react(agent, tools_for_agent(agent), AGENT_SYSTEM[agent], last_user_query(state), c)
-        update = slot_outputs(requested_outputs(agent, outputs, c, last_user_query(state)), c.get("towns") or [])
+        query = last_user_query(state)
+        # the optional tools (upfront costs, comparable sales) are offered to the model only when the user asked for
+        # them; Variants A and B keep the full list, so their models' unasked calls still show in Tool F1
+        tools = [name for name in tools_for_agent(agent) if asked_for(name, c, query)]
+        outputs, log, errors, final = run_react(agent, tools, AGENT_SYSTEM[agent], query, c)
+        update = slot_outputs(requested_outputs(agent, outputs, c, query), c.get("towns") or [])
         update.update({"tool_call_log": log, "errors": errors,
                        "subagent_notes": [{"agent": agent, "text": (final or "")[:4000]}] if final else []})
         return update
@@ -2117,12 +2166,24 @@ def keep_supported_sentences(opening: str, facts: str, user_text: str = "") -> T
     return " ".join(kept), dropped
 
 
+def code_written_facts_on() -> bool:
+    """The architecture.code_written_facts switch. HDB_CODE_WRITTEN_FACTS=0 or 1 overrides it for one run without
+    editing the config (the live ablation), like HDB_EXTRACTION_REASONING. Any other value is refused rather than
+    guessed at, so an ablation never runs with the switch silently the wrong way round."""
+    env = os.getenv("HDB_CODE_WRITTEN_FACTS", "").strip()
+    if env:
+        if env not in ("0", "1"):
+            raise ValueError(f"HDB_CODE_WRITTEN_FACTS must be 0 or 1, not {env!r}")
+        return env == "1"
+    return bool(load_config().get("architecture", {}).get("code_written_facts", True))
+
+
 def writes_facts_in_code(state: HDBCompassState) -> bool:
     """Variant C (and the app): the facts section of the answer (blocks, prices, leases, distances, relaxations,
     grants, budget) is written by code, the same text the no-model template produces, and the model writes only
     the opening and the trade-offs, so it cannot drop or garble a number. Variant B keeps the model as the writer
-    by design (no join in code). Switch: architecture.code_written_facts."""
-    return state.get("variant") != "B" and bool(load_config().get("architecture", {}).get("code_written_facts", True))
+    by design (no join in code). Switch: architecture.code_written_facts (code_written_facts_on)."""
+    return state.get("variant") != "B" and code_written_facts_on()
 
 
 def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
@@ -2179,16 +2240,43 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Member 5 hook points: input guardrail and runtime auditor
 # ---------------------------------------------------------------------------
-def _load_member5_hooks() -> Tuple[Optional[Callable], Optional[Callable]]:
+HOOK_NAMES = ("input_guardrail_node", "runtime_auditor_node")
+
+
+def _load_member5_hooks(module: str = "agents.guardrails") -> Tuple[Optional[Callable], Optional[Callable], List[str]]:
+    """Member 5's guardrail and auditor, and what went wrong loading them. A module that does not exist yet is the
+    expected state until Member 5 delivers: both stay pass-throughs, quietly. A module that exists but fails to import
+    or lacks a node is a bug: one loud warning, and the problem is kept in HOOK_LOAD_PROBLEMS, which the guardrail and
+    auditor pass-throughs write into each run's errors and the evaluation records in its run settings."""
+    import importlib
+    import importlib.util
     try:
-        from agents import guardrails
+        if importlib.util.find_spec(module) is None:
+            return None, None, []
+        mod = importlib.import_module(module)
+    except Exception as e:  # noqa: BLE001 — a broken hook module must not stop the app; it is reported instead
+        problems = [f"{module} failed to import ({type(e).__name__}: {str(e)[:200]})"]
+        hooks: List[Optional[Callable]] = [None, None]
+    else:
+        hooks = [getattr(mod, name, None) for name in HOOK_NAMES]
+        problems = [f"{module} has no callable {name}" for name, fn in zip(HOOK_NAMES, hooks) if not callable(fn)]
+        hooks = [fn if callable(fn) else None for fn in hooks]
+    if problems:
+        print(f"\n{'!' * 78}\nWARNING: Member 5 hooks: {'; '.join(problems)}.\nThe missing guardrail or auditor "
+              f"runs as a pass-through; every answer records this in its errors.\n{'!' * 78}\n", file=sys.stderr, flush=True)
+    return hooks[0], hooks[1], problems
 
-    except Exception:  # noqa: BLE001
-        return None, None
-    return getattr(guardrails, "input_guardrail_node", None), getattr(guardrails, "runtime_auditor_node", None)
+
+_INPUT_GUARDRAIL, _AUDITOR, HOOK_LOAD_PROBLEMS = _load_member5_hooks()
 
 
-_INPUT_GUARDRAIL, _AUDITOR = _load_member5_hooks()
+def hook_problem_note(node: str) -> List[str]:
+    """The errors entry a pass-through adds when its Member 5 hook exists but could not be loaded. The note quotes no
+    exception text (that is in HOOK_LOAD_PROBLEMS), so it can never be mistaken for a model error by the evaluation."""
+    if not HOOK_LOAD_PROBLEMS:
+        return []
+    return [f"{node}: Member 5 hook could not be loaded ({len(HOOK_LOAD_PROBLEMS)} problem(s), see the run settings); "
+            "pass-through used"]
 
 
 def set_hooks(input_guardrail: Optional[Callable] = None, auditor: Optional[Callable] = None) -> None:
@@ -2203,7 +2291,8 @@ def set_hooks(input_guardrail: Optional[Callable] = None, auditor: Optional[Call
 def input_guardrail_node(state: HDBCompassState) -> Dict[str, Any]:
     if _INPUT_GUARDRAIL is not None:
         return _INPUT_GUARDRAIL(state)
-    return {}  # pass-through until Member 5 delivers
+    note = hook_problem_note("input_guardrail")
+    return {"errors": note} if note else {}  # pass-through until Member 5 delivers
 
 
 def guardrail_gate(state: HDBCompassState) -> str:
@@ -2214,8 +2303,12 @@ def audit_node(state: HDBCompassState) -> Dict[str, Any]:
     if _AUDITOR is not None:
         return _AUDITOR(state)
     prev = state.get("auditor_verdict") or {}
-    return {"auditor_verdict": AuditorVerdict(passed=True, critique="auditor not installed (pass-through)",
-                                              retry_count=int(prev.get("retry_count", 0))).model_dump()}
+    critique = "auditor failed to load (pass-through)" if HOOK_LOAD_PROBLEMS else "auditor not installed (pass-through)"
+    update: Dict[str, Any] = {"auditor_verdict": AuditorVerdict(passed=True, critique=critique,
+                                                                retry_count=int(prev.get("retry_count", 0))).model_dump()}
+    if not prev:   # once per answer, not on every rewrite round
+        update["errors"] = hook_problem_note("runtime_auditor")
+    return update
 
 
 def audit_gate(state: HDBCompassState) -> str:

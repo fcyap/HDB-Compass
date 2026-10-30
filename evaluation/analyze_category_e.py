@@ -239,6 +239,8 @@ def run_header(rows: List[Dict[str, Any]]) -> str:
              f"{'on' if first.get('extraction_reasoning') else 'off'}.",
              "Runtime auditor: " + ("installed" if first.get("runtime_auditor_installed") else "not installed (pass-through)") +
              "; input guardrail: " + ("installed" if first.get("input_guardrail_installed") else "not installed (pass-through)") + "."]
+    if first.get("hook_load_problems"):
+        parts.append(f"**Warning: Member 5's hook module could not be loaded: {'; '.join(first['hook_load_problems'])}.**")
     if len({json.dumps({k: v for k, v in s.items() if k != 'uncommitted_changes'}, sort_keys=True) for s in settings}) > 1:
         parts.append("**Warning: these rows come from more than one code version or setting.**")
     if missing:

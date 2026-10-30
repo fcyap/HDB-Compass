@@ -191,14 +191,14 @@ def run_settings(profile: Dict[str, Any]) -> Dict[str, Any]:
     new_files = sorted(f for f in git("ls-files", "--others", "--exclude-standard").splitlines()
                        if f.endswith((".py", ".json", ".yaml", ".yml")))
     edits = git("diff", "HEAD") + "".join(f"\n{f} {git('hash-object', f)}" for f in new_files)   # contents, not names
-    return {
+    settings = {
         "commit": git("rev-parse", "--short", "HEAD"),
         "uncommitted_changes": bool(edits.strip()),
         "code_fingerprint": hashlib.sha1(edits.encode()).hexdigest()[:12] if edits.strip() else "clean",
         "dataset": DATASET_NAME,
         "dataset_sha": DATASET_SHA,      # the file's contents: two files with the same name are not the same dataset
         "profile": profile.get("name"), "model": profile.get("model"),
-        "code_written_facts": bool(arch.get("code_written_facts", True)),
+        "code_written_facts": sv.code_written_facts_on(),   # the config, or HDB_CODE_WRITTEN_FACTS for this run
         "extraction_reasoning": os.getenv("HDB_EXTRACTION_REASONING") == "1" or bool(arch.get("extraction_reasoning", False)),
         "disclose_unbuilt_tools": bool(arch.get("disclose_unbuilt_tools", True)),
         "mocked_tools": sorted(t for t, v in cfg.get("tools", {}).get("use_mock", {}).items() if v == "mock"),
@@ -206,6 +206,11 @@ def run_settings(profile: Dict[str, Any]) -> Dict[str, Any]:
         "runtime_auditor_installed": sv._AUDITOR is not None,
         "llm_timeout_s": os.getenv("LLM_TIMEOUT_S") or (cfg.get("llm", {}).get("profiles", {}).get(profile.get("name") or "", {}) or {}).get("timeout_s"),
     }
+    if sv.HOOK_LOAD_PROBLEMS:
+        # Member 5's module exists but could not be loaded. Recorded only then, so rows from before this key existed
+        # still count as the same settings on resume.
+        settings["hook_load_problems"] = list(sv.HOOK_LOAD_PROBLEMS)
+    return settings
 
 
 def run_one(mod, item: Dict[str, Any], variant: str, profile: Dict[str, Any], run_id: str) -> Dict[str, Any]:

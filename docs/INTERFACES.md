@@ -94,6 +94,17 @@ LLM-callable tool, so it is not counted.
 Until then the orchestration layer runs against `mcp_server/mock_tools.py`,
 which returns deterministic fixtures with the same shapes.
 
+If a tool module fails to import (a missing package, a syntax error), only its own tools are affected: the registry
+prints one loud warning and every call to those tools returns `{"status": "unavailable", "error": "<import error>"}`
+(logged as a failed call), while the rest of the graph keeps answering.
+
+**Tools that run only when asked.** `calculate_bsd_and_upfront_outlay` and `query_comparable_resale_transactions`
+run only when the user's own words ask for them (`supervisor.requested_tools`: upfront costs, stamp duty or BSD, cash
+needed, a down payment or a price they are buying for; comparables, recent transactions or similar flats). Code records
+the asks in `user_constraints["requested_tools"]`; the no-model plans, the financial sequence and the evidence gate
+follow it, and Variant C's specialists are offered those two tools only when asked. Variants A and B keep the full
+tool list, so their models' unasked calls still count against Tool F1.
+
 ### Block identity
 
 Every tool that returns blocks includes `block`, `street`, `town` (plus
@@ -131,6 +142,10 @@ Both are plain LangGraph nodes `(HDBCompassState) -> dict` that Member 4 wires i
   synthesis while `passed is False and retry_count < architecture.auditor_max_retries` (2),
   passing `critique` into the synthesis prompt. Set `retry_count` = number of rejections so far (previous value + 1 on each rejection); the draft is rewritten after rejections 1 and 2 and the third rejection ends the loop (3 auditor calls max).
 - Both nodes must get their LLM from `agents.llm.get_llm()` so the benchmark uses one model.
+- Put them in `agents/guardrails.py` as `input_guardrail_node` and `runtime_auditor_node`. While that file does not
+  exist both run as pass-throughs, quietly. If it exists but fails to import or lacks a node, the Supervisor prints a
+  loud warning, keeps the problem in `supervisor.HOOK_LOAD_PROBLEMS`, adds a note to every answer's `errors`, and the
+  evaluation records it in its run settings (`hook_load_problems`).
 
 ## 4. Frontend ↔ backend (Member 2) — WebSocket `/ws`
 

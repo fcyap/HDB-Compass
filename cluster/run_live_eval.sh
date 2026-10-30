@@ -9,6 +9,8 @@
 #   bash cluster/run_live_eval.sh realdata5 A,B,C --tool-check
 #   bash cluster/run_live_eval.sh rep1,rep2,rep3            # repeats in one job (the model loads once)
 #   EVAL_DATASET=varied bash cluster/run_live_eval.sh varied1 C   # the 60 varied-phrasing questions
+#   HDB_CODE_WRITTEN_FACTS=0 bash cluster/run_live_eval.sh nofacts1 C   # ablation: the model writes the facts too
+#     (the run settings record the switch; use a new tag, since rows from the other setting are rerun, not mixed)
 #
 # Needs: SMU VPN, CLUSTER_LOGIN in the gitignored .env, and an open shared session so no password is asked
 # mid-run. Open it once in your own terminal (it asks for your password there and stays open):
