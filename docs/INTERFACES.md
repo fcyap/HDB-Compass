@@ -188,6 +188,15 @@ Experiment 1.
   `ground_truth_facts` (matching block keys, grant total, maximum purchase price, relaxations, snapshot and rule
   version) and, for the two deliberately incomplete questions, a `follow_up` turn with its own ground truth.
   `evaluation/architecture_metrics.ground_truth_scores(item, state)` scores an answer against it.
+- Category C (Member 3's `evaluation/category_c_queries.json`) goes through the same runner with
+  `--dataset category_c`. `ground_truth_scores` returns `{"kind": "policy", "clauses_found", "clauses_total",
+  "clause_coverage", "clauses_missing", "known_wrong_clauses", "success"}`: fully right when every `key_clauses` entry
+  appears in the answer, matched by Member 3's rule from `run_rag_ablation.is_clause_in_passage` (copied as
+  `clause_in_answer`; a test keeps the two in step). Clauses known to be wrong are listed in
+  `architecture_metrics.KNOWN_WRONG_CLAUSES` and shown as a caveat in the analysis; correcting them is Member 3's call.
+- Every task-success rate in the analysis carries a Wilson 95% interval (`architecture_metrics.wilson_interval`), and
+  A and B are each compared with C question by question (exact McNemar test). Tokens and latency are reported as a
+  cost proxy: no paid API is used and GPU time is not billed per query.
 - Predicted tool calls = `state["tool_call_log"]` (tool name + arguments). Compare against
   `expected_mcp_calls` in `evaluation/golden_dataset_90.json`.
 - Routing trajectory = `state["active_subagents"]`.

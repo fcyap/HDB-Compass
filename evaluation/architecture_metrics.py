@@ -9,6 +9,8 @@ Proposal §6.3:
   Parameter Exact-Match % — for matched tools, required_params ⊆ actual arguments
   Constraint Satisfaction — recommended blocks satisfying 100% of user constraints
   Routing accuracy        — active_subagents vs expected_agents (C only; A/B map to coarse labels)
+  Category C task success — every key clause of a policy question appears in the answer (Member 3's matching rule)
+  Wilson 95% intervals and an exact McNemar test for the success rates, so 15-question results carry their spread
 """
 from __future__ import annotations
 
@@ -227,6 +229,114 @@ def task_success(sub_use_case: str, csr: Dict[str, Any], fabricated: int, relaxe
 
 
 # ---------------------------------------------------------------------------
+# Category C (policy questions, Member 3's evaluation/category_c_queries.json): the answer must contain every
+# key clause. A clause is matched with Member 3's own rule (run_rag_ablation.is_clause_in_passage, the rule behind
+# its answer_fact_coverage), copied here so scoring needs no RAG imports; tests/test_metrics.py checks the two agree:
+#   - the answer is lower-cased with markdown marks (* # ` | _) turned into spaces;
+#   - a clause given as a list matches when every item appears in the answer as a substring;
+#   - a clause given as a sentence matches when it appears whole, or when at least 75% of its words longer than
+#     two letters appear in the answer (each as a substring).
+# ---------------------------------------------------------------------------
+def _clause_clean(text: str) -> str:
+    return _re.sub(r"[*#`|_]", " ", text).lower()
+
+
+def clause_in_answer(clause: Any, answer: str) -> bool:
+    """One key clause found in an answer, by Member 3's matching rule (see above)."""
+    text = _clause_clean(answer or "").strip()
+    if isinstance(clause, (list, tuple)):
+        return all(_clause_clean(str(token)).strip() in text for token in clause)
+    c = _clause_clean(str(clause)).strip()
+    if c in text:
+        return True
+    words = [w for w in _re.findall(r"\b\w+\b", c) if len(w) > 2]
+    return bool(words) and sum(1 for w in words if w in text) / len(words) >= 0.75
+
+
+# Key clauses in Member 3's ground truth that are known to be wrong or out of date. The file is Member 3's and is
+# not edited here; a pass that needed one of these clauses means the answer repeated the knowledge base, not that it
+# stated current HDB policy, so the analysis lists them beside the Category C results. Keyed by question id and the
+# clause exactly as the file writes it (a list becomes a tuple).
+KNOWN_WRONG_CLAUSES: Dict[str, Dict[Any, str]] = {
+    "C1-01": {
+        ("clawback", "6%", "9%"): "Prime subsidy recovery given as 6% to 9%; the project brief gives the current Prime "
+                                  "rate as 9% (the 6% to 9% range comes from earlier Prime launches).",
+        ("clawback", "3%", "6%"): "Plus subsidy recovery given as 3% to 6%; the current HDB range for Plus flats is "
+                                  "6% to 8%.",
+    },
+    "C1-03": {
+        "3% to 6% subsidy recovery": "Plus subsidy recovery given as 3% to 6%; the current HDB range for Plus flats "
+                                     "is 6% to 8%.",
+    },
+}
+
+
+def _clause_key(clause: Any) -> Any:
+    return tuple(clause) if isinstance(clause, list) else clause
+
+
+def known_wrong_clauses(item: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The question's key clauses that are known to be wrong, each with the reason (empty for most questions)."""
+    notes = KNOWN_WRONG_CLAUSES.get(str(item.get("id", "")).split("~")[0], {})
+    clauses = (item.get("ground_truth_facts") or {}).get("key_clauses") or []
+    return [{"clause": c, "note": notes[_clause_key(c)]} for c in clauses if _clause_key(c) in notes]
+
+
+def policy_clause_scores(item: Dict[str, Any], state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """A Category C answer against the question's key clauses. Fully right when every clause is present."""
+    clauses = (item.get("ground_truth_facts") or {}).get("key_clauses")
+    if not clauses:
+        return None
+    draft = state.get("draft_response") or ""
+    found = [clause_in_answer(c, draft) for c in clauses]
+    wrong = known_wrong_clauses(item)
+    return {
+        "kind": "policy",
+        "clauses_found": sum(found), "clauses_total": len(clauses),
+        "clause_coverage": sum(found) / len(clauses),
+        "clauses_missing": [c for c, ok in zip(clauses, found) if not ok],
+        "known_wrong_clauses": len(wrong),
+        "success": all(found),
+    }
+
+
+def category_of(sub_use_case: Optional[str], qid: str = "") -> str:
+    """'E' or 'C' (or another benchmark letter) from the sub-use case ('C2'), else from the id ('E1-01~casual')."""
+    return (sub_use_case or qid or "?")[0].upper()
+
+
+def wilson_interval(k: int, n: int, z: float = 1.96) -> Optional[tuple]:
+    """95% Wilson score interval for k successes out of n. Unlike the plain k/n +- 1.96 SE it stays inside 0-1 and
+    is not zero-width at 0/n or n/n, which matters with 15 questions per variant."""
+    if not n:
+        return None
+    p = k / n
+    denom = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    half = z * (p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5 / denom
+    return (max(0.0, centre - half), min(1.0, centre + half))
+
+
+def rate_with_ci(k: int, n: int, short: bool = False) -> str:
+    """'11/15 (73%, 95% CI 48–89%)', or with short=True '11/15 (48–89%)'. '–' when there is nothing to count."""
+    if not n:
+        return "–"
+    lo, hi = wilson_interval(k, n)
+    return f"{k}/{n} ({lo:.0%}–{hi:.0%})" if short else f"{k}/{n} ({k / n:.0%}, 95% CI {lo:.0%}–{hi:.0%})"
+
+
+def mcnemar_exact(only_first: int, only_second: int) -> float:
+    """Two-sided exact McNemar test on paired right/wrong outcomes: the chance of a split of the discordant
+    questions at least this uneven if neither variant were better. 1.0 when no question separates them."""
+    from math import comb
+    n = only_first + only_second
+    if not n:
+        return 1.0
+    tail = sum(comb(n, i) for i in range(min(only_first, only_second) + 1)) / 2 ** n
+    return min(1.0, 2 * tail)
+
+
+# ---------------------------------------------------------------------------
 # Ground-truth scoring (grounded questions carry ground_truth_facts; see evaluation/ground_category_e.py)
 # ---------------------------------------------------------------------------
 _NUM_RE = _re.compile(r"(?<![\w.])\$?\s?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(\s*k\b)?", _re.I)
@@ -274,6 +384,8 @@ def asked_for_missing(draft: str, missing: List[str]) -> bool:
 def ground_truth_scores(item: Dict[str, Any], state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Compare an answer with the question's stored ground truth. None for questions without ground truth."""
     truth = item.get("ground_truth_facts")
+    if truth and "key_clauses" in truth:              # a Category C policy question
+        return policy_clause_scores(item, state)
     if not truth or "matching_block_keys" not in truth:
         return None
     draft = state.get("draft_response") or ""
@@ -373,7 +485,7 @@ def score_item(item: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     fabricated = sum(1 for b in recommended_blocks(state) if b.get("_fabricated"))
     relaxed = relaxation_offered(state)
     row = {
-        "id": item["id"], "variant": variant,
+        "id": item["id"], "variant": variant, "category": category_of(item.get("sub_use_case"), item["id"]),
         "tool_selection": tool_selection_prf(item.get("expected_mcp_calls", []), state.get("tool_call_log", [])),
         # the same score over only the calls the model chose (ToolCallRecord.source); left out for logs recorded
         # before the source tag existed, which cannot say who chose a call
@@ -410,8 +522,12 @@ def aggregate(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for v in sorted({r["variant"] for r in rows}):
         rs = [r for r in rows if r["variant"] == v]
+        wins = sum(1 for r in rs if r.get("task_success"))
+        gts = [r["ground_truth"] for r in rs if r.get("ground_truth")]
         out[v] = {
             "n": len(rs),
+            "task_success": wins,
+            "task_success_ci95": wilson_interval(wins, len(rs)),
             "tool_selection_f1": mean(r["tool_selection"]["f1"] for r in rs),
             "parameter_em_rate": mean(r["parameter_em"]["rate"] for r in rs),
             "csr": mean(r["csr"]["rate"] for r in rs),
@@ -420,7 +536,19 @@ def aggregate(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
             "fabricated_blocks_total": sum(r.get("fabricated_blocks", 0) for r in rs),
             "map_precision": mean((r.get("map") or {}).get("rate") for r in rs),
             "task_success_rate": mean((1.0 if r.get("task_success") else 0.0) for r in rs),
-            "blocks_exact_rate": mean((1.0 if (r.get("ground_truth") or {}).get("blocks_exact") else 0.0)
-                                      for r in rs if r.get("ground_truth")),
+            # block questions only: a policy answer has no blocks to get right
+            "blocks_exact_rate": mean((1.0 if g["blocks_exact"] else 0.0) for g in gts if "blocks_exact" in g),
+            "policy_clause_coverage": mean(g["clause_coverage"] for g in gts if g.get("kind") == "policy"),
         }
+    return out
+
+
+def aggregate_by_category(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """aggregate() per benchmark category: {variant: {category: {...}}}. Rows scored before 31 Oct carry no
+    category; it is read from the id."""
+    out: Dict[str, Dict[str, Any]] = {}
+    cat = lambda r: r.get("category") or category_of(None, r["id"])
+    for c in sorted({cat(r) for r in rows}):
+        for v, a in aggregate([r for r in rows if cat(r) == c]).items():
+            out.setdefault(v, {})[c] = a
     return out

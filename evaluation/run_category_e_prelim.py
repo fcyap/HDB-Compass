@@ -1,5 +1,5 @@
 """
-Preliminary Experiment 1 runner — Category E only (evaluation/run_category_e_prelim.py).
+Preliminary Experiment 1 runner — Category E, and Category C policy questions (evaluation/run_category_e_prelim.py).
 Owned by Member 4. Member 5's run_architecture_eval.py supersedes this for the
 full 90-query benchmark; the per-item scoring is shared (architecture_metrics.py).
 
@@ -11,6 +11,11 @@ closed laptop lid loses at most one query. Re-running resumes.
     LLM_PROFILE=ollama .venv/bin/python evaluation/run_category_e_prelim.py            # all variants, all 15
     LLM_PROFILE=vllm   .venv/bin/python evaluation/run_category_e_prelim.py --variants C --ids E1-01,E2-01
     .venv/bin/python evaluation/run_category_e_prelim.py --summary-only                 # re-aggregate a results file
+    LLM_PROFILE=none   .venv/bin/python evaluation/run_category_e_prelim.py --dataset category_c --tag catc
+
+Category C (Member 3's evaluation/category_c_queries.json, read only) is scored on its key clauses: fully right when
+every clause appears in the answer, by Member 3's own matching rule (architecture_metrics.clause_in_answer). The
+summary breaks each variant down by category and reports tokens and latency as a cost proxy.
 
 Output: evaluation/results/prelim_<profile>_<model>.jsonl  (+ .summary.json)
 Each line: {run, variant, id, sub_use_case, profile, model, latency_s, scores, state_excerpt}
@@ -37,6 +42,7 @@ from evaluation import architecture_metrics as M  # noqa: E402
 RESULTS_DIR = PROJECT_ROOT / "evaluation" / "results"
 QUERIES = PROJECT_ROOT / "evaluation" / "category_e_queries.json"
 VARIED = PROJECT_ROOT / "evaluation" / "category_e_varied.json"   # the same questions in four user styles (vary_category_e.py)
+CATEGORY_C = PROJECT_ROOT / "evaluation" / "category_c_queries.json"   # Member 3's 15 policy questions (read only)
 
 
 def dataset_path(name: str) -> Path:
@@ -44,6 +50,8 @@ def dataset_path(name: str) -> Path:
         return QUERIES
     if name == "varied":
         return VARIED
+    if name == "category_c":
+        return CATEGORY_C
     return Path(name).resolve()
 
 
@@ -256,10 +264,33 @@ def run_follow_up(mod, item: Dict[str, Any], first_state: Dict[str, Any]) -> Dic
         return {"status": "error", "error": f"{type(e).__name__}: {e}"}
 
 
+COST_PROXY_NOTE = ("proxy only: tokens and wall-clock seconds per question (first turn plus any follow-up turn); the "
+                   "models run on our own hardware or the course cluster, so no paid API is billed and GPU time is "
+                   "not charged per query")
+
+
+def cost_proxy(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Total and median tokens and latency per question over successful rows. Rows recorded before tokens were
+    stored count towards latency only."""
+    from statistics import median
+
+    def turns(r):
+        return [r] + ([r["follow_up"]] if (r.get("follow_up") or {}).get("status") == "ok" else [])
+    toks = [sum((t.get("tokens") or {}).get("total_tokens", 0) or 0 for t in turns(r)) for r in rows if r.get("tokens")]
+    secs = [sum(t.get("latency_s") or 0.0 for t in turns(r)) for r in rows]
+    return {"basis": COST_PROXY_NOTE, "questions": len(rows),
+            "total_tokens": sum(toks) if toks else None, "median_tokens": median(toks) if toks else None,
+            "total_latency_s": round(sum(secs), 1) if secs else None,
+            "median_latency_s": round(median(secs), 2) if secs else None}
+
+
 def summarise(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     ok = [r for r in rows if r.get("status") == "ok"]
     agg = M.aggregate([r["scores"] for r in ok])
+    by_category = M.aggregate_by_category([r["scores"] for r in ok])
     for v, a in agg.items():
+        a["by_category"] = by_category.get(v, {})
+        a["cost_proxy"] = cost_proxy([r for r in ok if r["variant"] == v])
         lat = sorted(r["latency_s"] for r in ok if r["variant"] == v)
         a["latency_p50_s"] = lat[len(lat) // 2] if lat else None
         a["latency_p95_s"] = lat[min(len(lat) - 1, int(round(0.95 * (len(lat) - 1))))] if lat else None
@@ -295,6 +326,20 @@ def print_table(agg: Dict[str, Any]) -> None:
             x = a.get(c)
             cells.append("-" if x is None else (f"{x:.2f}" if isinstance(x, float) else str(x)))
         print(f"{v:7s} | " + " | ".join(cells))
+    num = lambda x, d=2: "-" if x is None else (f"{x:.{d}f}" if isinstance(x, float) else str(x))
+    print("\nvariant | category | n | task success (Wilson 95% CI) | tool_selection_f1 | parameter_em_rate | "
+          "routing_exact_rate | policy_clause_coverage")
+    for v, a in agg.items():
+        for cat, c in (a.get("by_category") or {}).items():
+            print(f"{v:7s} | {cat} | {c['n']} | {M.rate_with_ci(c['task_success'], c['n'])} | "
+                  f"{num(c['tool_selection_f1'])} | {num(c['parameter_em_rate'])} | {num(c['routing_exact_rate'])} | "
+                  f"{num(c['policy_clause_coverage'])}")
+    print(f"\ncost ({COST_PROXY_NOTE})")
+    print("variant | questions | total tokens | median tokens | total latency (s) | median latency (s)")
+    for v, a in agg.items():
+        cp = a.get("cost_proxy") or {}
+        print(f"{v:7s} | {cp.get('questions')} | {num(cp.get('total_tokens'), 0)} | {num(cp.get('median_tokens'), 0)} | "
+              f"{num(cp.get('total_latency_s'), 1)} | {num(cp.get('median_latency_s'))}")
 
 
 def main() -> None:
@@ -306,8 +351,9 @@ def main() -> None:
     ap.add_argument("--rerun", action="store_true", help="ignore existing checkpoints")
     ap.add_argument("--summary-only", action="store_true")
     ap.add_argument("--rescore", action="store_true", help="recompute scores from stored state with the current metrics")
-    ap.add_argument("--dataset", default="", help="'varied' for evaluation/category_e_varied.json (or a path); default "
-                                                   "the 15 grounded questions")
+    ap.add_argument("--dataset", default="", help="'varied' for evaluation/category_e_varied.json, 'category_c' for "
+                                                   "Member 3's policy questions (or a path); default the 15 grounded "
+                                                   "Category E questions")
     args = ap.parse_args()
 
     profile = active_profile()
@@ -329,8 +375,9 @@ def main() -> None:
         rows = list(load_done(path).values())
         # each row is scored against the dataset it was run on (its settings name it); rows from before 30 Oct record
         # none and are looked up in the known datasets by id
-        sets = {q.name: {i["id"]: i for i in json.loads(q.read_text())} for q in (QUERIES, VARIED, queries) if q.exists()}
-        shas = {q.name: hashlib.sha1(q.read_bytes()).hexdigest()[:12] for q in (QUERIES, VARIED, queries) if q.exists()}
+        known = (QUERIES, VARIED, CATEGORY_C, queries)
+        sets = {q.name: {i["id"]: i for i in json.loads(q.read_text())} for q in known if q.exists()}
+        shas = {q.name: hashlib.sha1(q.read_bytes()).hexdigest()[:12] for q in known if q.exists()}
         any_set = {k: i for by_id in sets.values() for k, i in by_id.items()}
         n = unnamed = 0
         for r in rows:
@@ -400,8 +447,11 @@ def main() -> None:
             os.fsync(f.fileno())
             if row["status"] == "ok":
                 s = row["scores"]
+                gt = s.get("ground_truth") or {}
+                found = (f"clauses={gt['clauses_found']}/{gt['clauses_total']}" if gt.get("kind") == "policy"
+                         else f"cands={row['state_excerpt']['n_candidates']}")
                 print(f" {row['latency_s']}s f1={s['tool_selection']['f1']:.2f} em={s['parameter_em']['rate']} "
-                      f"cands={row['state_excerpt']['n_candidates']} errs={len(row['state_excerpt']['errors'] or [])}")
+                      f"{found} errs={len(row['state_excerpt']['errors'] or [])}")
             else:
                 print(f" {row['status'].upper()} {row.get('error', '')}")
             unreachable = unreachable + 1 if row["status"] == "model_unreachable" else 0
