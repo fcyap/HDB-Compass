@@ -1837,6 +1837,211 @@ def plain_relaxation(constraint: str, original: Any, relaxed: Any) -> Tuple[str,
     return constraint.replace("_", " "), str(original), str(relaxed)
 
 
+# Member 3's policy search returns raw markdown chunks: a "[Doc > Section > Sub]" breadcrumb line, bullets, table rows
+# and rules, '#' headings, and some chunks that are only a header ("[...]\n---"). The facts section shows each passage
+# as its section title, the few lines that best answer the question, and the source link. Every line shown is a line
+# of the passage with its list marker and bold marks removed; a table row reads "A: B" (with the passage's own column
+# names) and a line under a bare lead-in carries that lead-in. Nothing else is added and nothing is reworded.
+POLICY_PASSAGES_SHOWN = 3
+POLICY_LINES_SHOWN = 4      # at most; at least 2 when the passage has them
+POLICY_LINE_CHARS = 240     # a longer line keeps its whole sentences that fit; a sentence is never cut…
+POLICY_LINE_MAX = 400       # …unless it alone is longer than this (no real passage line is)
+_STOP_WORDS = frozenset((
+    "a about after all also am an and any are as at be been before but by can could did do does for from get got had has "
+    "have how i if in into is it its me more must my no not now of on or our out so than that the their them then there "
+    "these they this those to under up us was we were what when where whether which who why will with would you your "
+    "yours exact exactly key differences difference compare comparing vs versus tell know please").split())
+_SECTION_NUMBER = re.compile(r"^\d+(?:\.\d+)*\.?\s+")
+_TABLE_RULE = re.compile(r":?-{3,}:?")
+_LIST_MARKER = re.compile(r"^(?:[-*•]|\d{1,2}[.)])\s+")
+
+
+def _content_words(text: str) -> set:
+    """Lower-case words and numbers that carry meaning, with simple endings folded so "aged" meets "age", "flats"
+    meets "flat" and "renting" meets "rent"."""
+    words = [w for w in re.findall(r"[a-z]+|\d+", (text or "").lower())
+             if w not in _STOP_WORDS and (len(w) > 2 or w.isdigit())]
+    folded = set()
+    for w in words:
+        if len(w) > 4 and not w.endswith("ss"):
+            w = re.sub(r"(?:ing|ed|es|s)$", "", w)
+        folded.add(w.rstrip("e") if len(w) > 2 and not w.isdigit() else w)
+    return folded
+
+
+def _pick_lines(lines: List[str], question: str, pool: List[str]) -> List[int]:
+    """Indexes of the 2-4 lines that best answer the question, in the passage's order. A question word counts more
+    the fewer lines of the pool (every line that could be shown in this answer) contain it, so "income" outweighs
+    "flat", and a line's score is divided by the root of its length so a short exact line ("BTO Income Ceiling: ...
+    $7,000/month") is not beaten by a long one that mentions everything. Each next line is the one adding the most
+    question words not yet covered, so "minimum age and income ceiling" gets a line for each; once nothing new is
+    added, the pick stops (topped up to 2 lines by plain score). Ties keep the passage's order."""
+    words = _content_words(question)
+    pool_words = [_content_words(line) for line in pool]
+    weight = {w: 1.0 / max(1, sum(w in pw for pw in pool_words)) for w in words}
+    line_words = [_content_words(line) & words for line in lines]
+    size = [max(1.0, len(_content_words(line))) ** 0.5 for line in lines]
+
+    def score(i: int, covered: set) -> float:
+        return sum(weight[w] for w in line_words[i] - covered) / size[i]
+
+    chosen: List[int] = []
+    covered: set = set()
+    while len(chosen) < POLICY_LINES_SHOWN:
+        rest = [i for i in range(len(lines)) if i not in chosen]
+        best = max(rest, key=lambda i: (score(i, covered), -i), default=None)
+        if best is None or score(best, covered) <= 0:
+            break
+        chosen.append(best)
+        covered |= line_words[best]
+    by_score = sorted((i for i in range(len(lines)) if i not in chosen), key=lambda i: (-score(i, set()), i))
+    chosen += by_score[:max(0, 2 - len(chosen))]
+    return sorted(chosen)
+
+
+def _policy_title(p: Dict[str, Any]) -> Tuple[str, str]:
+    """(title, parent): the last breadcrumb part and the part above it (when that is not the document title),
+    without their numbering. "... > 5. Deep Dive: Standard Flats Regulations > 5.1 Baseline Parameters" gives
+    ("Baseline Parameters", "Deep Dive: Standard Flats Regulations")."""
+    crumb = p.get("section") or ""
+    first = (p.get("text") or "").split("\n", 1)[0].strip()
+    if not crumb and first.startswith("[") and first.endswith("]"):
+        crumb = first[1:-1]
+    parts = [_SECTION_NUMBER.sub("", s.strip()) for s in crumb.split(" > ") if s.strip()]
+    return (parts[-1] if parts else ""), (parts[-2] if len(parts) > 2 else "")
+
+
+def _table_row(cells: List[str], header: Optional[List[str]]) -> str:
+    """A table row as text: "Up to $1,500: $120,000", or with more columns
+    "Minimum Occupation Period (MOP) — Standard Flats: 5 years; Plus Flats: 10 years"."""
+    if len(cells) == 2:
+        return f"{cells[0]}: {cells[1]}"
+    if header and len(header) == len(cells):
+        return f"{cells[0]} — " + "; ".join(f"{h}: {v}" for h, v in zip(header[1:], cells[1:]) if v)
+    return f"{cells[0]}: " + "; ".join(v for v in cells[1:] if v)
+
+
+def _policy_lines(text: str) -> List[str]:
+    """The readable lines of a passage: breadcrumb, rules, separator rows and headings dropped; list markers and bold
+    marks removed; table rows read as text. A bare lead-in ("Grant Amounts:") is not a line of its own but goes in
+    front of the lines indented under it ("Grant Amounts — 5-room Resale Flat: $25,000")."""
+    raw = (text or "").split("\n")
+    if raw and raw[0].strip().startswith("[") and raw[0].strip().endswith("]"):
+        raw = raw[1:]
+    rows = [r.strip() for r in raw]
+    indent = [len(r) - len(r.lstrip()) for r in raw]
+    cells_of = [[c.strip().replace("**", "") for c in r.strip("|").split("|")] if r.startswith("|") else None for r in rows]
+    is_rule = [bool(c) and all(_TABLE_RULE.fullmatch(x) for x in c) for c in cells_of]
+    out: List[str] = []
+    header: Optional[List[str]] = None
+    lead: Optional[Tuple[int, str]] = None   # (indent, words) of the bare lead-in the next lines sit under
+    for i, row in enumerate(rows):
+        cells = cells_of[i]
+        if cells is not None:
+            if is_rule[i]:
+                continue
+            if i + 1 < len(rows) and is_rule[i + 1]:
+                header = cells              # the row above the rule names the columns
+                continue
+            line = _table_row(cells, header)
+        else:
+            header = None
+            line = _LIST_MARKER.sub("", row.replace("**", "")).replace("\\times", "×").strip()
+            if not line or line.startswith(("#", "$$")) or not re.search(r"[A-Za-z0-9]", line):
+                continue                    # headings, LaTeX formula lines and separators
+            if lead and indent[i] <= lead[0]:
+                lead = None
+            if line.endswith(":") and len(line.split()) <= 8:
+                lead = (indent[i], line.rstrip(":").strip())
+                continue
+            if lead:
+                line = f"{lead[1]} — {line}"
+        if line not in out:
+            out.append(line)
+    return out
+
+
+def _trim_line(line: str, question: str = "", limit: int = POLICY_LINE_CHARS) -> str:
+    """A long line cut to whole sentences (a table row's cells, which end in ";", count as sentences), never inside
+    one, so a figure keeps its unit and a rule keeps its condition ("must wait 15 months from ...", "ALWAYS PERMITTED,
+    even if the quota ... is completely full"). The first sentence is always kept and the ones after it while the line
+    fits in `limit`; a later sentence holding a question word the kept ones lack is kept too while the line fits in
+    POLICY_LINE_MAX ("Wait-Out After Selling Private Property: ..." for "How long must I wait"). Sentences left out
+    between or after the kept ones show as "…". Only one sentence longer than POLICY_LINE_MAX on its own is cut inside:
+    at a comma or dash, else at a word that is not a number."""
+    if len(line) <= limit:
+        return line
+    parts = _split_opening(line)
+    if len(parts[0]) > POLICY_LINE_MAX:
+        return _cut_sentence(parts[0])
+    keep = [0]
+    while len(keep) < len(parts) and len(_join_kept(parts, keep + [len(keep)])) <= limit:
+        keep.append(len(keep))
+    words = _content_words(question)
+    covered = set().union(*(_content_words(parts[i]) for i in keep)) & words
+    for i in range(keep[-1] + 1, len(parts)):
+        adds = (_content_words(parts[i]) & words) - covered
+        if adds and len(_join_kept(parts, keep + [i])) <= POLICY_LINE_MAX:
+            keep.append(i)
+            covered |= adds
+    return _join_kept(parts, keep)
+
+
+def _join_kept(parts: List[str], keep: List[int]) -> str:
+    text = parts[keep[0]]
+    for prev, i in zip(keep, keep[1:]):
+        text += (" " if i == prev + 1 else " … ") + parts[i]
+    if keep[-1] < len(parts) - 1 and not text.endswith((".", "!", "?")):
+        text = text.rstrip(";,: ") + " …"
+    return text
+
+
+def _cut_sentence(sentence: str, limit: int = POLICY_LINE_MAX) -> str:
+    head = sentence[:limit - 1]
+    at = max(head.rfind(", "), head.rfind(" — "), head.rfind(" ("))
+    if at > limit // 2:
+        return head[:at].rstrip() + "…"
+    words = head.rsplit(" ", 1)[0].split(" ")
+    while len(words) > 1 and re.search(r"\d", words[-1]):
+        words.pop()                     # "must wait 15" would lose "months"
+    return " ".join(words).rstrip(",;:—- ") + "…"
+
+
+def shown_policy_passages(passages: Any, question: str = "") -> List[Dict[str, Any]]:
+    """The policy passages as the answer shows them: at most three, in the search's order, chunks with no text under
+    their header skipped and chunks of the same section merged; for each, the 2-4 lines sharing the most words with
+    the question (in the passage's own order) and the source link."""
+    sections: Dict[str, Dict[str, Any]] = {}
+    for p in passages if isinstance(passages, list) else []:
+        if not isinstance(p, dict):
+            continue
+        lines = _policy_lines(p.get("text") or "")
+        if not lines:
+            continue
+        title, parent = _policy_title(p)
+        key = p.get("section") or title or lines[0]
+        if key in sections:
+            sections[key]["lines"] += [line for line in lines if line not in sections[key]["lines"]]
+        elif len(sections) < POLICY_PASSAGES_SHOWN:
+            sections[key] = {"title": title, "parent": parent, "lines": lines, "source_url": p.get("source_url") or ""}
+    pool = [line for s in sections.values() for line in s["lines"]]
+    for s in sections.values():
+        s["lines"] = [_trim_line(s["lines"][i], question) for i in _pick_lines(s["lines"], question, pool)]
+    return list(sections.values())
+
+
+def policy_fact_lines(passages: Any, question: str = "") -> List[str]:
+    out: List[str] = []
+    for s in shown_policy_passages(passages, question):
+        indent = "  " if s["title"] else ""
+        if s["title"]:
+            out.append(f"- **{s['title']}**" + (f" ({s['parent']})" if s["parent"] else ""))
+        out += [f"{indent}- {line}" for line in s["lines"]]
+        if s["source_url"]:
+            out.append(f"{indent}- Source: {s['source_url']}")
+    return out or ["- The policy search found no passage that answers this. Please check with HDB."]
+
+
 def template_response(state: HDBCompassState) -> str:
     lines: List[str] = []
     blocks = state.get("candidate_blocks_intersection") or []
@@ -1929,8 +2134,7 @@ def template_response(state: HDBCompassState) -> str:
                      "for example with an HDB Flat Eligibility (HFE) letter.")
     elif passages:
         lines.append("**Policy:**")
-        for p in passages[:3]:
-            lines.append(f"- {p['text']} [{p['source_url']}]")
+        lines.extend(policy_fact_lines(passages, user_request(state)))
     if not lines:
         lines.append("I could not find data for that request.")
     if state.get("financial_breakdown") or passages:
@@ -2079,7 +2283,8 @@ def user_request(state: HDBCompassState) -> str:
 # distance, the grants and the budget, and the prompt tells the model not to repeat or change them. Checking each figure
 # against the right fact proved endless (a grant component taken as the total, a loan amount as the budget, an unlock
 # count paired with the wrong relaxation, "over $800k", "the farthest block is 107m"), so an opening sentence that states
-# any figure is dropped. Allowed: block names the facts list ("Blk 288B", "Blk 627 Ang Mo Kio Ave 9") and flat types.
+# any figure is dropped. Allowed: block names the facts list ("Blk 288B", "Blk 627 Ang Mo Kio Ave 9") and flat types, and
+# in an answer about policy alone, figures the policy lines shown give ("10-year MOP"; see keep_supported_sentences).
 _BLOCK_LIST = re.compile(r"\b(?:Blk|Block|Blocks|Blks)\.?\s*(?:No\.?\s*|#\s*)?(\d{1,4}[A-Z]?)\b((?:\s*(?:,|and|&|or)\s*(?:(?:Blk|Block)\.?\s*)?"
                          r"\d{1,4}[A-Z]?\b)*)", re.I)
 _ADDRESS = re.compile(r"\b(\d{1,4}[A-Z]?)\s+(?:[A-Z][A-Za-z]+\s+){1,4}(?i:Ave|Avenue|St|Street|Rd|Road|Dr|Drive|Cres|Crescent|"
@@ -2098,19 +2303,75 @@ def _split_opening(text: str) -> List[str]:
     return [p for p in parts if p.strip()]
 
 
-def keep_supported_sentences(opening: str, facts: str, user_text: str = "") -> Tuple[str, int]:
+# A policy answer may state a figure the policy lines shown to the user give, written the same way: "Plus flats have a
+# 10-year MOP" is what the passage says. A figure is a number with its unit: an amount as written ("$120,000" is not
+# "$120k"), "6%", "10-year" / "10 years", "15 months", or a bare number ("aged 35"). A range ("6% to 9%", "between 6%
+# and 9%", "6% up to 9%") must appear as that range, and its ends are not figures on their own: otherwise "3%" alone, or
+# "between 3% and 9%", would pass by taking the ends of the passage's "3% to 6%" and "6% to 9%". Figures in a worked
+# example ("Example: If a Plus flat ... is sold for $900,000") are not facts about the user's case, so they are not
+# allowed.
+_POLICY_FIGURE = (r"\$\s?\d+(?:,\d{3})*(?:\.\d+)?(?:k\b)?"
+                  r"|\d+(?:,\d{3})*(?:\.\d+)?(?:\s?%|\s?-?\s?(?:years?|yrs?|months?|weeks?|days?|km)\b)?")
+_POLICY_FIGURE_SPAN = re.compile(rf"\bbetween\s+({_POLICY_FIGURE})\s+and\s+({_POLICY_FIGURE})"
+                                 rf"|({_POLICY_FIGURE})(?:\s*(?:to|up\s+to|through|-|–|—)\s*({_POLICY_FIGURE}))?", re.I)
+
+
+def _figure_key(text: str) -> Tuple[str, float]:
+    """("$", 120000.0) for "$120,000"; ("$k", 120.0) for "$120k"; ("year", 10.0) for "10-year" and "10 years";
+    ("", 35.0) for "35"."""
+    s = text.lower().replace(",", "")
+    value = float(re.search(r"\d+(?:\.\d+)?", s).group())
+    if s.startswith("$"):
+        return ("$k" if s.endswith("k") else "$"), value
+    for unit in ("%", "year", "yr", "month", "week", "day", "km"):
+        if unit in s:
+            return ("year" if unit == "yr" else unit), value
+    return "", value
+
+
+def _figures(text: str) -> List[Any]:
+    """The figures in a text, each a key or, for a range, a pair of keys sharing a unit ("3 to 6%" is 3% to 6%)."""
+    found: List[Any] = []
+    for m in _POLICY_FIGURE_SPAN.finditer(_NOT_A_FIGURE.sub(" ", (text or "").replace("**", ""))):
+        low, high = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+        a = _figure_key(low)
+        if not high:
+            found.append(a)
+            continue
+        b = _figure_key(high)
+        unit = a[0] or b[0]
+        found.append(((unit, a[1]), (unit, b[1])))
+    return found
+
+
+def policy_figures(passages: Any, question: str = "") -> set:
+    """Every figure in the policy lines the answer shows (titles and lines, but not worked examples). A range is one
+    figure: its ends are not allowed on their own."""
+    shown = shown_policy_passages(passages, question)
+    lines = [s["title"] for s in shown] + [line for s in shown for line in s["lines"]]
+    return set(_figures("\n".join(line for line in lines if not re.match(r"(?:worked )?example\b", line, re.I))))
+
+
+def keep_supported_sentences(opening: str, facts: str, user_text: str = "",
+                             policy_passages: Optional[List[Dict[str, Any]]] = None) -> Tuple[str, int]:
     """The model's opening with every sentence dropped that states a figure (an amount, distance, lease, percentage,
     count or time, in digits or words) or names a block the facts do not list. The facts section that follows states
-    every figure. user_text is accepted for the callers and not used: the user's own limits are not repeated either.
+    every figure. The one exception is a policy answer (policy_passages given): a sentence that names no block may
+    state figures that the policy lines shown to the user give, in digits as they give them. user_text is the user's
+    request; it picks which policy lines are shown, and the user's own limits are not repeated either.
     Returns (text, sentences dropped)."""
     listed = {m.group(1).upper() for m in re.finditer(r"\bBlk\s+(\d{1,4}[A-Z]?)\b", facts or "")}
+    allowed = policy_figures(policy_passages, user_text) if policy_passages else set()
     kept, dropped = [], 0
     for sentence in _split_opening(opening):
         named = [m.group(1).upper() for m in _BLOCK_LIST.finditer(sentence)]
         named += [b.upper() for m in _BLOCK_LIST.finditer(sentence) for b in re.findall(r"(\d{1,4}[A-Z]?)\b", m.group(2) or "")]
         named += [m.group(1).upper() for m in _ADDRESS.finditer(sentence)]
         rest = _NOT_A_FIGURE.sub(" ", _ADDRESS.sub(" ", _BLOCK_LIST.sub(" ", sentence)))
-        if any(b not in listed for b in named) or re.search(r"\d", rest) or _SPELLED_FIGURE.search(rest):
+        states_figure = bool(re.search(r"\d", rest) or _SPELLED_FIGURE.search(rest))
+        policy_figure = (bool(allowed) and not named and not _SPELLED_FIGURE.search(rest)
+                         and all(f in allowed for f in _figures(rest)))
+        if any(b not in listed for b in named) or (states_figure and not policy_figure):
             dropped += 1
         else:
             kept.append(sentence)
@@ -2123,6 +2384,19 @@ def writes_facts_in_code(state: HDBCompassState) -> bool:
     the opening and the trade-offs, so it cannot drop or garble a number. Variant B keeps the model as the writer
     by design (no join in code). Switch: architecture.code_written_facts."""
     return state.get("variant") != "B" and bool(load_config().get("architecture", {}).get("code_written_facts", True))
+
+
+def policy_answer_passages(state: HDBCompassState) -> Optional[List[Dict[str, Any]]]:
+    """The real policy passages an opening may take figures from, or None. Only an answer about policy alone: when the
+    facts also carry grants, budgets, prices or blocks, a passage figure (the $80,000 Family Grant tier) could be read
+    as the user's own result, so those openings stay figure-free. Never while the policy search is mocked."""
+    passages = state.get("rag_policy_passages")
+    if not passages or "retrieve_hdb_policy_knowledge" in unbuilt_tools_used(state):
+        return None
+    if any(state.get(k) for k in ("financial_breakdown", "sql_market_results", "spatial_block_candidates",
+                                  "candidate_blocks_intersection", "relaxation")):
+        return None
+    return passages
 
 
 def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
@@ -2141,15 +2415,22 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     errors: List[str] = []
     llm = get_llm()
     facts = template_response(state) if writes_facts_in_code(state) else ""
+    policy = policy_answer_passages(state) if facts else None
     if llm is not None:
         try:
             if facts:
+                numbers = ("write no numbers except block names exactly as the facts give them (any other sentence with a "
+                           "number is removed)")
+                if policy:
+                    numbers = ("you may state a policy figure (a period, age, percentage or amount) only exactly as the "
+                               "Policy lines above write it, digits and unit included (\"10-year MOP\", \"3% to 6%\"), a range "
+                               "always whole and never one end of it or ends of two ranges joined; write no other numbers "
+                               "(any other sentence with a number is removed)")
                 rule = ("The facts section below was written by code from the tool results and will be shown to the user "
                         "exactly as written, straight after your text:\n---\n" + facts + "\n---\nWrite only a short opening "
                         "(one or two sentences that answer the question directly) and, when there are several options, the "
                         "trade-offs between them (price vs lease vs distance). Do not repeat or change any price, grant, "
-                        "budget, distance, lease, count or relaxation figure: write no numbers except block names exactly as the "
-                        "facts give them (any other sentence with a number is removed), and do not contradict the facts.")
+                        "budget, distance, lease, count or relaxation figure: " + numbers + ", and do not contradict the facts.")
             msgs = [sys_msg(SYNTH_SYSTEM),
                     HumanMessage(content=f"User query: {user_request(state)}\n\n{rule}\n\nEvidence JSON:\n{json.dumps(evidence, default=str)[:24000]}")]
             if verdict and not verdict.get("passed", True) and verdict.get("critique"):
@@ -2159,7 +2440,7 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
                 text = "".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in text)
             text = strip_think(text)
             if facts:
-                opening, dropped = keep_supported_sentences(text, facts, user_request(state))
+                opening, dropped = keep_supported_sentences(text, facts, user_request(state), policy)
                 if dropped:
                     errors.append(f"synthesize: dropped {dropped} opening sentence(s) that stated figures")
                 text = (opening.strip() + "\n\n" if opening.strip() else "") + facts
