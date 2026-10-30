@@ -1,0 +1,987 @@
+[
+  {
+    "id": "E1-X01",
+    "category": "E",
+    "sub_use_case": "E1",
+    "query": "Hi, my wife and I are both Singapore citizens, 29 and 28, married, buying our first home, no kids yet. We earn $7,200 a month combined (that's the HFE-assessed figure), have $70,000 in our CPF ordinary accounts and $30,000 in cash. No car loan or other debts, we've both been working continuously for the past 12 months, and HDB has confirmed our eligibility for the grants and an HDB loan. We don't qualify for the proximity grant. We'd like a 4-room resale in Sengkang under $600,000, at least 80 years of lease left, no more than 400m from an MRT station. Assume an 80-year remaining lease for the sums. Which blocks work, what grants can we get and what's the most we can pay? Please put them on the map.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "SENGKANG"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 600000.0,
+      "min_remaining_lease_years": 80,
+      "amenity_radii_meters": {
+        "mrt": 400
+      }
+    },
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 80.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "monthly_income": 7200.0,
+        "youngest_buyer_age": 28,
+        "youngest_core_member_age": 28
+      },
+      "affordability": {
+        "loan_type": "hdb",
+        "remaining_lease_years": 80.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "monthly_income": 7200.0,
+        "cpf_oa_balance": 70000.0,
+        "cash_savings": 30000.0,
+        "youngest_buyer_age": 28,
+        "oldest_buyer_age": 29,
+        "average_applicant_age": 28.5
+      }
+    },
+    "omitted_financial_facts": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial",
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "SENGKANG"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 600000.0,
+          "min_lease_years": 80
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "SENGKANG"
+          ],
+          "amenity_constraints": {
+            "mrt": 400
+          }
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 80.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "monthly_income": 7200.0,
+          "youngest_buyer_age": 28,
+          "youngest_core_member_age": 28
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "loan_type": "hdb",
+          "remaining_lease_years": 80.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "monthly_income": 7200.0,
+          "cpf_oa_balance": 70000.0,
+          "cash_savings": 30000.0,
+          "youngest_buyer_age": 28,
+          "oldest_buyer_age": 29,
+          "average_applicant_age": 28.5
+        }
+      }
+    ],
+    "expected_behaviour": "Recommend exactly the matching blocks (median price within the affordability cap), map them, and report the grant total and maximum purchase price from the calculators.",
+    "ground_truth_facts": {
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": "sg-hdb-resale-2026-10-25.v1"
+      },
+      "price_query_blocks": 11,
+      "distance_filter_blocks": 704,
+      "affordability_cap": 600000.0,
+      "matching_block_keys": [
+        "164B RIVERVALE CRES",
+        "439C SENGKANG WEST AVE",
+        "266B COMPASSVALE BOW",
+        "430A FERNVALE LINK",
+        "453D FERNVALE RD",
+        "468B FERNVALE LINK",
+        "439B SENGKANG WEST AVE",
+        "469B SENGKANG WEST WAY"
+      ],
+      "financial": {
+        "calculate_cpf_housing_grants": {
+          "status": "ok",
+          "missing_inputs": [],
+          "enhanced_housing_grant": 25000.0,
+          "family_grant": 80000.0,
+          "proximity_housing_grant": 0.0,
+          "total_grants": 105000.0,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        },
+        "calculate_maximum_affordability": {
+          "status": "ok",
+          "missing_inputs": [],
+          "max_purchase_price": 660493.13,
+          "max_loan_amount": 455493.13,
+          "monthly_instalment": 2066.43,
+          "binding_constraint": "MSR",
+          "grants_included": true,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        }
+      }
+    }
+  },
+  {
+    "id": "E1-X02",
+    "category": "E",
+    "sub_use_case": "E1",
+    "query": "Our son starts Primary 1 in 2028 and we want to live within 1km of Meridian Primary School for the ballot priority. We're looking at 4-room resale flats in Pasir Ris, max $600k, with at least 60 years left on the lease. Which blocks qualify? Show me on the map please.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "PASIR RIS"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 600000.0,
+      "min_remaining_lease_years": 60,
+      "amenity_radii_meters": {
+        "school": 1000
+      },
+      "school_name": "Meridian Primary School"
+    },
+    "financial_inputs": null,
+    "omitted_financial_facts": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "PASIR RIS"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 600000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "verify_primary_school_distance",
+        "required_params": {
+          "school_name": "Meridian Primary School",
+          "bracket": "1km"
+        }
+      }
+    ],
+    "expected_behaviour": "Recommend exactly the matching blocks and map them.",
+    "ground_truth_facts": {
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": null
+      },
+      "price_query_blocks": 30,
+      "distance_filter_blocks": 172,
+      "affordability_cap": null,
+      "matching_block_keys": [
+        "774 PASIR RIS ST 71",
+        "639 PASIR RIS DR 1",
+        "745 PASIR RIS ST 71",
+        "637 PASIR RIS DR 1",
+        "773 PASIR RIS ST 71",
+        "747 PASIR RIS ST 71",
+        "760 PASIR RIS ST 71",
+        "767 PASIR RIS ST 71"
+      ]
+    }
+  },
+  {
+    "id": "E1-X03",
+    "category": "E",
+    "sub_use_case": "E1",
+    "query": "We're a married couple, both Singapore citizens aged 33 and 31, buying our first flat, no children. Our combined HFE-assessed income is $10,500 a month, we have $140,000 in CPF OA between us and $70,000 cash in the bank. No other loans, both continuously employed for the last 12 months, and our grant and HDB loan eligibility has been confirmed. No proximity grant. We're looking for a 5-room resale in Punggol under $750,000 with at least 80 years of lease, within 400m of an MRT station. Say we buy one for $720,000 and it's valued at $710,000, with an HDB loan of $520,000, legal and valuation fees of $3,500 and no ABSD. Using 80 years of remaining lease, what grants do we get, what's our maximum budget, how much is the stamp duty and how much cash do we need upfront? Map the blocks too.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "PUNGGOL"
+      ],
+      "flat_types": [
+        "5 ROOM"
+      ],
+      "max_budget_sgd": 750000.0,
+      "min_remaining_lease_years": 80,
+      "amenity_radii_meters": {
+        "mrt": 400
+      }
+    },
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "flat_type": "5 ROOM",
+        "remaining_lease_years": 80.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "monthly_income": 10500.0,
+        "youngest_buyer_age": 31,
+        "youngest_core_member_age": 31
+      },
+      "affordability": {
+        "loan_type": "hdb",
+        "remaining_lease_years": 80.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "monthly_income": 10500.0,
+        "cpf_oa_balance": 140000.0,
+        "cash_savings": 70000.0,
+        "youngest_buyer_age": 31,
+        "oldest_buyer_age": 33,
+        "average_applicant_age": 32.0
+      },
+      "upfront": {
+        "purchase_price": 720000.0,
+        "market_valuation": 710000.0,
+        "loan_amount": 520000.0,
+        "legal_and_valuation_fees": 3500.0,
+        "additional_buyer_stamp_duty": 0.0,
+        "loan_type": "hdb"
+      }
+    },
+    "omitted_financial_facts": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial",
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "PUNGGOL"
+          ],
+          "flat_types": [
+            "5 ROOM"
+          ],
+          "max_price": 750000.0,
+          "min_lease_years": 80
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "PUNGGOL"
+          ],
+          "amenity_constraints": {
+            "mrt": 400
+          }
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "flat_type": "5 ROOM",
+          "remaining_lease_years": 80.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "monthly_income": 10500.0,
+          "youngest_buyer_age": 31,
+          "youngest_core_member_age": 31
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "loan_type": "hdb",
+          "remaining_lease_years": 80.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "monthly_income": 10500.0,
+          "cpf_oa_balance": 140000.0,
+          "cash_savings": 70000.0,
+          "youngest_buyer_age": 31,
+          "oldest_buyer_age": 33,
+          "average_applicant_age": 32.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_bsd_and_upfront_outlay",
+        "required_params": {
+          "purchase_price": 720000.0,
+          "market_valuation": 710000.0,
+          "loan_amount": 520000.0,
+          "legal_and_valuation_fees": 3500.0,
+          "additional_buyer_stamp_duty": 0.0,
+          "loan_type": "hdb"
+        }
+      }
+    ],
+    "expected_behaviour": "Recommend exactly the matching blocks (median price within the affordability cap), map them, and report the grant total and maximum purchase price from the calculators, and the buyer's stamp duty and cash required upfront.",
+    "ground_truth_facts": {
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": "sg-hdb-resale-2026-10-25.v1"
+      },
+      "price_query_blocks": 9,
+      "distance_filter_blocks": 635,
+      "affordability_cap": 750000.0,
+      "matching_block_keys": [
+        "658A PUNGGOL EAST",
+        "122A EDGEDALE PLAINS",
+        "670B EDGEFIELD PLAINS",
+        "315A PUNGGOL WAY",
+        "120B EDGEDALE PLAINS",
+        "316D PUNGGOL WAY",
+        "122B EDGEDALE PLAINS"
+      ],
+      "financial": {
+        "calculate_cpf_housing_grants": {
+          "status": "ok",
+          "missing_inputs": [],
+          "enhanced_housing_grant": 0.0,
+          "family_grant": 50000.0,
+          "proximity_housing_grant": 0.0,
+          "total_grants": 50000.0,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        },
+        "calculate_maximum_affordability": {
+          "status": "ok",
+          "missing_inputs": [],
+          "max_purchase_price": 924260.82,
+          "max_loan_amount": 664260.82,
+          "monthly_instalment": 3013.55,
+          "binding_constraint": "MSR",
+          "grants_included": true,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        },
+        "calculate_bsd_and_upfront_outlay": {
+          "status": "ok",
+          "missing_inputs": [],
+          "buyer_stamp_duty": 16200.0,
+          "cash_required": 29700.0,
+          "total_upfront": 219700.0,
+          "cash_shortfall": 0.0,
+          "cash_over_valuation": 10000.0,
+          "cpf_oa_usable": 140000.0,
+          "grants_used": 50000.0,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        }
+      }
+    }
+  },
+  {
+    "id": "E1-X04",
+    "category": "E",
+    "sub_use_case": "E1",
+    "query": "My husband and I are Singapore citizens, 31 and 30, first-time buyers with no kids, looking at resale. We have $85,000 in CPF OA and $35,000 in cash, no other debts, both have worked continuously for the past 12 months, and HDB has confirmed our eligibility for the grants and an HDB loan. No proximity grant for us. Can you find 4-room resale flats in Serangoon below $700,000 with 70+ years of lease left and within 400m of an MRT? Work out the grants and loan on a 70-year remaining lease, show the blocks on the map, and tell us our grants and maximum budget.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "SERANGOON"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 700000.0,
+      "min_remaining_lease_years": 70,
+      "amenity_radii_meters": {
+        "mrt": 400
+      }
+    },
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 70.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 30,
+        "youngest_core_member_age": 30
+      },
+      "affordability": {
+        "loan_type": "hdb",
+        "remaining_lease_years": 70.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "cpf_oa_balance": 85000.0,
+        "cash_savings": 35000.0,
+        "youngest_buyer_age": 30,
+        "oldest_buyer_age": 31,
+        "average_applicant_age": 30.5
+      }
+    },
+    "omitted_financial_facts": [
+      "income"
+    ],
+    "expected_agents": [
+      "market_sql",
+      "spatial",
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "SERANGOON"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 700000.0,
+          "min_lease_years": 70
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "SERANGOON"
+          ],
+          "amenity_constraints": {
+            "mrt": 400
+          }
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 70.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 30,
+          "youngest_core_member_age": 30
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "loan_type": "hdb",
+          "remaining_lease_years": 70.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "cpf_oa_balance": 85000.0,
+          "cash_savings": 35000.0,
+          "youngest_buyer_age": 30,
+          "oldest_buyer_age": 31,
+          "average_applicant_age": 30.5
+        }
+      }
+    ],
+    "expected_behaviour": "Recommend exactly the matching blocks and map them; do not invent a maximum budget. Say which facts are missing (monthly_income, total_grants) and ask for them.",
+    "ground_truth_facts": {
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": "sg-hdb-resale-2026-10-25.v1"
+      },
+      "price_query_blocks": 7,
+      "distance_filter_blocks": 139,
+      "affordability_cap": null,
+      "matching_block_keys": [
+        "553 SERANGOON NTH AVE 3",
+        "552 SERANGOON NTH AVE 3"
+      ],
+      "financial": {
+        "calculate_cpf_housing_grants": {
+          "status": "needs_information",
+          "missing_inputs": [
+            "monthly_income"
+          ],
+          "enhanced_housing_grant": null,
+          "family_grant": null,
+          "proximity_housing_grant": null,
+          "total_grants": null,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        },
+        "calculate_maximum_affordability": {
+          "status": "needs_information",
+          "missing_inputs": [
+            "monthly_income",
+            "total_grants"
+          ],
+          "max_purchase_price": null,
+          "max_loan_amount": null,
+          "monthly_instalment": null,
+          "binding_constraint": null,
+          "grants_included": false,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        }
+      },
+      "missing_financial_inputs": [
+        "monthly_income",
+        "total_grants"
+      ]
+    },
+    "follow_up": {
+      "answer": "Sorry, forgot to say: our HFE-assessed household income is $8,000 a month.",
+      "financial_inputs": {
+        "grants": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 70.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "monthly_income": 8000.0,
+          "youngest_buyer_age": 30,
+          "youngest_core_member_age": 30
+        },
+        "affordability": {
+          "loan_type": "hdb",
+          "remaining_lease_years": 70.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "monthly_income": 8000.0,
+          "cpf_oa_balance": 85000.0,
+          "cash_savings": 35000.0,
+          "youngest_buyer_age": 30,
+          "oldest_buyer_age": 31,
+          "average_applicant_age": 30.5
+        }
+      },
+      "ground_truth_facts": {
+        "matching_block_keys": [
+          "553 SERANGOON NTH AVE 3",
+          "552 SERANGOON NTH AVE 3"
+        ],
+        "affordability_cap": 700000.0,
+        "financial": {
+          "calculate_cpf_housing_grants": {
+            "status": "ok",
+            "missing_inputs": [],
+            "enhanced_housing_grant": 20000.0,
+            "family_grant": 80000.0,
+            "proximity_housing_grant": 0.0,
+            "total_grants": 100000.0,
+            "rule_version": "sg-hdb-resale-2026-10-25.v1"
+          },
+          "calculate_maximum_affordability": {
+            "status": "ok",
+            "missing_inputs": [],
+            "max_purchase_price": 726103.48,
+            "max_loan_amount": 506103.48,
+            "monthly_instalment": 2296.04,
+            "binding_constraint": "MSR",
+            "grants_included": true,
+            "rule_version": "sg-hdb-resale-2026-10-25.v1"
+          }
+        },
+        "data": {
+          "snapshot_id": "be71fe16c4e7e7548eb7",
+          "window": "2025-10..2026-09",
+          "lease_reference_month": "2026-09",
+          "financial_rule_version": "sg-hdb-resale-2026-10-25.v1"
+        }
+      },
+      "expected_behaviour": "Keep the earlier search, complete the grant and budget estimate with the answer, and recommend exactly the matching blocks within the new cap."
+    }
+  },
+  {
+    "id": "E1-X05",
+    "category": "E",
+    "sub_use_case": "E1",
+    "query": "I'm 40, single, a Singapore citizen and buying my first flat (no children). My HFE-assessed income is $5,000 a month and I've saved $40,000 in cash. I have no debts, I've been continuously employed for the past 12 months, and my eligibility for the grants and an HDB loan is confirmed. No proximity grant. I'm after a 3-room resale in Bukit Batok for less than $450,000, with at least 60 years of lease remaining and within 400m of an MRT station. Please assume a 60-year remaining lease for the grant and loan, map what you find, and tell me my grants and maximum budget.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "BUKIT BATOK"
+      ],
+      "flat_types": [
+        "3 ROOM"
+      ],
+      "max_budget_sgd": 450000.0,
+      "min_remaining_lease_years": 60,
+      "amenity_radii_meters": {
+        "mrt": 400
+      }
+    },
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_Single",
+        "first_timer_status": true,
+        "flat_type": "3 ROOM",
+        "remaining_lease_years": 60.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "monthly_income": 5000.0,
+        "youngest_buyer_age": 40,
+        "youngest_core_member_age": 40
+      },
+      "affordability": {
+        "loan_type": "hdb",
+        "remaining_lease_years": 60.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "monthly_income": 5000.0,
+        "cash_savings": 40000.0,
+        "youngest_buyer_age": 40,
+        "oldest_buyer_age": 40,
+        "average_applicant_age": 40.0
+      }
+    },
+    "omitted_financial_facts": [
+      "cpf"
+    ],
+    "expected_agents": [
+      "market_sql",
+      "spatial",
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "BUKIT BATOK"
+          ],
+          "flat_types": [
+            "3 ROOM"
+          ],
+          "max_price": 450000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "BUKIT BATOK"
+          ],
+          "amenity_constraints": {
+            "mrt": 400
+          }
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_Single",
+          "first_timer_status": true,
+          "flat_type": "3 ROOM",
+          "remaining_lease_years": 60.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "monthly_income": 5000.0,
+          "youngest_buyer_age": 40,
+          "youngest_core_member_age": 40
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "loan_type": "hdb",
+          "remaining_lease_years": 60.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "monthly_income": 5000.0,
+          "cash_savings": 40000.0,
+          "youngest_buyer_age": 40,
+          "oldest_buyer_age": 40,
+          "average_applicant_age": 40.0
+        }
+      }
+    ],
+    "expected_behaviour": "Recommend exactly the matching blocks and map them; do not invent a maximum budget. Say which facts are missing (cpf_oa_balance) and ask for them.",
+    "ground_truth_facts": {
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": "sg-hdb-resale-2026-10-25.v1"
+      },
+      "price_query_blocks": 32,
+      "distance_filter_blocks": 132,
+      "affordability_cap": null,
+      "matching_block_keys": [
+        "372 BT BATOK ST 31",
+        "359 BT BATOK ST 31",
+        "364 BT BATOK ST 31",
+        "371 BT BATOK ST 31",
+        "533 BT BATOK ST 51",
+        "375 BT BATOK ST 31",
+        "360 BT BATOK ST 31",
+        "363 BT BATOK ST 31"
+      ],
+      "financial": {
+        "calculate_cpf_housing_grants": {
+          "status": "ok",
+          "missing_inputs": [],
+          "enhanced_housing_grant": 0.0,
+          "family_grant": 40000.0,
+          "proximity_housing_grant": 0.0,
+          "total_grants": 40000.0,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        },
+        "calculate_maximum_affordability": {
+          "status": "needs_information",
+          "missing_inputs": [
+            "cpf_oa_balance"
+          ],
+          "max_purchase_price": null,
+          "max_loan_amount": null,
+          "monthly_instalment": null,
+          "binding_constraint": null,
+          "grants_included": false,
+          "rule_version": "sg-hdb-resale-2026-10-25.v1"
+        }
+      },
+      "missing_financial_inputs": [
+        "cpf_oa_balance"
+      ]
+    },
+    "follow_up": {
+      "answer": "I have $95,000 in my CPF ordinary account.",
+      "financial_inputs": {
+        "grants": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_Single",
+          "first_timer_status": true,
+          "flat_type": "3 ROOM",
+          "remaining_lease_years": 60.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "monthly_income": 5000.0,
+          "youngest_buyer_age": 40,
+          "youngest_core_member_age": 40
+        },
+        "affordability": {
+          "loan_type": "hdb",
+          "remaining_lease_years": 60.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "monthly_income": 5000.0,
+          "cpf_oa_balance": 95000.0,
+          "cash_savings": 40000.0,
+          "youngest_buyer_age": 40,
+          "oldest_buyer_age": 40,
+          "average_applicant_age": 40.0
+        }
+      },
+      "ground_truth_facts": {
+        "matching_block_keys": [
+          "372 BT BATOK ST 31",
+          "359 BT BATOK ST 31",
+          "364 BT BATOK ST 31",
+          "371 BT BATOK ST 31",
+          "533 BT BATOK ST 51",
+          "375 BT BATOK ST 31",
+          "360 BT BATOK ST 31",
+          "363 BT BATOK ST 31"
+        ],
+        "affordability_cap": 450000.0,
+        "financial": {
+          "calculate_cpf_housing_grants": {
+            "status": "ok",
+            "missing_inputs": [],
+            "enhanced_housing_grant": 0.0,
+            "family_grant": 40000.0,
+            "proximity_housing_grant": 0.0,
+            "total_grants": 40000.0,
+            "rule_version": "sg-hdb-resale-2026-10-25.v1"
+          },
+          "calculate_maximum_affordability": {
+            "status": "ok",
+            "missing_inputs": [],
+            "max_purchase_price": 491314.68,
+            "max_loan_amount": 316314.68,
+            "monthly_instalment": 1435.02,
+            "binding_constraint": "MSR",
+            "grants_included": true,
+            "rule_version": "sg-hdb-resale-2026-10-25.v1"
+          }
+        },
+        "data": {
+          "snapshot_id": "be71fe16c4e7e7548eb7",
+          "window": "2025-10..2026-09",
+          "lease_reference_month": "2026-09",
+          "financial_rule_version": "sg-hdb-resale-2026-10-25.v1"
+        }
+      },
+      "expected_behaviour": "Keep the earlier search, complete the grant and budget estimate with the answer, and recommend exactly the matching blocks within the new cap."
+    }
+  },
+  {
+    "id": "E2-X01",
+    "category": "E",
+    "sub_use_case": "E2",
+    "query": "Is there any 4-room resale in Hougang under $700,000 that still has at least 70 years of lease and is within 400m of an MRT station? If nothing fits, what should I compromise on?",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "HOUGANG"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 700000.0,
+      "min_remaining_lease_years": 70,
+      "amenity_radii_meters": {
+        "mrt": 400
+      }
+    },
+    "financial_inputs": null,
+    "omitted_financial_facts": null,
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "HOUGANG"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 700000.0,
+          "min_lease_years": 70
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "HOUGANG"
+          ],
+          "amenity_constraints": {
+            "mrt": 400
+          }
+        }
+      }
+    ],
+    "expected_behaviour": "Say that no block meets every constraint, present nothing as a match, and offer the single change that unlocks blocks with its number.",
+    "ground_truth_facts": {
+      "data": {
+        "snapshot_id": "be71fe16c4e7e7548eb7",
+        "window": "2025-10..2026-09",
+        "lease_reference_month": "2026-09",
+        "financial_rule_version": null
+      },
+      "price_query_blocks": 82,
+      "distance_filter_blocks": 82,
+      "affordability_cap": null,
+      "matching_block_keys": [],
+      "relaxations": [
+        {
+          "constraint": "max_budget_sgd",
+          "original": 700000,
+          "relaxed": 770000.0,
+          "unlocked_blocks": 0,
+          "unlocked_block_keys": []
+        },
+        {
+          "constraint": "amenity_radii_meters.mrt",
+          "original": 400,
+          "relaxed": 550,
+          "unlocked_blocks": 5,
+          "unlocked_block_keys": [
+            "996C BUANGKOK CRES",
+            "470A UPP SERANGOON CRES",
+            "994C BUANGKOK LINK",
+            "994A BUANGKOK LINK",
+            "994B BUANGKOK LINK"
+          ]
+        },
+        {
+          "constraint": "min_remaining_lease_years",
+          "original": 70,
+          "relaxed": 65,
+          "unlocked_blocks": 1,
+          "unlocked_block_keys": [
+            "547 HOUGANG ST 51"
+          ]
+        }
+      ],
+      "best_single_change": {
+        "constraint": "amenity_radii_meters.mrt",
+        "original": 400,
+        "relaxed": 550,
+        "unlocked_blocks": 5,
+        "unlocked_block_keys": [
+          "996C BUANGKOK CRES",
+          "470A UPP SERANGOON CRES",
+          "994C BUANGKOK LINK",
+          "994A BUANGKOK LINK",
+          "994B BUANGKOK LINK"
+        ]
+      }
+    }
+  }
+]

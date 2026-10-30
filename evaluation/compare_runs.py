@@ -23,7 +23,8 @@ RESULTS = PROJECT_ROOT / "evaluation" / "results"
 MEASURES = [("fully right", lambda gt: gt.get("success")),
             ("exact blocks", lambda gt: gt.get("blocks_exact")),
             ("E1 grants and max price", lambda gt: gt.get("grants_correct") and gt.get("max_price_correct")
-             if "grants_correct" in gt else None)]
+             if "grants_correct" in gt else None),
+            ("E1 stamp duty and upfront cash", lambda gt: gt.get("upfront_correct"))]
 
 
 def resolve(arg: str) -> Path:
@@ -93,6 +94,8 @@ def main() -> None:
     for v in variants:
         per = {tag: counts(rows, v) for tag, rows in runs.items()}
         for n in names:
+            if not any(per[t][n][1] for t in runs):
+                continue        # no question in these runs is scored on it (the stamp-duty measure outside the extra set)
             cells = [f"{per[t][n][0]}/{per[t][n][1]}" if per[t][n][1] else "–" for t in runs]
             rates = [per[t][n][0] / per[t][n][1] for t in runs if per[t][n][1]]
             rng = f"{min(rates):.0%}–{max(rates):.0%}" if rates else "–"

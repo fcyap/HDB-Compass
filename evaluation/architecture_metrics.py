@@ -296,6 +296,12 @@ def ground_truth_scores(item: Dict[str, Any], state: Dict[str, Any]) -> Optional
             out["grants_correct"] = mentions_amount(draft, fin["calculate_cpf_housing_grants"].get("total_grants"))
             out["max_price_correct"] = mentions_amount(draft, fin["calculate_maximum_affordability"].get("max_purchase_price"))
             out["success"] = out["blocks_exact"] and out["grants_correct"] and out["max_price_correct"]
+            # a question that states a purchase price also asks for the stamp duty and the cash needed upfront
+            up = fin.get("calculate_bsd_and_upfront_outlay")
+            if up and up.get("status") == "ok":
+                out["upfront_correct"] = (mentions_amount(draft, up.get("buyer_stamp_duty"))
+                                          and mentions_amount(draft, up.get("cash_required")))
+                out["success"] = out["success"] and out["upfront_correct"]
     elif sub == "E1":
         out["success"] = out["blocks_exact"]
     elif sub == "E2":
