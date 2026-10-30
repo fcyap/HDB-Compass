@@ -13,9 +13,10 @@
 #     (the run settings record the switch; use a new tag, since rows from the other setting are rerun, not mixed)
 #   EVAL_DATASET=extra bash cluster/run_live_eval.sh extra1 A,B,C # the 6 extra questions (new towns, school, upfront)
 #
-# Needs: SMU VPN, CLUSTER_LOGIN in the gitignored .env, and an open shared session so no password is asked
-# mid-run. Open it once in your own terminal (it asks for your password there and stays open):
-#   ssh -M -S ~/.ssh/hdb-cluster.sock -o ControlPersist=8h -fN "$CLUSTER_LOGIN"
+# Needs: SMU VPN, CLUSTER_LOGIN in the gitignored .env, and the shared session: log in with  ssh $CLUSTER_LOGIN
+# in your terminal first (it asks for your password there). ~/.ssh/config keeps that login open for 8 h
+# (ControlMaster auto, ControlPath ~/.ssh/hdb-cluster.sock, ControlPersist 8h) and this script only reuses it:
+# every ssh call uses BatchMode=yes, so a closed session stops the run with a message instead of a password prompt.
 # KEEP_JOB=1 leaves the GPU job running for a following run (the next run reuses it; the last one must not set it).
 # Rows whose model calls could not reach the server are marked model_unreachable and rerun on the next resume.
 set -uo pipefail
@@ -30,9 +31,11 @@ if [[ -z "${CLUSTER_LOGIN:-}" && -f .env ]]; then
   CLUSTER_LOGIN="$(grep -E '^CLUSTER_LOGIN=' .env | tail -1 | cut -d= -f2-)"
 fi
 LOGIN="${CLUSTER_LOGIN:?Set CLUSTER_LOGIN=<your-cluster-id>@<cluster-address> in .env}"
-ssh -S "$SOCK" -O check "$LOGIN" 2>/dev/null || { echo "No shared session at $SOCK: open it first (see the header)."; exit 1; }
-SSH=(ssh -S "$SOCK" "$LOGIN")
+ssh -o BatchMode=yes -S "$SOCK" -O check "$LOGIN" 2>/dev/null \
+  || { echo "No shared session at $SOCK: on the VPN, log in with  ssh $LOGIN  in your terminal, then run again."; exit 1; }
+SSH=(ssh -o BatchMode=yes -S "$SOCK" "$LOGIN")
 export LLM_PROFILE=vllm
+export CLUSTER_BATCH=1   # tunnel.sh: fail instead of asking for a password
 
 JOB="$("${SSH[@]}" 'squeue --me -h -n hdb-vllm -o %i | head -1')"
 if [[ -z "$JOB" ]]; then
