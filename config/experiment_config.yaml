@@ -4,8 +4,7 @@
 global:
   seed: 42
   temperature: 0.0
-  embedding_model: "text-embedding-3-small"
-  llm_model: "gpt-4o-mini"
+  # No paid model: the chat model is set per profile under llm.profiles, the policy embeddings under policy_rag.
 
 # Member 2: Geospatial & Commute Engine Settings
 spatial:

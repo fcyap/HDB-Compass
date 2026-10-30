@@ -1,0 +1,233 @@
+"""
+Demo and cluster scripts (tests/test_demo_scripts.py). Owned by Member 4.
+Runs the scripts in a scratch copy of the repo with stand-ins for ssh, lsof, npm and caffeinate on the PATH, so no
+test ever reaches the cluster, starts a server or keeps the laptop awake. They prove what demo day relies on: a
+script never falls back to a password prompt, --dry-run stops before any ssh, and the early warnings fire.
+Also checks the llm config names no paid model and the guardrail/auditor contract in docs/INTERFACES.md §3.
+
+    LLM_PROFILE=none .venv/bin/pytest tests/test_demo_scripts.py -q
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+import yaml
+
+os.environ["LLM_PROFILE"] = "none"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from agents import supervisor as sv  # noqa: E402
+
+pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="the cluster scripts need bash")
+
+SCRIPTS = ["demo_start.sh", "run_live_eval.sh", "tunnel.sh"]
+LOGIN = "student@cluster.invalid"
+
+
+def _stub(path: Path, body: str) -> None:
+    path.write_text("#!/bin/sh\n" + body + "\n")
+    path.chmod(0o755)
+
+
+def sandbox(tmp: Path, vite_engines: str | None = None, rank_bm25: bool = True, fake_node: bool = False) -> dict:
+    """A copy of the scripts and frontend/package.json, a stand-in .venv python, and stand-in commands that log
+    their arguments. Returns the env to run a script with (HOME is the scratch dir, so no real ssh socket is seen)."""
+    (tmp / "cluster").mkdir()
+    for name in SCRIPTS:
+        shutil.copy(PROJECT_ROOT / "cluster" / name, tmp / "cluster" / name)
+    (tmp / "frontend").mkdir()
+    shutil.copy(PROJECT_ROOT / "frontend" / "package.json", tmp / "frontend" / "package.json")
+    if vite_engines is not None:
+        vite = tmp / "frontend" / "node_modules" / "vite"
+        vite.mkdir(parents=True)
+        (vite / "package.json").write_text(json.dumps({"name": "vite", "engines": {"node": vite_engines}}))
+    (tmp / ".venv" / "bin").mkdir(parents=True)
+    _stub(tmp / ".venv" / "bin" / "python", "exit 0" if rank_bm25 else "exit 1")
+    (tmp / ".env").write_text(f"CLUSTER_LOGIN={LOGIN}\n")
+    bin_dir = tmp / "fakebin"
+    bin_dir.mkdir()
+    for cmd, code in [("ssh", 255), ("npm", 1), ("caffeinate", 0), ("lsof", 1), ("curl", 1)]:
+        _stub(bin_dir / cmd, f'echo "$@" >> "{tmp}/{cmd}.calls"\nexit {code}')
+    if fake_node:
+        _stub(bin_dir / "node", "exit 0")
+    env = {k: v for k, v in os.environ.items() if k not in ("CLUSTER_LOGIN", "CLUSTER_SOCK", "LLM_TIMEOUT_S", "CLUSTER_BATCH")}
+    env.update(PATH=f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}", HOME=str(tmp))
+    return env
+
+
+def run(tmp: Path, env: dict, script: str, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["bash", str(tmp / "cluster" / script), *args], cwd=tmp, env=env,
+                          capture_output=True, text=True, timeout=60)
+
+
+def calls(tmp: Path, cmd: str) -> list[str]:
+    log = tmp / f"{cmd}.calls"
+    return log.read_text().splitlines() if log.exists() else []
+
+
+# --- the scripts as written -----------------------------------------------------------------------------------------
+@pytest.mark.parametrize("name", SCRIPTS)
+def test_script_parses(name):
+    assert subprocess.run(["bash", "-n", str(PROJECT_ROOT / "cluster" / name)]).returncode == 0
+
+
+@pytest.mark.parametrize("name", SCRIPTS)
+def test_every_shared_session_ssh_call_is_batch_mode(name):
+    # A call through the socket must never ask for a password: with ControlMaster auto in ~/.ssh/config, a closed
+    # socket would otherwise make ssh open a new session and prompt.
+    for line in (PROJECT_ROOT / "cluster" / name).read_text().splitlines():
+        code = line.split("#")[0] if not line.lstrip().startswith(("echo", "#")) else ""
+        if re.search(r"\bssh\b", code) and '-S "$SOCK"' in code:
+            assert "BatchMode=yes" in code, line
+
+
+@pytest.mark.parametrize("name", SCRIPTS)
+def test_headers_say_log_in_with_ssh_not_the_long_master_command(name):
+    text = (PROJECT_ROOT / "cluster" / name).read_text()
+    assert "ssh -M" not in text and "log in with  ssh $" in text.replace("Log in", "log in")
+
+
+# --- demo_start.sh --------------------------------------------------------------------------------------------------
+def test_dry_run_prints_the_plan_and_never_runs_ssh(tmp_path):
+    env = sandbox(tmp_path, vite_engines=">=1.0.0")
+    out = run(tmp_path, env, "demo_start.sh", "--dry-run", "--preview")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert calls(tmp_path, "ssh") == [] and calls(tmp_path, "npm") == [] and calls(tmp_path, "caffeinate") == []
+    assert "dry run: nothing started, no ssh" in out.stdout
+    assert f"ssh -o BatchMode=yes -S {tmp_path}/.ssh/hdb-cluster.sock -O check {LOGIN}" in out.stdout
+    assert "LLM_TIMEOUT_S=25 LLM_MAX_RETRIES=0" in out.stdout                      # the demo default
+    assert "vite build" in out.stdout and "vite preview" in out.stdout and "npm run dev" not in out.stdout
+    assert "keep the laptop awake" in out.stdout and "cancel the GPU job" in out.stdout
+    assert not (tmp_path / "frontend" / "dist").exists()
+
+
+def test_dry_run_keeps_the_timeout_override_and_keep_job(tmp_path):
+    env = sandbox(tmp_path, vite_engines=">=1.0.0")
+    env["LLM_TIMEOUT_S"] = "40"
+    out = run(tmp_path, env, "demo_start.sh", "--dry-run", "--keep-job")
+    assert "LLM_TIMEOUT_S=40" in out.stdout and "leave the GPU job running (--keep-job)" in out.stdout
+    assert "npm run dev" in out.stdout and "vite preview" not in out.stdout
+
+
+def test_dry_run_offline_needs_no_cluster_login(tmp_path):
+    env = sandbox(tmp_path, vite_engines=">=1.0.0")
+    (tmp_path / ".env").write_text("")
+    out = run(tmp_path, env, "demo_start.sh", "--dry-run", "--offline")
+    assert out.returncode == 0 and "LLM_PROFILE=none" in out.stdout and "CLUSTER_LOGIN" not in out.stdout
+
+
+def test_unknown_option_is_refused(tmp_path):
+    env = sandbox(tmp_path)
+    out = run(tmp_path, env, "demo_start.sh", "--dryrun")
+    assert out.returncode == 2 and "unknown option --dryrun" in out.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs Node")
+def test_warns_when_node_is_older_than_vite_needs_and_when_rank_bm25_is_missing(tmp_path):
+    env = sandbox(tmp_path, vite_engines=">=99.0.0", rank_bm25=False)
+    out = run(tmp_path, env, "demo_start.sh", "--dry-run")
+    assert "needs Node >=99.0.0" in out.stdout and "install Node 22 LTS" in out.stdout
+    assert "rank_bm25 is not installed" in out.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs Node")
+def test_no_warning_when_node_and_rank_bm25_are_fine(tmp_path):
+    env = sandbox(tmp_path, vite_engines="^1.0.0 || >=2.0.0")
+    out = run(tmp_path, env, "demo_start.sh", "--dry-run")
+    assert "needs Node" not in out.stdout and "rank_bm25" not in out.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs Node")
+def test_node_range_comes_from_package_json_before_npm_install(tmp_path):
+    # No node_modules yet: the Vite major in frontend/package.json (Vite 7 and later) gives ^20.19.0 || >=22.12.0
+    env = sandbox(tmp_path)
+    major = int(json.loads((PROJECT_ROOT / "frontend" / "package.json").read_text())["devDependencies"]["vite"]
+                .lstrip("^~>=").split(".")[0])
+    have = tuple(int(x) for x in subprocess.run(["node", "--version"], capture_output=True, text=True)
+                 .stdout.strip().lstrip("v").split("."))
+    fits = (have[0] == 20 and have >= (20, 19, 0)) or have >= (22, 12, 0)
+    out = run(tmp_path, env, "demo_start.sh", "--dry-run")
+    assert major >= 7
+    assert ("needs Node ^20.19.0 || >=22.12.0" in out.stdout) is (not fits), out.stdout
+
+
+def test_no_shared_session_stops_with_the_login_hint_and_no_password_prompt(tmp_path):
+    env = sandbox(tmp_path, fake_node=True)
+    (tmp_path / "frontend" / "node_modules").mkdir()
+    out = run(tmp_path, env, "demo_start.sh")
+    assert out.returncode == 1
+    assert f"log in with  ssh {LOGIN}  in your terminal" in out.stdout
+    ssh = calls(tmp_path, "ssh")
+    assert ssh and all("BatchMode=yes" in c for c in ssh) and "-O check" in ssh[0]
+    assert calls(tmp_path, "caffeinate") and "-w" in calls(tmp_path, "caffeinate")[0]   # awake for the run
+
+
+# --- run_live_eval.sh and tunnel.sh ---------------------------------------------------------------------------------
+def test_live_eval_without_a_session_stops_with_the_login_hint(tmp_path):
+    env = sandbox(tmp_path)
+    out = run(tmp_path, env, "run_live_eval.sh", "tag1", "C")
+    assert out.returncode == 1 and f"log in with  ssh {LOGIN}  in your terminal" in out.stdout
+    assert all("BatchMode=yes" in c for c in calls(tmp_path, "ssh"))
+
+
+def test_tunnel_called_from_a_script_never_falls_back_to_a_password_prompt(tmp_path):
+    env = sandbox(tmp_path)
+    env["CLUSTER_BATCH"] = "1"
+    out = run(tmp_path, env, "tunnel.sh")
+    assert out.returncode == 1 and f"log in with  ssh {LOGIN}" in out.stdout and calls(tmp_path, "ssh") == []
+    closed = run(tmp_path, env, "tunnel.sh", "--close")                 # demo cleanup after the session dropped
+    assert closed.returncode == 0 and "no forward to close" in closed.stdout and calls(tmp_path, "ssh") == []
+
+
+# --- config and the guardrail/auditor contract ----------------------------------------------------------------------
+def test_config_names_no_paid_model():
+    text = (PROJECT_ROOT / "config" / "experiment_config.yaml").read_text()
+    assert not re.search(r"gpt-|text-embedding-3|openai\.com|claude-|gemini", text)
+    cfg = yaml.safe_load(text)
+    assert cfg["global"]["temperature"] == 0.0 and cfg["global"]["seed"] == 42      # still read by agents/llm.py
+    for profile in cfg["llm"]["profiles"].values():
+        assert profile["base_url"].startswith("http://localhost:")
+
+
+def _interfaces_section_3() -> str:
+    doc = (PROJECT_ROOT / "docs" / "INTERFACES.md").read_text()
+    return doc.split("## 3.", 1)[1].split("\n## 4.", 1)[0]
+
+
+def test_guardrail_contract_names_the_hooks_the_supervisor_loads():
+    section, source = _interfaces_section_3(), (PROJECT_ROOT / "agents" / "supervisor.py").read_text()
+    for name in ("input_guardrail_node", "runtime_auditor_node"):
+        assert f"`{name}(state" in section and f'"{name}"' in source
+    assert "agents/guardrails.py" in section and "from agents import guardrails" in source
+
+
+def test_auditor_recipe_in_the_contract_separates_the_model_opening_from_the_code_facts():
+    # The recipe in docs/INTERFACES.md §3: the code-written facts are template_response(state), the same text the
+    # synthesis appended, so the auditor judges only what comes before them.
+    from unittest.mock import patch
+    from langchain_core.messages import AIMessage
+    from agents import arch_3_specialist_5agent as C
+    item = next(i for i in json.loads((PROJECT_ROOT / "evaluation" / "category_e_queries.json").read_text())
+                if i["id"] == "E1-03")
+    state = C.graph.invoke(sv.initial_state(item["query"], "C"))
+
+    class Writer:
+        def invoke(self, _msgs):
+            return AIMessage(content="Both Ang Mo Kio blocks fit your search.")
+
+    with patch.object(sv, "get_llm", return_value=Writer()):
+        after = {**state, **sv.synthesize_node({**state, "draft_response": ""})}
+    assert "sv.template_response(state)" in _interfaces_section_3()
+    facts = sv.template_response(after) if sv.writes_facts_in_code(after) else ""
+    draft = after["draft_response"]
+    opening = draft.split(facts, 1)[0].strip() if facts and facts in draft else draft
+    assert opening == "Both Ang Mo Kio blocks fit your search."
+    assert sv.template_response(state) == facts                     # the same text on every retry of the loop
