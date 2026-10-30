@@ -517,3 +517,24 @@ def test_opening_drops_abbreviated_and_relaxation_figures():
     assert text == "Blk 288B is the closest to the MRT." and dropped == 1
     assert sv.keep_supported_sentences("Extending the MRT distance unlocks more blocks.", facts)[1] == 0
     assert sv.keep_supported_sentences("Extending the MRT distance to 550m unlocks 6 blocks.", facts)[1] == 1
+
+# --- 31 Oct: everyday wordings the extra Category E questions showed the reader missed ------------------------------
+
+def test_confirmed_before_the_noun_worked_and_lease_wordings_are_read():
+    f = _facts("HDB has confirmed our eligibility for the grants and an HDB loan. We don't qualify for the proximity grant. "
+               "We've both worked continuously for the past 12 months. Assume an 80-year remaining lease for the sums.")
+    assert f["eligibility_confirmed"] and f["loan_eligibility_confirmed"] and f["continuous_employment_12_months"]
+    assert f["proximity"] == "none" and f["remaining_lease_years"] == 80
+    assert _facts("Work out the grants on a 70-year remaining lease.")["remaining_lease_years"] == 70
+    assert "eligibility_confirmed" not in _facts("HDB has not confirmed our eligibility for the grants.")
+    assert "proximity" not in _facts("Do we qualify for the proximity grant?")
+
+
+def test_policy_questions_in_other_words_reach_the_policy_agent():
+    for q in ("I am a 34-year-old single citizen. How do my flat options and grant rules differ if I apply for a 2-room "
+              "Flexi BTO now vs. a resale flat at age 35?",
+              "I sold my private residential property last month. How long must I wait before buying a resale flat?",
+              "Can I rent out my whole flat after the MOP?"):
+        assert "policy_rag" in sv.decide_routing(sv.rule_based_extract(q).model_dump()), q
+    assert sv.rule_based_extract("Find 4-room resale flats in Toa Payoh under $750,000 within 400m of an MRT station."
+                                 ).policy_question is None
