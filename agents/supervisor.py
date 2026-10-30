@@ -127,7 +127,8 @@ _ASKING_INSIDE = re.compile(r"\b(?:so\s+)?(?:how|what|which|why|when|where|who)\
                             r"should|shall)\s+(?:we|i|you|it|they|there|my|our|he|she)\b", re.I)
 # a hedge makes the whole clause unsure: "We're eligible I hope", "we may be first-timers", "approval pending"
 _HEDGE = re.compile(r"\b(?:unsure|not sure|not certain|uncertain|wonder\w*|i hope|hopefully|i think|i guess|i believe|"
-                    r"probably|maybe|perhaps|possibly|might|may|could be|pending|to be confirmed|tbc|waiting)\b", re.I)
+                    r"probably|maybe|perhaps|possibly|might|may|could be|pending|to be confirmed|tbc|waiting|worried|afraid|"
+                    r"heard|says|told (?:us|me)|according to|not true)\b", re.I)
 # a plan or condition: the clause counts only up to it ("We're an SC couple aged 32 and 30 and we want to know if ...",
 # "We earn 9k a month which should be enough", "We'll confirm eligibility next week")
 _PLAN = re.compile(r"\b(?:if|whether|unless|suppos\w*|in case|once|will|going to|gonna|need to|needs to|have to|has to|"
@@ -317,9 +318,10 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
                  r"|not married|unmarried|fianc[eé]e?s?|apply(?:ing)? for (?:an? )?(?:[2-5][- ]room )?(?:flexi )?btos?|can (?:we|i) (?:buy|apply)"
                  # rules asked about in other words: "grant rules", "2-room Flexi", "how long must I wait", "can I rent out",
                  # "after selling my private property"
-                 r"|(?:grant|housing|hdb|resale|bto) rules?|flexi|how long (?:must|do|should|will|would) (?:i|we) (?:have to )?wait"
-                 r"|wait(?:ing)? period|private (?:residential )?propert(?:y|ies)|(?:can|may) (?:i|we) (?:rent|sublet|sell)|rent out"
-                 r"|sublet|right[- ]?siz\w*|downgrad\w*|buyback)\b", q, re.I):
+                 r"|(?:grant|housing|hdb|resale|bto) rules?"
+                 r"|how long (?:must|do|should|will|would) (?:i|we) (?:have to )?wait (?:before|until|to) (?:i |we )?(?:can )?(?:buy|apply|purchase)"
+                 r"|(?:sold|selling|disposed of|disposal of) (?:my |our |the |a )?private (?:residential )?propert(?:y|ies)"
+                 r"|(?:can|may) (?:i|we) (?:rent out|sublet)|rent out (?:my|our|the) (?:whole )?(?:flat|room|bedroom|unit)|buyback)\b", q, re.I):
         policy = q
 
     return ExtractedConstraints(
@@ -794,15 +796,17 @@ _PURCHASE_PRICE = (r"(?:buy(?:ing)?|purchas(?:e|ing))\b[^$.]{0,40}\bfor " + _AMO
 # "using a 65-year remaining lease", "assume 65 years of remaining lease"
 _CALC_LEASE = (r"(\d{2})\s*(?:years?|yrs?) of remaining lease for the .{0,30}calc"
                r"|\b(?:assume|use|using)\s+(?:an?\s+)?(\d{2})[- ]?(?:years?|yrs?)\b(?:\s+of)?(?:\s+remaining)?\s+lease"
-               r"|\bon\s+an?\s+(\d{2})[- ]?(?:years?|yrs?)\s+(?:of\s+)?remaining\s+lease"
+               r"|\b(?:work out|calculate|calc\w*|sums?|grants?|loan)\b[^.;,]{0,40}\bon\s+an?\s+(\d{2})[- ]?(?:years?|yrs?)\s+"
+               r"(?:of\s+)?remaining\s+lease"
                r"|\bcalc\w*\s+(?:w|with|using)\s+(\d{2})\s*(?:years?|yrs?)\b(?:\s+of)?(?:\s+remaining)?\s+lease")
 # the buyers say no proximity grant applies: "no PHG", "no proximity grant (for us)", "we don't qualify for the proximity grant"
 _NO_PROXIMITY = (r"\bno proximity (?:housing )?grant\b|\bno PHG\b|\bproximity (?:housing )?grant (?:does not|doesn't|won't) apply\b"
-                 r"|\b(?:don't|do not|doesn't|does not|won't|will not|aren't|are not|not)\s+(?:qualify|eligible)\s+for\s+"
+                 r"|\b(?:we|i)\s*(?:don't|do not|won't|will not|'re not|are not|'m not|am not|aren't)\s+(?:qualify|eligible)\s+for\s+"
                  r"(?:the\s+|a\s+|any\s+)?(?:proximity (?:housing )?grant|PHG)\b")
-_CONTINUOUS_WORK = (r"(?:continuous(?:ly)?\s+(?:employ\w*|working|worked)|(?:employ\w*|working|worked)\s+(?:\w+\s+){0,2}continuously)"
+_WORKED = r"(?:employ\w*|working|(?:have|has|'ve)\s+(?:both\s+|each\s+|all\s+)?worked)"   # "have worked", not "worked in 2019"
+_CONTINUOUS_WORK = (rf"(?:continuous(?:ly)?\s+(?:employ\w*|working)|{_WORKED}\s+(?:\w+\s+){{0,2}}continuously)"
                     r".{0,40}\b(?:12|twelve)\s*(?:months?|mths?)\b"
-                    r"|(?:employ\w*|working|worked)\s+(?:12|twelve)\s*(?:months?|mths?)\s+continuously")
+                    rf"|{_WORKED}\s+(?:12|twelve)\s*(?:months?|mths?)\s+continuously")
 
 
 def _amount(m: re.Match) -> float:
@@ -836,12 +840,12 @@ def stated_financial_inputs(text: str, context: str = "") -> Dict[str, Dict[str,
         f["continuous_employment_12_months"] = True
     # "eligibility for the grants is confirmed", "HDB has confirmed our eligibility for the grants"
     if _stated_match(r"eligibility for (?:the )?grants?.{0,40}\bconfirmed\b|\bgrants?\b.{0,30}\beligibility\b.{0,25}\bconfirmed\b"
-                     r"|\bconfirmed\b.{0,30}\beligibility for (?:the )?grants?", s):
+                     r"|\bconfirmed (?:our|my) eligibility for (?:the )?grants?", s):
         f["eligibility_confirmed"] = True
     if _stated_match(r"eligibility for .{0,30}\b(?:HDB|bank) loan (?:is |has been )?confirmed"
                      r"|\b(?:HDB|bank) loan\b.{0,15}\beligibility\b.{0,25}\bconfirmed\b"
                      r"|\b(?:HDB|bank) loan(?: eligibility)? (?:is |has been )?confirmed"
-                     r"|\bconfirmed\b.{0,30}\beligibility for\b.{0,40}\b(?:HDB|bank) loan", s):
+                     r"|\bconfirmed (?:our|my) eligibility for (?:the )?(?:grants? and (?:an? |the )?)?(?:HDB|bank) loan", s):
         f["loan_eligibility_confirmed"] = True
     if re.search(r"\bbank loan\b", t, re.I):
         f["loan_type"] = "bank"
@@ -973,7 +977,7 @@ _LEASE_FIG = re.compile(r"(\d{2})\s*(?:-|\s)?\s*(?:years?|yrs?)\s*(?:of\s+)?(?:r
 # our first home"). A "please" elsewhere in the sentence ("..., so please work out our grants") is fine.
 _QUESTION_OR_REQUEST = re.compile(r"\b(?:can|could|would|will) you\b|\b(?:please\s+)?(?:confirm|check|tell me|let me know)\s+"
                                   r"(?:if|whether)\b|\bwhether\b|\bwhat if\b", re.I)
-_NEGATED_BEFORE = re.compile(r"(?:\bnot|n't|\bno longer|\bnever|\bneither|\bnor|\byet to|\bcannot)\b[^.;,]{0,25}$", re.I)
+_NEGATED_BEFORE = re.compile(r"(?:\bnot|n't|\bno longer|\bnever|\bneither|\bnor|\byet to|\bcannot|\bnobody|\bno one)\b[^.;,]{0,25}$", re.I)
 
 
 def _stated_in_one_sentence(text: str, *cues: str) -> bool:
@@ -1060,7 +1064,7 @@ def fact_is_grounded(field: str, value: Any, text: str) -> bool:
             _number_near(value, s, "tenure", window=20)
     if field == "remaining_lease_years":
         return _isint(value) and any(int(next(g for g in m.groups() if g)) == int(float(value))
-                                     for pat in (_LEASE_FIG, re.compile(_CALC_LEASE, re.I)) for m in pat.finditer(s))
+                                     for pat in (_LEASE_FIG, re.compile(_CALC_LEASE, re.I)) for m in pat.finditer(own))
     if field == "legal_and_valuation_fees":
         return _number_near(value, s, "fee")
     if field == "citizenship_pair":

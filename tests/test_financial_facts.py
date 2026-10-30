@@ -538,3 +538,22 @@ def test_policy_questions_in_other_words_reach_the_policy_agent():
         assert "policy_rag" in sv.decide_routing(sv.rule_based_extract(q).model_dump()), q
     assert sv.rule_based_extract("Find 4-room resale flats in Toa Payoh under $750,000 within 400m of an MRT station."
                                  ).policy_question is None
+
+
+def test_new_wordings_never_read_someone_elses_facts_or_a_search_filter():
+    # found by the 31 Oct review of the wordings above
+    for t, field in (("Find 4-room resale flats in Tampines on a 70-year remaining lease or more under $600,000.", "remaining_lease_years"),
+                     ("My parents live in a flat on a 50-year remaining lease.", "remaining_lease_years"),
+                     ("My sister doesn't qualify for the proximity grant but we live with our parents.", "proximity"),
+                     ("Our agent says we're not eligible for the PHG, but we think we are.", "proximity"),
+                     ("I confirmed with HDB that eligibility for the grants depends on our income.", "eligibility_confirmed"),
+                     ("Nobody has confirmed our eligibility for the grants.", "eligibility_confirmed"),
+                     ("We've confirmed our eligibility for the grants and are deciding on an HDB loan.", "loan_eligibility_confirmed"),
+                     ("My husband worked continuously for 12 months in 2019 and is now self-employed.", "continuous_employment_12_months")):
+        assert field not in _facts(text := t), text
+    assert not sv.fact_is_grounded("remaining_lease_years", 50, "My parents live in a flat on a 50-year remaining lease.")
+    for q in ("We don't own any private property. Find 4-room resale flats in Punggol under $550k.",
+              "I work flexi hours, so find 3-room flats in Woodlands within 500m of an MRT.",
+              "Can I sell my 4-room in Tampines for $650k?",
+              "We want to right-size to a 3-room flat in Toa Payoh under $450k near a hawker centre."):
+        assert "policy_rag" not in sv.decide_routing(sv.rule_based_extract(q).model_dump()), q
