@@ -21,6 +21,7 @@ __pycache__/
 
 # Large dataset raw download cache (data.gov.sg blobs)
 data/cache/
+data/chroma_db/
 
 # Generated databases
 data/local/

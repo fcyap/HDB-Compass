@@ -40,6 +40,7 @@ from mcp_server.spatial_onemap_tools import (
     sync_interactive_map_ui,
     verify_primary_school_distance,
 )
+from mcp_server.policy_rag_tools import retrieve_hdb_policy_knowledge
 
 # Unified FastMCP Server for HDB-Compass
 mcp = FastMCP("HDB-Compass-MCP-Server")
@@ -67,6 +68,9 @@ for function, output_model in (
 ):
     registered = mcp.tool(output_schema=output_model.model_json_schema())(function)
     registered.parameters = TOOL_INPUT_MODEL[function.__name__].model_json_schema()
+
+# Re-register Member 3 Policy RAG Tool on the unified server
+mcp.add_tool(retrieve_hdb_policy_knowledge)
 
 if __name__ == "__main__":
     print("[HDB-Compass] Starting FastMCP Server on stdio...", file=sys.stderr)

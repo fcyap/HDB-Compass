@@ -67,7 +67,19 @@ tools:
     calculate_cpf_housing_grants: real
     calculate_maximum_affordability: real
     calculate_bsd_and_upfront_outlay: real
-    retrieve_hdb_policy_knowledge: mock
+    retrieve_hdb_policy_knowledge: real
+
+# Member 3: Advanced RAG & Regulatory Knowledge Base Settings
+policy_rag:
+  chunk_size_tokens: 512
+  chunk_overlap_tokens: 64
+  sparse_retriever: "BM25Okapi"
+  dense_retriever: "all-MiniLM-L6-v2"
+  cross_encoder_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  rrf_k: 60
+  candidate_top_k: 20
+  final_passages_top_k: 5
+  active_pipeline: "RAG-3"  # RAG-1 (dense) | RAG-2 (hybrid RRF) | RAG-3 (hybrid + rerank)
 
 architecture:
   auditor_max_retries: 2            # proposal §5 risk 2
