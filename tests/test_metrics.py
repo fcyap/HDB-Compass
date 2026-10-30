@@ -328,3 +328,160 @@ def test_advice_to_check_with_hdb_is_not_asking_but_a_real_question_is():
     assert not M.asked_for_missing("Cash savings not provided; please check with HDB for the latest rules.", ["cash_savings"])
     assert M.asked_for_missing("Could you confirm your loan eligibility? Please confirm with HDB too.",
                                ["loan_eligibility_confirmed"])
+
+
+# --- Category C policy scoring, uncertainty and cost (31 Oct) ---------------------------------------------------------
+
+CAT_C = json.loads((Path(__file__).resolve().parent.parent / "evaluation" / "category_c_queries.json").read_text())
+
+
+def test_clause_scorer_follows_member_3s_rule():
+    assert M.clause_in_answer(["clawback", "6%", "9%"], "Subsidy **Clawback**: 6% to 9%")      # every word, any order
+    assert not M.clause_in_answer(["clawback", "6%", "9%"], "Clawback: 6% to 8%")
+    assert M.clause_in_answer("aged 35 and above", "Singles AGED 35 AND ABOVE may apply")     # whole, case ignored
+    # a sentence: 3 of its 4 words longer than two letters is enough (75%), 2 of 4 is not
+    assert M.clause_in_answer("applies only to the first resale", "it applies to the first sale only")
+    assert not M.clause_in_answer("applies only to the first resale", "it applies to every sale")
+    assert not M.clause_in_answer(["whole-flat", "rental"], "the whole flat cannot be rented")  # wording, not meaning
+
+
+def test_clause_scorer_agrees_with_member_3s_function():
+    ablation = pytest.importorskip("evaluation.run_rag_ablation")
+    answers = ["", "Plus flats have a 10-year MOP and a **3% to 6% subsidy recovery** on the first resale.",
+               "Whole-flat rental is prohibited. Clawback of 6% to 9% applies.",
+               "Singles aged 35 and above may buy 2-room Flexi BTO flats in any estate; income ceiling $7,000/month."]
+    for item in CAT_C:
+        for clause in item["ground_truth_facts"]["key_clauses"]:
+            answers.append(clause if isinstance(clause, str) else " ".join(clause))
+    for item in CAT_C:
+        for clause in item["ground_truth_facts"]["key_clauses"]:
+            for a in answers:
+                assert M.clause_in_answer(clause, a) == ablation.is_clause_in_passage(clause, ablation.clean_text(a)), \
+                    (item["id"], clause, a)
+
+
+def test_policy_answer_is_fully_right_only_with_every_clause():
+    item = next(i for i in CAT_C if i["id"] == "C1-03")
+    all_in = {"variant": "C", "draft_response": "Plus flats carry a 3% to 6% subsidy recovery, which applies only to the "
+                                                "first resale."}
+    s = M.score_item(item, all_in)
+    gt = s["ground_truth"]
+    assert gt["kind"] == "policy" and gt["success"] and gt["clauses_found"] == gt["clauses_total"] == 2
+    assert s["task_success"] and s["category"] == "C"
+    assert gt["known_wrong_clauses"] == 1                      # the pass rests on the out-of-date Plus figure
+    half = M.score_item(item, {"variant": "C", "draft_response": "Plus flats carry a 3% to 6% subsidy recovery."})
+    assert not half["task_success"] and half["ground_truth"]["clause_coverage"] == 0.5
+    assert half["ground_truth"]["clauses_missing"] == ["applies only to the first resale"]
+
+
+def test_known_wrong_clauses_are_listed_from_the_dataset_as_it_stands():
+    c101 = next(i for i in CAT_C if i["id"] == "C1-01")
+    wrong = [w["clause"] for w in M.known_wrong_clauses(c101)]
+    assert ["clawback", "3%", "6%"] in wrong and ["clawback", "6%", "9%"] in wrong
+    assert M.known_wrong_clauses(next(i for i in CAT_C if i["id"] == "C2-02")) == []
+    # once Member 3 corrects a clause it no longer matches the list, so it is no longer flagged
+    fixed = {"id": "C1-03", "ground_truth_facts": {"key_clauses": ["6% to 8% subsidy recovery"]}}
+    assert M.known_wrong_clauses(fixed) == []
+
+
+def test_wilson_interval_and_its_label():
+    lo, hi = M.wilson_interval(8, 10)
+    assert round(lo, 3) == 0.490 and round(hi, 3) == 0.943                # the textbook example
+    assert M.wilson_interval(0, 15)[0] == 0.0 and round(M.wilson_interval(0, 15)[1], 3) == 0.204
+    assert round(M.wilson_interval(15, 15)[0], 3) == 0.796 and M.wilson_interval(15, 15)[1] == 1.0
+    assert M.wilson_interval(0, 0) is None and M.rate_with_ci(0, 0) == "–"
+    assert M.rate_with_ci(15, 15) == "15/15 (100%, 95% CI 80%–100%)"
+    assert M.rate_with_ci(9, 15, short=True) == "9/15 (36%–80%)"
+
+
+def test_exact_mcnemar():
+    assert M.mcnemar_exact(0, 0) == 1.0
+    assert M.mcnemar_exact(2, 0) == 0.5 == M.mcnemar_exact(0, 2)
+    assert M.mcnemar_exact(15, 0) == pytest.approx(2 / 2 ** 15)
+    assert M.mcnemar_exact(3, 3) == 1.0
+
+
+def _row(variant, qid, right, sub=None):
+    return {"variant": variant, "id": qid, "sub_use_case": sub or qid[:2], "status": "ok", "latency_s": 1.0,
+            "scores": {"task_success": right, "routing": {"applicable": variant != "A", "exact": True},
+                       "tool_selection": {"f1": 1.0, "expected": [], "predicted": []}, "parameter_em": {"rate": None},
+                       "csr": {"rate": None}}}
+
+
+def test_paired_table_counts_each_question_once_per_pair():
+    from evaluation import analyze_category_e as AN
+    rows = [_row("A", "E1-01", True), _row("C", "E1-01", True),
+            _row("A", "E1-02", False), _row("C", "E1-02", True),
+            _row("A", "E2-01", True), _row("C", "E2-01", False),
+            _row("A", "E2-02", False), _row("C", "E2-02", False),
+            _row("B", "E1-01", False), _row("C", "C1-01", True), _row("B", "C1-01", True)]
+    md = AN.paired_table(rows)
+    assert "| E | A vs C | 4 | 1 | 1 | 1 | 1 | 1.000 |" in md
+    assert "| E | B vs C | 1 | 0 | 1 | 0 | 0 | 1.000 |" in md
+    assert "| C | B vs C | 1 | 1 | 0 | 0 | 0 | 1.000 |" in md
+    assert "| E1-02 | ✗ | – | ✓ | C only | – |" in md and "| E2-01 | ✓ | – | ✗ | A only | – |" in md
+    assert "Needs Variant C" in AN.paired_table([_row("A", "E1-01", True)])
+
+
+def test_category_c_caveat_names_the_wrong_clauses_and_who_passed():
+    from evaluation import analyze_category_e as AN
+    passed = _row("C", "C1-03", True)
+    passed["scores"]["ground_truth"] = {"kind": "policy", "success": True}
+    text = AN.known_wrong_caveat([passed, _row("A", "C1-03", False)])
+    assert "Caveat" in text and "3% to 6% subsidy recovery" in text and "6% to 8%" in text
+    assert "Variants that pass this question: C." in text
+    assert AN.known_wrong_caveat([_row("C", "E1-01", True)]) == ""
+
+
+def test_aggregates_split_by_category_and_keep_block_rates_to_block_questions():
+    block = {"id": "E1-01", "variant": "C", "task_success": True, "ground_truth": {"blocks_exact": True, "success": True},
+             "tool_selection": {"f1": 1.0}, "parameter_em": {"rate": 1.0}, "csr": {"rate": 1.0},
+             "routing": {"applicable": True, "exact": True}, "n_tool_calls": 3}
+    policy = {"id": "C1-01", "variant": "C", "category": "C", "task_success": False,
+              "ground_truth": {"kind": "policy", "success": False, "clause_coverage": 0.5},
+              "tool_selection": {"f1": 1.0}, "parameter_em": {"rate": 0.0}, "csr": {"rate": None},
+              "routing": {"applicable": True, "exact": True}, "n_tool_calls": 1}
+    agg = M.aggregate([block, policy])["C"]
+    assert agg["blocks_exact_rate"] == 1.0 and agg["policy_clause_coverage"] == 0.5     # the policy row is no block miss
+    assert agg["task_success"] == 1 and agg["task_success_ci95"] == M.wilson_interval(1, 2)
+    by = M.aggregate_by_category([block, policy])["C"]                   # the block row has no category: read the id
+    assert set(by) == {"C", "E"} and by["E"]["task_success"] == 1 and by["C"]["n"] == 1
+
+
+def test_compare_runs_breaks_a_mixed_file_down_by_category():
+    from evaluation import compare_runs as CR
+    e = _row("C", "E1-01", True)
+    e["scores"]["ground_truth"] = {"success": True, "blocks_exact": True}
+    c = _row("C", "C1-01", False)
+    c["scores"]["ground_truth"] = {"kind": "policy", "success": False}
+    lines = CR.table({"run1": [e, c]})
+    assert "| C | C | fully right | 0/1 (0%–79%) | 0% | 0%–0% |" in lines
+    assert "| C | E | fully right | 1/1 (21%–100%) | 100% | 100%–100% |" in lines
+    assert not any("| C | C | exact blocks" in line for line in lines)      # blocks do not apply to policy questions
+
+
+def test_cost_proxy_adds_the_follow_up_turn_and_says_it_is_a_proxy():
+    from evaluation.run_category_e_prelim import cost_proxy, dataset_path, CATEGORY_C
+    rows = [{"latency_s": 2.0, "tokens": {"total_tokens": 100},
+             "follow_up": {"status": "ok", "latency_s": 1.0, "tokens": {"total_tokens": 50}}},
+            {"latency_s": 4.0, "tokens": {"total_tokens": 300}},
+            {"latency_s": 1.0}]                                             # recorded before tokens were stored
+    cp = cost_proxy(rows)
+    assert cp["total_tokens"] == 450 and cp["median_tokens"] == 225
+    assert cp["total_latency_s"] == 8.0 and cp["median_latency_s"] == 3.0
+    assert "proxy" in cp["basis"] and "no paid API" in cp["basis"]
+    assert cost_proxy([])["total_tokens"] is None
+    assert dataset_path("category_c") == CATEGORY_C and CATEGORY_C.exists()
+
+
+def test_variant_c_policy_answers_are_scored_end_to_end():
+    from evaluation.run_category_e_prelim import summarise
+    item = next(i for i in CAT_C if i["id"] == "C2-02")
+    state = C.run(item["query"])
+    row = {"variant": "C", "id": item["id"], "sub_use_case": "C2", "status": "ok", "latency_s": 0.1,
+           "tokens": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, "scores": M.score_item(item, state),
+           "state_excerpt": {"n_candidates": 0}}
+    assert row["scores"]["tool_selection"]["expected"] == ["retrieve_hdb_policy_knowledge"]
+    assert row["scores"]["ground_truth"]["kind"] == "policy"
+    agg = summarise([row])["C"]
+    assert set(agg["by_category"]) == {"C"} and agg["cost_proxy"]["questions"] == 1
