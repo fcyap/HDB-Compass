@@ -58,7 +58,7 @@ def test_real_passages_read_as_a_clean_section(qid):
         if i in titles:
             assert re.fullmatch(r"- \*\*[^*\[\]]+\*\*(?: \([^*]+\))?", line), line     # the bold section title
         else:
-            assert line.startswith("  - ") and "**" not in line and len(body) <= sv.POLICY_LINE_CHARS + 1, line
+            assert line.startswith("  - ") and "**" not in line and len(body) <= sv.POLICY_LINE_MAX + 1, line
         if not body.startswith("Source: "):
             assert words(body) <= words(source), line                     # every word comes from the passages
     for start, end in zip(titles, titles[1:] + [len(lines)]):
@@ -111,11 +111,49 @@ def test_the_lines_shown_answer_each_part_of_the_question():
     assert 2 <= len(shown["lines"]) <= sv.POLICY_LINES_SHOWN
 
 
-def test_long_lines_are_cut_at_a_sentence_or_word():
+def test_long_lines_keep_whole_sentences():
     line = "First sentence is here. " + "word " * 80
     assert sv._trim_line(line) == "First sentence is here."
-    cut = sv._trim_line("x" * 10 + " longword" * 60)
-    assert cut.endswith("…") and len(cut) <= sv.POLICY_LINE_CHARS + 1 and "longwor…" not in cut
+    cut = sv._trim_line("x" * 10 + " longword" * 60)         # one sentence longer than any real line: cut at a word
+    assert cut.endswith("…") and len(cut) <= sv.POLICY_LINE_MAX + 1 and "longwor…" not in cut
+
+
+@pytest.mark.parametrize("qid, kept", [
+    ("C3-01", "must wait 15 months from the legal date of disposal before they are eligible to purchase a "
+              "non-subsidised HDB resale flat."),
+    ("C3-02", "must wait 15 months from the legal date of disposal"),
+    ("C3-04", "the transaction is ALWAYS PERMITTED, even if the quota for that ethnic group is completely full at both "
+              "the block and neighbourhood levels."),
+    ("C2-01", "(if aged 21+, eligible for 2-room to 5-room Standard resale flats)."),
+    ("C1-03", "Subsequent resale buyers who later sell the flat do not pay subsidy recovery")])
+def test_the_line_that_answers_keeps_its_figure_unit_and_condition(qid, kept):
+    lines = sv.policy_fact_lines(search(qid), QUERIES[qid])
+    assert any(kept in line for line in lines), lines
+    assert not any(re.search(r"\d…|\w…$", line) for line in lines), lines     # no line ends mid-sentence
+
+
+def test_no_line_of_the_corpus_is_cut_inside_a_sentence():
+    for line in {line for c in CHUNKS for line in sv._policy_lines(c["text"])}:
+        whole = set(sv._split_opening(line))
+        for question in ("", "How long must I wait after selling my private property?"):
+            trimmed = sv._trim_line(line, question)
+            assert len(trimmed) <= sv.POLICY_LINE_MAX
+            for piece in sv._split_opening(trimmed.replace(" … ", " ").removesuffix(" …")):
+                assert piece in whole or piece + ";" in whole or piece + "," in whole, (piece, line)
+
+
+def test_a_later_sentence_that_answers_the_question_is_kept_after_a_gap():
+    line = ("Single Parent — Min Age: 21; " + "; ".join(f"Rule {n}: something about the scheme here" for n in range(8))
+            + "; Wait-Out After Selling Private Property: 30 months (BTO) / 15 months (Resale)")
+    trimmed = sv._trim_line(line, "How long must I wait after selling my private property?")
+    assert trimmed.startswith("Single Parent — Min Age: 21;") and " … Wait-Out After Selling Private Property: 30 months " \
+        "(BTO) / 15 months (Resale)" in trimmed and len(trimmed) <= sv.POLICY_LINE_MAX
+    assert "Wait-Out" not in sv._trim_line(line) and sv._trim_line(line).endswith(" …")
+
+
+def test_a_sentence_too_long_to_show_is_cut_at_a_comma_or_before_a_number():
+    assert sv._cut_sentence("a " * 190 + "must wait 15 months from the date").endswith("must wait…")
+    assert sv._cut_sentence("word " * 60 + "thing, " + "word " * 40).endswith("thing…")
 
 
 # --- the opening ----------------------------------------------------------------------------------------------------
@@ -142,6 +180,24 @@ def test_an_opening_may_state_a_figure_the_policy_lines_give(sentence):
     "The clawback on a $900k sale is 6%."])            # an amount not written as the passages write it
 def test_an_opening_figure_not_in_the_policy_lines_is_dropped(sentence):
     assert sv.keep_supported_sentences(sentence, "", QUERIES["C1-01"], PLUS) == ("", 1)
+
+
+@pytest.mark.parametrize("sentence", [
+    "Plus flats carry a clawback between 3% and 9%.",   # the ends of two ranges, joined by "between ... and"
+    "The Plus clawback ranges from 3% up to 9%.",
+    "Plus flat clawback is 3%/9%.",
+    "The Plus clawback is 3% to 9%.",
+    "Plus flats carry a 3% clawback.",                  # one end of "3% to 6%" is not a figure on its own
+    "Prime flats carry a 9% clawback."])
+def test_a_range_is_checked_as_a_range_however_it_is_written(sentence):
+    assert sv.keep_supported_sentences(sentence, "", QUERIES["C1-03"], search("C1-03")) == ("", 1)
+
+
+@pytest.mark.parametrize("sentence", [
+    "Plus flats carry a clawback of between 3% and 6% on the first resale.",
+    "The Plus clawback ranges from 3% up to 6%, and Prime from 6% to 9%."])
+def test_a_range_the_passages_give_may_be_written_another_way(sentence):
+    assert sv.keep_supported_sentences(sentence, "", QUERIES["C1-03"], search("C1-03")) == (sentence, 0)
 
 
 def test_without_policy_passages_every_figure_is_still_dropped():

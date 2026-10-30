@@ -1844,7 +1844,8 @@ def plain_relaxation(constraint: str, original: Any, relaxed: Any) -> Tuple[str,
 # names) and a line under a bare lead-in carries that lead-in. Nothing else is added and nothing is reworded.
 POLICY_PASSAGES_SHOWN = 3
 POLICY_LINES_SHOWN = 4      # at most; at least 2 when the passage has them
-POLICY_LINE_CHARS = 240     # longer lines are cut at a sentence end, or at a word with "…"
+POLICY_LINE_CHARS = 240     # a longer line keeps its whole sentences that fit; a sentence is never cut…
+POLICY_LINE_MAX = 400       # …unless it alone is longer than this (no real passage line is)
 _STOP_WORDS = frozenset((
     "a about after all also am an and any are as at be been before but by can could did do does for from get got had has "
     "have how i if in into is it its me more must my no not now of on or our out so than that the their them then there "
@@ -1960,15 +1961,50 @@ def _policy_lines(text: str) -> List[str]:
     return out
 
 
-def _trim_line(line: str, limit: int = POLICY_LINE_CHARS) -> str:
+def _trim_line(line: str, question: str = "", limit: int = POLICY_LINE_CHARS) -> str:
+    """A long line cut to whole sentences (a table row's cells, which end in ";", count as sentences), never inside
+    one, so a figure keeps its unit and a rule keeps its condition ("must wait 15 months from ...", "ALWAYS PERMITTED,
+    even if the quota ... is completely full"). The first sentence is always kept and the ones after it while the line
+    fits in `limit`; a later sentence holding a question word the kept ones lack is kept too while the line fits in
+    POLICY_LINE_MAX ("Wait-Out After Selling Private Property: ..." for "How long must I wait"). Sentences left out
+    between or after the kept ones show as "…". Only one sentence longer than POLICY_LINE_MAX on its own is cut inside:
+    at a comma or dash, else at a word that is not a number."""
     if len(line) <= limit:
         return line
-    kept = ""
-    for sentence in re.split(r"(?<=[.;])\s+", line):
-        if len(kept) + len(sentence) + 1 > limit:
-            break
-        kept = f"{kept} {sentence}".strip()
-    return kept or line[:limit].rsplit(" ", 1)[0].rstrip(",;:—- ") + "…"
+    parts = _split_opening(line)
+    if len(parts[0]) > POLICY_LINE_MAX:
+        return _cut_sentence(parts[0])
+    keep = [0]
+    while len(keep) < len(parts) and len(_join_kept(parts, keep + [len(keep)])) <= limit:
+        keep.append(len(keep))
+    words = _content_words(question)
+    covered = set().union(*(_content_words(parts[i]) for i in keep)) & words
+    for i in range(keep[-1] + 1, len(parts)):
+        adds = (_content_words(parts[i]) & words) - covered
+        if adds and len(_join_kept(parts, keep + [i])) <= POLICY_LINE_MAX:
+            keep.append(i)
+            covered |= adds
+    return _join_kept(parts, keep)
+
+
+def _join_kept(parts: List[str], keep: List[int]) -> str:
+    text = parts[keep[0]]
+    for prev, i in zip(keep, keep[1:]):
+        text += (" " if i == prev + 1 else " … ") + parts[i]
+    if keep[-1] < len(parts) - 1 and not text.endswith((".", "!", "?")):
+        text = text.rstrip(";,: ") + " …"
+    return text
+
+
+def _cut_sentence(sentence: str, limit: int = POLICY_LINE_MAX) -> str:
+    head = sentence[:limit - 1]
+    at = max(head.rfind(", "), head.rfind(" — "), head.rfind(" ("))
+    if at > limit // 2:
+        return head[:at].rstrip() + "…"
+    words = head.rsplit(" ", 1)[0].split(" ")
+    while len(words) > 1 and re.search(r"\d", words[-1]):
+        words.pop()                     # "must wait 15" would lose "months"
+    return " ".join(words).rstrip(",;:—- ") + "…"
 
 
 def shown_policy_passages(passages: Any, question: str = "") -> List[Dict[str, Any]]:
@@ -1990,7 +2026,7 @@ def shown_policy_passages(passages: Any, question: str = "") -> List[Dict[str, A
             sections[key] = {"title": title, "parent": parent, "lines": lines, "source_url": p.get("source_url") or ""}
     pool = [line for s in sections.values() for line in s["lines"]]
     for s in sections.values():
-        s["lines"] = [_trim_line(s["lines"][i]) for i in _pick_lines(s["lines"], question, pool)]
+        s["lines"] = [_trim_line(s["lines"][i], question) for i in _pick_lines(s["lines"], question, pool)]
     return list(sections.values())
 
 
@@ -2269,12 +2305,15 @@ def _split_opening(text: str) -> List[str]:
 
 # A policy answer may state a figure the policy lines shown to the user give, written the same way: "Plus flats have a
 # 10-year MOP" is what the passage says. A figure is a number with its unit: an amount as written ("$120,000" is not
-# "$120k"), "6%", "10-year" / "10 years", "15 months", or a bare number ("aged 35"); "6% to 9%" is a range and must
-# appear as that range. Figures in a worked example ("Example: If a Plus flat ... is sold for $900,000") are not facts
-# about the user's case, so they are not allowed.
+# "$120k"), "6%", "10-year" / "10 years", "15 months", or a bare number ("aged 35"). A range ("6% to 9%", "between 6%
+# and 9%", "6% up to 9%") must appear as that range, and its ends are not figures on their own: otherwise "3%" alone, or
+# "between 3% and 9%", would pass by taking the ends of the passage's "3% to 6%" and "6% to 9%". Figures in a worked
+# example ("Example: If a Plus flat ... is sold for $900,000") are not facts about the user's case, so they are not
+# allowed.
 _POLICY_FIGURE = (r"\$\s?\d+(?:,\d{3})*(?:\.\d+)?(?:k\b)?"
                   r"|\d+(?:,\d{3})*(?:\.\d+)?(?:\s?%|\s?-?\s?(?:years?|yrs?|months?|weeks?|days?|km)\b)?")
-_POLICY_FIGURE_SPAN = re.compile(rf"({_POLICY_FIGURE})(?:\s*(?:to|-|–)\s*({_POLICY_FIGURE}))?", re.I)
+_POLICY_FIGURE_SPAN = re.compile(rf"\bbetween\s+({_POLICY_FIGURE})\s+and\s+({_POLICY_FIGURE})"
+                                 rf"|({_POLICY_FIGURE})(?:\s*(?:to|up\s+to|through|-|–|—)\s*({_POLICY_FIGURE}))?", re.I)
 
 
 def _figure_key(text: str) -> Tuple[str, float]:
@@ -2294,27 +2333,23 @@ def _figures(text: str) -> List[Any]:
     """The figures in a text, each a key or, for a range, a pair of keys sharing a unit ("3 to 6%" is 3% to 6%)."""
     found: List[Any] = []
     for m in _POLICY_FIGURE_SPAN.finditer(_NOT_A_FIGURE.sub(" ", (text or "").replace("**", ""))):
-        a = _figure_key(m.group(1))
-        if not m.group(2):
+        low, high = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+        a = _figure_key(low)
+        if not high:
             found.append(a)
             continue
-        b = _figure_key(m.group(2))
+        b = _figure_key(high)
         unit = a[0] or b[0]
         found.append(((unit, a[1]), (unit, b[1])))
     return found
 
 
 def policy_figures(passages: Any, question: str = "") -> set:
-    """Every figure in the policy lines the answer shows (titles and lines, but not worked examples; the ends of a
-    range count on their own too)."""
+    """Every figure in the policy lines the answer shows (titles and lines, but not worked examples). A range is one
+    figure: its ends are not allowed on their own."""
     shown = shown_policy_passages(passages, question)
     lines = [s["title"] for s in shown] + [line for s in shown for line in s["lines"]]
-    allowed: set = set()
-    for f in _figures("\n".join(line for line in lines if not re.match(r"(?:worked )?example\b", line, re.I))):
-        allowed.add(f)
-        if isinstance(f[0], tuple):
-            allowed.update(f)
-    return allowed
+    return set(_figures("\n".join(line for line in lines if not re.match(r"(?:worked )?example\b", line, re.I))))
 
 
 def keep_supported_sentences(opening: str, facts: str, user_text: str = "",
@@ -2388,8 +2423,9 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
                            "number is removed)")
                 if policy:
                     numbers = ("you may state a policy figure (a period, age, percentage or amount) only exactly as the "
-                               "Policy lines above write it, digits and unit included (\"10-year MOP\", \"3% to 6%\"); write "
-                               "no other numbers (any other sentence with a number is removed)")
+                               "Policy lines above write it, digits and unit included (\"10-year MOP\", \"3% to 6%\"), a range "
+                               "always whole and never one end of it or ends of two ranges joined; write no other numbers "
+                               "(any other sentence with a number is removed)")
                 rule = ("The facts section below was written by code from the tool results and will be shown to the user "
                         "exactly as written, straight after your text:\n---\n" + facts + "\n---\nWrite only a short opening "
                         "(one or two sentences that answer the question directly) and, when there are several options, the "
