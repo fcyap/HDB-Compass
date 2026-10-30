@@ -19,6 +19,7 @@ class UserConstraints(TypedDict, total=False):
     citizenship_scheme: Optional[str]      # e.g. "SC_SC_FirstTimer", "SC_Single_35"
     financial_inputs: Optional[Dict[str, Any]]
     comparable_resale: Optional[Dict[str, Any]]
+    requested_tools: List[str]             # optional tools the user asked for (supervisor.OPTIONAL_TOOLS), read by code
 
 
 class HDBCompassState(TypedDict, total=False):

@@ -782,6 +782,9 @@ MONEY_FIELDS = ("cash_savings", "cpf_oa_balance", "monthly_income")
 FIN_TOOL_SECTION = {"calculate_cpf_housing_grants": "grants", "calculate_maximum_affordability": "affordability",
                     "calculate_bsd_and_upfront_outlay": "upfront"}
 _AMOUNT = r"\$\s?(\d[\d,]*(?:\.\d+)?)\s*(k)?"
+# "buying a 4-room for $600k"; not a budget ("looking to buy in Tampines for $600k or less", "for $600k max")
+_PURCHASE_PRICE = (r"(?:buy(?:ing)?|purchas(?:e|ing))\b[^$.]{0,40}\bfor " + _AMOUNT
+                   + r"(?!\d|[,.]\d|\s*k\b)(?!\s*(?:(?:or|and)\s+(?:less|lower|below|under|cheaper)|max\w*|at most|tops)\b)")
 # the lease the user wants the calculation to assume: "use 65 yrs remaining lease for the calc", "calc w 65 yrs lease",
 # "using a 65-year remaining lease", "assume 65 years of remaining lease"
 _CALC_LEASE = (r"(\d{2})\s*(?:years?|yrs?) of remaining lease for the .{0,30}calc"
@@ -852,7 +855,7 @@ def stated_financial_inputs(text: str, context: str = "") -> Dict[str, Dict[str,
     if len(flat_types) == 1:
         f["flat_type"] = flat_types[0]
     upfront: Dict[str, Any] = {}
-    m = re.search(r"(?:buy(?:ing)?|purchas(?:e|ing))\b[^$.]{0,40}\bfor " + _AMOUNT, s, re.I)
+    m = re.search(_PURCHASE_PRICE, s, re.I)
     if m:
         upfront["purchase_price"] = _amount(m)
     for field, pattern in (("market_valuation", r"valued at " + _AMOUNT), ("loan_amount", r"loan of " + _AMOUNT),
@@ -1378,6 +1381,11 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
     for vals in (constraints.get("financial_inputs") or {}).values():
         for k in unsure:
             vals.pop(k, None)
+    # read by code from every user message so far, so an ask in the first turn still counts after a follow-up reply
+    constraints["requested_tools"] = requested_tools(users or query)
+    comparables = "query_comparable_resale_transactions"
+    if comparables not in constraints["requested_tools"] and coordinates_stated(constraints.get("comparable_resale"), users or query):
+        constraints["requested_tools"].append(comparables)
     return {"user_constraints": constraints, "errors": errors, "model_constraints": model_reading}
 
 
@@ -1422,7 +1430,8 @@ AGENT_SYSTEM = {
     "spatial": "You are the Geospatial & Commute agent. Use your tools to find HDB blocks meeting amenity-distance, "
                "school-boundary and commute constraints. Pass towns exactly as given. Reply with a short summary when done.",
     "financial": "You are the Financial & Grant Calculator agent. Never do arithmetic yourself: call the calculators "
-                 "for grants, affordability (MSR/LTV) and upfront outlay (BSD). Never invent eligibility confirmations "
+                 "for grants, affordability (MSR/LTV) and, when the user asks for upfront costs, upfront outlay (BSD). "
+                 "Never invent eligibility confirmations "
                  "or infer citizenship/first-timer status from legacy citizenship_scheme. Pass grant results forward once; "
                  "real affordability already includes grants. Supply actual valuation, loan and quoted fees for upfront "
                  "costs. Unknown funds/debts/grants are not zero. Report missing inputs and unsupported scenarios, "
@@ -1430,6 +1439,107 @@ AGENT_SYSTEM = {
     "policy_rag": "You are the Regulatory Policy RAG agent. Call retrieve_hdb_policy_knowledge with the user's regulatory "
                   "question, then answer ONLY from the returned passages with inline [source] citations.",
 }
+
+
+# Tools that run only when the user asks for them in so many words. The plans used to cost the budget for stamp duty
+# whenever a budget or income was given, and to pull comparable sales whenever comparable_resale was filled, so a
+# search-and-budget question got an upfront-costs section nobody asked for (and lost Tool F1 precision: no Category E
+# question expects either call). "Cash savings" or "resale transaction" alone is not an ask. The patterns are read one
+# sentence at a time (requested_tools), so ".{0,60}" never reaches into the next sentence.
+_ASKS_UPFRONT = re.compile(
+    r"\bup[- ]?front\b|(?<!monthly )\boutlays?\b|\bdown[- ]?payments?\b|\bstamp dut(?:y|ies)\b|\b(?:BSD|ABSD)\b"
+    # "how much cash do we need", "how much would we need in cash and CPF", "how much do I need to pay in cash"
+    r"|\bhow much\s+(?:cash|CPF)\b(?!\s+savings).{0,40}?\b(?:need|needed|required|pay|put down|set aside)\b"
+    r"|\bhow much\b.{0,40}?\b(?:need|pay|put down|fork out|set aside|come up with)\b.{0,30}?\b(?:cash|CPF)\b(?!\s+savings)"
+    # "cash needed", "the total cash and CPF needed", "the initial costs", "the costs of buying"
+    r"|\b(?:cash|CPF)(?:\s+(?:and|or|&|\+|plus)\s+(?:cash|CPF))?\s+(?:[\w-]+\s+){0,2}?(?:needed|required|outlay|up[- ]?front)\b"
+    r"|\b(?:initial|one[- ]?(?:time|off)|closing|completion|buying|purchase)\s+(?:[\w-]+\s+)?(?:costs?|fees|expenses|outlay)\b"
+    r"|\bcosts?\s+(?:of|for|involved in)\s+(?:the\s+)?(?:buying|purchas\w*|completing|completion)\b"
+    r"|" + _PURCHASE_PRICE, re.I)
+_NO_BUYER_WORDS = r"(?:(?!\b(?:I|I'm|I'll|I'd|we|we're|we'll|we'd|you|you're|to)\b).)"   # words with no buyer as the subject
+_ASKS_COMPARABLES = re.compile(
+    r"\bcomparables?\b|\bcomps\b|\bsimilar\s+(?:[\w-]+\s+){0,2}?(?:flats?|units?|homes?|ones)\b"
+    r"|\brecent(?:ly)?\s+(?:[\w-]+\s+){0,2}?(?:transactions?|sales?|sold|transacted)\b"
+    r"|\btransactions?\s+(?:[\w-]+\s+){0,3}?(?:recently|lately)\b|\btransactions?\s+(?:around|near|nearby|close to|within)\b"
+    r"|\bcompar\w*\s+(?:[\w-]+\s+){0,2}?(?:sales|transactions)\b"
+    r"|\b(?:nearby|neighbou?ring|surrounding)\s+(?:[\w-]+\s+){0,2}?(?:sales|transactions|resale prices?)\b"
+    # sales or prices at a place given by a distance or coordinates: "resale prices within 500m of latitude 1.33"
+    r"|\b(?:sales|prices?)\s+(?:within\s+\d+\s*k?m\b|(?:around|near|close to|at)\s+(?:lat\w*|-?\d{1,3}\.\d{3,}))"
+    # what flats sold for: "how much did 4-room flats near ... sell for", "what are flats around ... going for",
+    # "what prices did nearby flats fetch"; not "which flats should we go for" or "flats that go for under $600k"
+    r"|\b(?:flats?|units?|homes?|ones|they|blocks?|HDBs?|apartments?)\b" + _NO_BUYER_WORDS + r"{0,60}?"
+    r"\b(?:(?:sell|sold|selling|go|going|gone|went|transact(?:ed)?)\s+for\b(?!\s+(?:under|below|less|at most|no more|up to)\b|\s*\$)"
+    r"|fetch(?:ed|es|ing)?\b)"
+    r"|\bhow much\s+(?:did|do|does|have|has|were|was|are|is)\b" + _NO_BUYER_WORDS + r"{0,60}?"
+    r"\b(?:sell|sold|selling|go|going|gone|went|transact(?:ed)?)\s+for\b"
+    r"|\bwhat\s+(?:did\s+)?(?:people|buyers|others)\s+(?:pay|paid)\b", re.I)
+OPTIONAL_TOOLS = {"calculate_bsd_and_upfront_outlay": _ASKS_UPFRONT,
+                  "query_comparable_resale_transactions": _ASKS_COMPARABLES}
+# What turns a match into a non-ask: the user turning it down just before ("we don't care about stamp duty"), a
+# question about the rules ("what are the ABSD rules for PR couples": the policy search answers that, not the
+# calculator), and a "how much ... need ... CPF" about the loan or income ("how much would I pay monthly from CPF"),
+# which affordability covers.
+_TURNED_DOWN = re.compile(r"\b(?:(?:don'?t|do not|doesn'?t|does not)(?!\s+forget\b)|no need|not (?:interested|asking|"
+                          r"worried|bothered|concerned)|never ?mind|skip|ignore|leave out|(?<!n't )(?<!not )forget)\b"
+                          r"\W+(?:[\w'-]+\W+){0,3}$", re.I)   # "don't forget the stamp duty" is still an ask
+_DUTY_RULES = re.compile(r"\b(?:rules?|polic(?:y|ies)|regulations?|regime|remissions?|exemptions?|appl(?:y|ies)|works?)\b",
+                         re.I)
+_LOAN_WORDS = re.compile(r"\b(?:month\w*|instal\w*|loan|mortgage|earn|income|salary)\b", re.I)
+
+
+def _is_ask(name: str, sentence: str, m: re.Match) -> bool:
+    if _TURNED_DOWN.search(sentence[:m.start()].rsplit(",", 1)[-1]):
+        return False
+    if name != "calculate_bsd_and_upfront_outlay":
+        return True
+    said = m.group(0)
+    if re.fullmatch(r"stamp dut(?:y|ies)|A?BSD", said, re.I):
+        # rule words within three words either side: "the ABSD rules", "rules for stamp duty", "does BSD apply"
+        around = " ".join(sentence[:m.start()].split()[-3:] + sentence[m.end():].split()[:3])
+        return not _DUTY_RULES.search(around)
+    return not (said.lower().startswith("how much") and _LOAN_WORDS.search(said))
+
+
+def requested_tools(text: str) -> List[str]:
+    """The optional tools (OPTIONAL_TOOLS) the user's words ask for: upfront costs (upfront, stamp duty or BSD, cash
+    needed, a down payment, the initial costs, or a price they are buying for) and comparable sales (comparables,
+    recent or nearby transactions, similar flats, what flats sold for). Read sentence by sentence; a match the user
+    turns down ("we don't care about stamp duty") or that asks about the rules ("the ABSD rules") is not an ask."""
+    sentences = re.split(r"(?<=[.?!;])\s+|\n+", text or "")   # "1.3329" has no space after its point, so stays whole
+    return [name for name, asks in OPTIONAL_TOOLS.items()
+            if any(_is_ask(name, s, m) for s in sentences for m in asks.finditer(s))]
+
+
+def coordinates_stated(where: Optional[Dict[str, Any]], text: str) -> bool:
+    """Whether comparable_resale's latitude and longitude are both numbers the user typed. Comparable sales are the
+    only tool that takes coordinates, so a user who gives them is asking for those sales whatever words they use. The
+    model reads them; code checks they are the user's own numbers."""
+    if not where or where.get("latitude") is None or where.get("longitude") is None:
+        return False
+    typed = [float(x) for x in re.findall(r"-?\d{1,3}\.\d{2,}", text or "")]
+    return all(any(abs(x - float(where[k])) < 1e-4 for x in typed) for k in ("latitude", "longitude"))
+
+
+def asked_for(name: str, c: Dict[str, Any], query: str = "") -> bool:
+    """Whether a tool may run for this question. Only the optional tools need an ask: in the user's messages as the
+    extraction step recorded it (c["requested_tools"]), or in the query itself where no extraction ran. A purchase
+    price code read from the user's words (financial_inputs.upfront) is an ask for upfront costs."""
+    if name not in OPTIONAL_TOOLS:
+        return True
+    if name == "calculate_bsd_and_upfront_outlay" and (c.get("financial_inputs") or {}).get("upfront"):
+        return True
+    asked = c.get("requested_tools")
+    return name in (asked if asked is not None else requested_tools(query))
+
+
+CODE_ONLY_KEYS = ("requested_tools",)
+
+
+def constraints_for_model(c: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The constraints as a model is shown them. requested_tools is code's reading for code and is never shown: it
+    names the optional tools, so it would steer which tools A's and B's models pick (their unasked calls must still
+    count against Tool F1), and live prompts stay as they were before it existed."""
+    return None if c is None else {k: v for k, v in c.items() if k not in CODE_ONLY_KEYS}
 
 
 def _scheme_to_pair(scheme: Optional[str]) -> Tuple[str, bool]:
@@ -1446,7 +1556,7 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
     plan: List[Tuple[str, Dict[str, Any]]] = []
     towns = c.get("towns") or []
     if agent == "market_sql":
-        if c.get("comparable_resale"):
+        if c.get("comparable_resale") and asked_for("query_comparable_resale_transactions", c, query):
             plan.append(("query_comparable_resale_transactions", c["comparable_resale"]))
         if towns:
             plan.append(("query_resale_blocks_by_criteria", dict(
@@ -1478,8 +1588,9 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
                                                               monthly_income=income, near_parents_4km=near_parents)))
             plan.append(("calculate_maximum_affordability", dict(monthly_income=income, cpf_oa_balance=c.get("cpf_oa_balance") or 0.0,
                                                                  cash_savings=c.get("cash_savings") or 0.0, loan_type="hdb")))
-        if c.get("max_budget_sgd") or income:
-            plan.append(("calculate_bsd_and_upfront_outlay", dict(purchase_price=c.get("max_budget_sgd") or 0.0, loan_type="hdb", total_grants=0.0)))
+        price = ((c.get("financial_inputs") or {}).get("upfront") or {}).get("purchase_price") or c.get("max_budget_sgd")
+        if (price or income) and asked_for("calculate_bsd_and_upfront_outlay", c, query):
+            plan.append(("calculate_bsd_and_upfront_outlay", dict(purchase_price=price or 0.0, loan_type="hdb", total_grants=0.0)))
     elif agent == "policy_rag":
         plan.append(("retrieve_hdb_policy_knowledge", dict(query=c.get("policy_question") or query, policy_domain=None)))
     return plan
@@ -1505,7 +1616,7 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
         try:
             bound = llm.bind_tools([r.as_langchain_tool() for r in runners.values()])
             msgs: List[Any] = [sys_msg(system_prompt),
-                               HumanMessage(content=f"User query: {query}\n\nExtracted constraints (JSON): {json.dumps(c)}")]
+                               HumanMessage(content=f"User query: {query}\n\nExtracted constraints (JSON): {json.dumps(constraints_for_model(c))}")]
             for _ in range(max_iter):
                 ai: AIMessage = bound.invoke(msgs)
                 msgs.append(ai)
@@ -1583,7 +1694,7 @@ def run_financial_sequence(runners, constraints, query):
         aff = outputs[aff_name] = runners[aff_name](**aff_args)
         if aff.get("status") == "ok" and upfront_args.get("loan_type", "hdb") == aff_args.get("loan_type", "hdb"):
             upfront_args.setdefault("ltv_ratio", aff["ltv_ratio"])
-    if upfront_name in runners:
+    if upfront_name in runners and asked_for(upfront_name, constraints, query):   # never cost the budget unasked
         if "purchase_price" not in upfront_args and constraints.get("max_budget_sgd") is not None:
             upfront_args["purchase_price"] = constraints["max_budget_sgd"]
         if upfront_args.get("purchase_price", 0) > 0:
@@ -1640,8 +1751,11 @@ def requested_outputs(agent: str, outputs: Dict[str, Any], c: Dict[str, Any], qu
     """Evidence gate for Variant C's market and spatial specialists: a tool's result becomes evidence only when the
     extracted constraints call for that tool (deterministic_plan). In the 27 Oct rerun the spatial agent ran the school
     check with school_name null and the commute check with blank workplaces, and their empty results filtered every
-    block out (E1-04); the market agent pulled comparable sales at coordinates it made up. The calls stay in the
-    tool-call log, so tool-selection metrics still count them."""
+    block out (E1-04); the market agent pulled comparable sales at coordinates it made up. The financial agent's
+    upfront costs count only when the user asked for them (asked_for). The calls stay in the tool-call log, so
+    tool-selection metrics still count them."""
+    if agent == "financial":
+        return {name: out for name, out in outputs.items() if asked_for(name, c, query)}
     if agent not in ("market_sql", "spatial"):
         return outputs
     asked = {name for name, _ in deterministic_plan(agent, c, query)}
@@ -1651,8 +1765,12 @@ def requested_outputs(agent: str, outputs: Dict[str, Any], c: Dict[str, Any], qu
 def make_specialist_node(agent: str) -> Callable[[HDBCompassState], Dict[str, Any]]:
     def node(state: HDBCompassState) -> Dict[str, Any]:
         c = state.get("user_constraints", {})
-        outputs, log, errors, final = run_react(agent, tools_for_agent(agent), AGENT_SYSTEM[agent], last_user_query(state), c)
-        update = slot_outputs(requested_outputs(agent, outputs, c, last_user_query(state)), c.get("towns") or [])
+        query = last_user_query(state)
+        # the optional tools (upfront costs, comparable sales) are offered to the model only when the user asked for
+        # them; Variants A and B keep the full list, so their models' unasked calls still show in Tool F1
+        tools = [name for name in tools_for_agent(agent) if asked_for(name, c, query)]
+        outputs, log, errors, final = run_react(agent, tools, AGENT_SYSTEM[agent], query, c)
+        update = slot_outputs(requested_outputs(agent, outputs, c, query), c.get("towns") or [])
         update.update({"tool_call_log": log, "errors": errors,
                        "subagent_notes": [{"agent": agent, "text": (final or "")[:4000]}] if final else []})
         return update
@@ -2049,9 +2167,12 @@ def template_response(state: HDBCompassState) -> str:
         blocks or _sql_blocks(state) is not None
         or state.get("spatial_block_candidates") is not None
     )
+    # a search tool that could not be loaded checked nothing, so the blocks meet only the constraints that were checked
+    partial = any(t in BLOCK_FILTERS for t in unavailable_tools(state))
     if searched:
         if blocks:
-            lines.append(f"**{len(blocks)} candidate block(s)** match all stated constraints:")
+            lines.append(f"**{len(blocks)} candidate block(s)** match "
+                         f"{'the constraints that could be checked' if partial else 'all stated constraints'}:")
             for b in blocks[:LISTED_BLOCKS]:
                 price = f" — median ${b['median_resale_price']:,.0f}" if b.get("median_resale_price") else ""
                 lease = f", {b['median_remaining_lease_years']:.0f} yrs lease" if b.get("median_remaining_lease_years") else ""
@@ -2061,7 +2182,8 @@ def template_response(state: HDBCompassState) -> str:
             if len(blocks) > LISTED_BLOCKS:
                 lines.append(f"- …and {len(blocks) - LISTED_BLOCKS} more, all shown on the map.")
         else:
-            lines.append("**No block satisfies every constraint at once.**")
+            lines.append("**No block satisfies every constraint that could be checked.**" if partial
+                         else "**No block satisfies every constraint at once.**")
             rel = state.get("relaxation") or {}
             if rel.get("best_single_change"):
                 bsc = rel["best_single_change"]
@@ -2070,6 +2192,7 @@ def template_response(state: HDBCompassState) -> str:
             for s in rel.get("suggestions", []):
                 label, orig, new = plain_relaxation(s["constraint"], s["original"], s["relaxed"])
                 lines.append(f"- {label}: {orig} → {new} unlocks {s['unlocked_blocks']}")
+    lines.extend(not_checked_lines(state))   # straight after the blocks, so what was not checked is read with them
     sql = state.get("sql_market_results") or {}
     lines.extend(_comparable_lines(sql))
     if "compute_town_price_timeseries" in sql:
@@ -2194,6 +2317,36 @@ def unbuilt_tools_used(state: HDBCompassState) -> List[str]:
     return sorted(mocked & called)
 
 
+# What a tool checks, for the answer to say when its module could not be loaded (tool_registry: status
+# "unavailable"). Its result is dropped like any error (slot_outputs), so without this note a broken price search left
+# spatial-only blocks listed as matching "all stated constraints" and a broken calculator's section simply vanished.
+NOT_CHECKED = {
+    "query_resale_blocks_by_criteria": "Prices, remaining leases and flat types",
+    "compute_town_price_timeseries": "Town price trends",
+    "query_comparable_resale_transactions": "Comparable resale sales",
+    "compare_bto_launch_vs_resale": "BTO launch prices",
+    "filter_blocks_by_amenity_proximity": "Distances to amenities",
+    "verify_primary_school_distance": "Distances to the primary school",
+    "compute_dual_transit_commute": "Commute times",
+    "calculate_cpf_housing_grants": "Housing grants",
+    "calculate_maximum_affordability": "The maximum budget",
+    "calculate_bsd_and_upfront_outlay": "Upfront costs",
+    "retrieve_hdb_policy_knowledge": "HDB policy rules",
+}
+BLOCK_FILTERS = ("query_resale_blocks_by_criteria", "filter_blocks_by_amenity_proximity",
+                 "verify_primary_school_distance", "compute_dual_transit_commute")
+
+
+def unavailable_tools(state: HDBCompassState) -> List[str]:
+    """Tools this answer called whose module could not be loaded (see NOT_CHECKED)."""
+    return sorted({t.get("tool") for t in state.get("tool_call_log") or []
+                   if str(t.get("error") or "").startswith("unavailable:") and t.get("tool") in NOT_CHECKED})
+
+
+def not_checked_lines(state: HDBCompassState) -> List[str]:
+    return [f"- {NOT_CHECKED[t]} could not be checked: that tool is unavailable right now." for t in unavailable_tools(state)]
+
+
 def synthesis_evidence(state: HDBCompassState) -> Tuple[Dict[str, Any], str]:
     """What the final writing step may see, by architecture.
     C (and the default): the supervisor's join is the ONLY source of blocks. Raw price-query rows are withheld, so the
@@ -2201,12 +2354,14 @@ def synthesis_evidence(state: HDBCompassState) -> Tuple[Dict[str, Any], str]:
     B: no join in code by design. The writer gets the data agent's own reconciliation plus the raw price AND distance
       results, and must do the join itself."""
     unbuilt = unbuilt_tools_used(state)
-    base = {"user_constraints": state.get("user_constraints"),
+    base = {"user_constraints": constraints_for_model(state.get("user_constraints")),
             "financial_breakdown": state.get("financial_breakdown"),
             "rag_policy_passages": [] if "retrieve_hdb_policy_knowledge" in unbuilt else state.get("rag_policy_passages")}
     if unbuilt:
         base["not_available_yet"] = [UNBUILT_NOTES[t] for t in unbuilt]
-    sql = {k: v for k, v in (state.get("sql_market_results") or {}).items() if k not in unbuilt}
+    if unavailable_tools(state):   # only then, so every other prompt stays as it was
+        base["could_not_check"] = [line[2:] for line in not_checked_lines(state)]
+    sql ={k: v for k, v in (state.get("sql_market_results") or {}).items() if k not in unbuilt}
     if state.get("variant") == "B":
         notes = [n.get("text", "") for n in state.get("subagent_notes") or [] if n.get("agent") == "data"]
         return ({**base, "data_agent_summary": notes[-1] if notes else "", "sql_market_results": sql,
@@ -2217,6 +2372,8 @@ def synthesis_evidence(state: HDBCompassState) -> Tuple[Dict[str, Any], str]:
     counts = {"price_and_lease_matches": len(sql_rows) if sql_rows is not None else None,
               "distance_matches": len(spatial) if spatial is not None else None,
               "blocks_meeting_every_constraint": len(matches)}
+    if any(t in BLOCK_FILTERS for t in unavailable_tools(state)):   # a search that could not run checked nothing
+        counts["blocks_meeting_the_constraints_that_could_be_checked"] = counts.pop("blocks_meeting_every_constraint")
     market_context = {k: v for k, v in sql.items() if k != "query_resale_blocks_by_criteria"}
     searched = ({"market_sql", "spatial"} & set(state.get("active_subagents") or [])) or sql_rows is not None \
         or spatial is not None or matches or (state.get("user_constraints") or {}).get("towns")
@@ -2378,12 +2535,24 @@ def keep_supported_sentences(opening: str, facts: str, user_text: str = "",
     return " ".join(kept), dropped
 
 
+def code_written_facts_on() -> bool:
+    """The architecture.code_written_facts switch. HDB_CODE_WRITTEN_FACTS=0 or 1 overrides it for one run without
+    editing the config (the live ablation), like HDB_EXTRACTION_REASONING. Any other value is refused rather than
+    guessed at, so an ablation never runs with the switch silently the wrong way round."""
+    env = os.getenv("HDB_CODE_WRITTEN_FACTS", "").strip()
+    if env:
+        if env not in ("0", "1"):
+            raise ValueError(f"HDB_CODE_WRITTEN_FACTS must be 0 or 1, not {env!r}")
+        return env == "1"
+    return bool(load_config().get("architecture", {}).get("code_written_facts", True))
+
+
 def writes_facts_in_code(state: HDBCompassState) -> bool:
     """Variant C (and the app): the facts section of the answer (blocks, prices, leases, distances, relaxations,
     grants, budget) is written by code, the same text the no-model template produces, and the model writes only
     the opening and the trade-offs, so it cannot drop or garble a number. Variant B keeps the model as the writer
-    by design (no join in code). Switch: architecture.code_written_facts."""
-    return state.get("variant") != "B" and bool(load_config().get("architecture", {}).get("code_written_facts", True))
+    by design (no join in code). Switch: architecture.code_written_facts (code_written_facts_on)."""
+    return state.get("variant") != "B" and code_written_facts_on()
 
 
 def policy_answer_passages(state: HDBCompassState) -> Optional[List[Dict[str, Any]]]:
@@ -2405,6 +2574,9 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     log: List[Dict[str, Any]] = []
     payload = build_map_payload(blocks, c, log) if blocks else {}
     evidence, rule = synthesis_evidence(state)
+    unchecked = (" Some tools could not run: say plainly what could_not_check lists, and never say the blocks meet "
+                 "every constraint or give a figure those tools would have produced.") if evidence.get("could_not_check") else ""
+    rule += unchecked
     clar = clarification_needed(state)
     if clar:
         evidence["clarification_needed"] = clar
@@ -2430,7 +2602,8 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
                         "exactly as written, straight after your text:\n---\n" + facts + "\n---\nWrite only a short opening "
                         "(one or two sentences that answer the question directly) and, when there are several options, the "
                         "trade-offs between them (price vs lease vs distance). Do not repeat or change any price, grant, "
-                        "budget, distance, lease, count or relaxation figure: " + numbers + ", and do not contradict the facts.")
+                        "budget, distance, lease, count or relaxation figure: " + numbers + ", and do not contradict the facts."
+                        + unchecked)
             msgs = [sys_msg(SYNTH_SYSTEM),
                     HumanMessage(content=f"User query: {user_request(state)}\n\n{rule}\n\nEvidence JSON:\n{json.dumps(evidence, default=str)[:24000]}")]
             if verdict and not verdict.get("passed", True) and verdict.get("critique"):
@@ -2460,16 +2633,43 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Member 5 hook points: input guardrail and runtime auditor
 # ---------------------------------------------------------------------------
-def _load_member5_hooks() -> Tuple[Optional[Callable], Optional[Callable]]:
+HOOK_NAMES = ("input_guardrail_node", "runtime_auditor_node")
+
+
+def _load_member5_hooks(module: str = "agents.guardrails") -> Tuple[Optional[Callable], Optional[Callable], List[str]]:
+    """Member 5's guardrail and auditor, and what went wrong loading them. A module that does not exist yet is the
+    expected state until Member 5 delivers: both stay pass-throughs, quietly. A module that exists but fails to import
+    or lacks a node is a bug: one loud warning, and the problem is kept in HOOK_LOAD_PROBLEMS, which the guardrail and
+    auditor pass-throughs write into each run's errors and the evaluation records in its run settings."""
+    import importlib
+    import importlib.util
     try:
-        from agents import guardrails
+        if importlib.util.find_spec(module) is None:
+            return None, None, []
+        mod = importlib.import_module(module)
+    except Exception as e:  # noqa: BLE001 — a broken hook module must not stop the app; it is reported instead
+        problems = [f"{module} failed to import ({type(e).__name__}: {str(e)[:200]})"]
+        hooks: List[Optional[Callable]] = [None, None]
+    else:
+        hooks = [getattr(mod, name, None) for name in HOOK_NAMES]
+        problems = [f"{module} has no callable {name}" for name, fn in zip(HOOK_NAMES, hooks) if not callable(fn)]
+        hooks = [fn if callable(fn) else None for fn in hooks]
+    if problems:
+        print(f"\n{'!' * 78}\nWARNING: Member 5 hooks: {'; '.join(problems)}.\nThe missing guardrail or auditor "
+              f"runs as a pass-through; every answer records this in its errors.\n{'!' * 78}\n", file=sys.stderr, flush=True)
+    return hooks[0], hooks[1], problems
 
-    except Exception:  # noqa: BLE001
-        return None, None
-    return getattr(guardrails, "input_guardrail_node", None), getattr(guardrails, "runtime_auditor_node", None)
+
+_INPUT_GUARDRAIL, _AUDITOR, HOOK_LOAD_PROBLEMS = _load_member5_hooks()
 
 
-_INPUT_GUARDRAIL, _AUDITOR = _load_member5_hooks()
+def hook_problem_note(node: str) -> List[str]:
+    """The errors entry a pass-through adds when its Member 5 hook exists but could not be loaded. The note quotes no
+    exception text (that is in HOOK_LOAD_PROBLEMS), so it can never be mistaken for a model error by the evaluation."""
+    if not HOOK_LOAD_PROBLEMS:
+        return []
+    return [f"{node}: Member 5 hook could not be loaded ({len(HOOK_LOAD_PROBLEMS)} problem(s), see the run settings); "
+            "pass-through used"]
 
 
 def set_hooks(input_guardrail: Optional[Callable] = None, auditor: Optional[Callable] = None) -> None:
@@ -2484,7 +2684,8 @@ def set_hooks(input_guardrail: Optional[Callable] = None, auditor: Optional[Call
 def input_guardrail_node(state: HDBCompassState) -> Dict[str, Any]:
     if _INPUT_GUARDRAIL is not None:
         return _INPUT_GUARDRAIL(state)
-    return {}  # pass-through until Member 5 delivers
+    note = hook_problem_note("input_guardrail")
+    return {"errors": note} if note else {}  # pass-through until Member 5 delivers
 
 
 def guardrail_gate(state: HDBCompassState) -> str:
@@ -2495,8 +2696,12 @@ def audit_node(state: HDBCompassState) -> Dict[str, Any]:
     if _AUDITOR is not None:
         return _AUDITOR(state)
     prev = state.get("auditor_verdict") or {}
-    return {"auditor_verdict": AuditorVerdict(passed=True, critique="auditor not installed (pass-through)",
-                                              retry_count=int(prev.get("retry_count", 0))).model_dump()}
+    critique = "auditor failed to load (pass-through)" if HOOK_LOAD_PROBLEMS else "auditor not installed (pass-through)"
+    update: Dict[str, Any] = {"auditor_verdict": AuditorVerdict(passed=True, critique=critique,
+                                                                retry_count=int(prev.get("retry_count", 0))).model_dump()}
+    if not prev:   # once per answer, not on every rewrite round
+        update["errors"] = hook_problem_note("runtime_auditor")
+    return update
 
 
 def audit_gate(state: HDBCompassState) -> str:

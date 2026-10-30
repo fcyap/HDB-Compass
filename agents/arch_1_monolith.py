@@ -47,6 +47,7 @@ def monolith_node(state: HDBCompassState) -> Dict[str, Any]:
     # user's own messages so numbers quoted in an earlier assistant reply are never taken as constraints.
     users = " ".join(m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user")
     c = sv.rule_based_extract(users).model_dump()
+    c["requested_tools"] = sv.requested_tools(users)   # the fallback plan runs upfront costs and comparables only when asked
     outputs, log, errors, final_text = sv.run_react(
         "monolith", list(TOOL_OWNER), MONOLITH_SYSTEM, query, c,
         max_iter=sv.load_config()["architecture"]["subagent_max_tool_iterations"] * 2,

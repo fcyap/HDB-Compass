@@ -93,6 +93,7 @@ architecture:
   # sample data (policy rules, BTO launch prices). See supervisor.UNBUILT_NOTES.
   disclose_unbuilt_tools: true
   # Variant C / the app: code writes the answer's facts section; the model writes the opening and trade-offs.
+  # HDB_CODE_WRITTEN_FACTS=0 or 1 overrides it for one run (the live ablation); the run settings record which.
   code_written_facts: true
   # Optional first pass that lists the stated facts in plain words before the structured constraint reading.
   # Off by default: it adds a model call; switch on only if the varied-phrasing test shows it helps.
