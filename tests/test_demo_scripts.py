@@ -206,7 +206,7 @@ def test_guardrail_contract_names_the_hooks_the_supervisor_loads():
     section, source = _interfaces_section_3(), (PROJECT_ROOT / "agents" / "supervisor.py").read_text()
     for name in ("input_guardrail_node", "runtime_auditor_node"):
         assert f"`{name}(state" in section and f'"{name}"' in source
-    assert "agents/guardrails.py" in section and "from agents import guardrails" in source
+    assert "agents/guardrails.py" in section and 'module: str = "agents.guardrails"' in source   # the module the loader imports
 
 
 def test_auditor_recipe_in_the_contract_separates_the_model_opening_from_the_code_facts():
