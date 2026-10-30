@@ -20,7 +20,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
 os.environ["LLM_PROFILE"] = "none"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -448,3 +448,53 @@ def test_run_settings_record_the_code_written_facts_override(monkeypatch):
     assert run_settings({"name": "none", "model": None})["code_written_facts"] is False
     monkeypatch.delenv("HDB_CODE_WRITTEN_FACTS")
     assert run_settings({"name": "none", "model": None})["code_written_facts"] is True
+
+
+# --- 31 Oct live run: Variant C's specialists get only the tools their task needs; a one-tool agent calls it -----
+@pytest.mark.usefixtures("mock_domain_tools")
+def test_variant_c_specialists_are_offered_only_the_tools_the_task_needs():
+    search = {"towns": ["TAMPINES"], "flat_types": ["4 ROOM"], "max_budget_sgd": 600000.0,
+              "amenity_radii_meters": {"mrt": 400}, "requested_tools": []}
+    offered = {}
+    for agent in ("market_sql", "spatial"):
+        model = ToolListModel()
+        with patch.object(sv, "get_llm", return_value=model):
+            sv.make_specialist_node(agent)({"messages": [{"role": "user", "content": "Find flats."}], "user_constraints": search})
+        offered[agent] = model.offered
+    assert offered["market_sql"] == ["query_resale_blocks_by_criteria"]
+    assert offered["spatial"] == ["filter_blocks_by_amenity_proximity"]            # no school, commute or map sync
+    asked = {**search, "wants_price_trend": True, "wants_bto_comparison": True, "school_name": "Ai Tong School",
+             "work_destinations": ["Raffles Place", "Jurong East"]}
+    assert sv.needed_for_task("compute_town_price_timeseries", asked) and sv.needed_for_task("compare_bto_launch_vs_resale", asked)
+    assert sv.needed_for_task("verify_primary_school_distance", asked) and sv.needed_for_task("compute_dual_transit_commute", asked)
+    assert not sv.needed_for_task("sync_interactive_map_ui", asked)                 # code draws the map
+
+
+class ForcedFirstModel:
+    """Answers from memory unless its first turn is bound to one named tool, as the live model did."""
+
+    def __init__(self):
+        self.choices = []
+
+    def bind_tools(self, tools, tool_choice=None):
+        self.choices.append(tool_choice)
+        outer = self
+
+        class Bound:
+            def invoke(self, msgs):
+                if tool_choice and not any(isinstance(m, ToolMessage) for m in msgs):
+                    return AIMessage(content="", tool_calls=[{"name": tool_choice, "args": {"query": "Prime MOP"}, "id": "t1"}])
+                return AIMessage(content="Prime flats have a 10-year MOP.")
+        return Bound()
+
+
+@pytest.mark.usefixtures("mock_domain_tools")
+def test_a_one_tool_agent_makes_its_call_on_the_first_turn():
+    model = ForcedFirstModel()
+    with patch.object(sv, "get_llm", return_value=model):
+        out = sv.make_specialist_node("policy_rag")({"messages": [{"role": "user", "content": "What is the MOP for Prime flats?"}],
+                                                     "user_constraints": {"policy_question": "What is the MOP for Prime flats?"}})
+    assert "retrieve_hdb_policy_knowledge" in model.choices                        # the first turn names the tool
+    log = out["tool_call_log"]
+    assert [r["tool"] for r in log] == ["retrieve_hdb_policy_knowledge"] and log[0]["source"] == "model"
+    assert not any("deterministic plan used" in e for e in out["errors"])

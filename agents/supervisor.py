@@ -1548,6 +1548,24 @@ def asked_for(name: str, c: Dict[str, Any], query: str = "") -> bool:
     return name in (asked if asked is not None else requested_tools(query))
 
 
+# A Variant C specialist is offered only the tools its task needs, read from the stated constraints the same way its
+# deterministic plan reads them: a price trend only when one is asked for, the BTO comparison only when asked, the school
+# check only for a named school, the commute only for two workplaces. The map is drawn by code (build_map_payload), so
+# the map-sync tool is never offered. In the 31 Oct live run C's models called these unasked in 6-10 of 15 questions
+# each (Tool F1 0.81 vs 0.94 for A and B). Variants A and B keep their full lists.
+TASK_TOOLS = {"compute_town_price_timeseries": lambda c: bool(c.get("wants_price_trend")),
+              "compare_bto_launch_vs_resale": lambda c: bool(c.get("wants_bto_comparison")),
+              "verify_primary_school_distance": lambda c: bool(c.get("school_name")),
+              "compute_dual_transit_commute": lambda c: len(c.get("work_destinations") or []) >= 2,
+              "sync_interactive_map_ui": lambda c: False}
+
+
+def needed_for_task(name: str, c: Dict[str, Any], query: str = "") -> bool:
+    """Whether a Variant C specialist is offered this tool: an optional tool only when asked for (asked_for), a
+    task tool only when the constraints call for it (TASK_TOOLS), every other tool always."""
+    return asked_for(name, c, query) and TASK_TOOLS.get(name, lambda _: True)(c)
+
+
 CODE_ONLY_KEYS = ("requested_tools",)
 
 
@@ -1630,11 +1648,21 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
 
     if llm is not None:
         try:
-            bound = llm.bind_tools([r.as_langchain_tool() for r in runners.values()])
+            tools = [r.as_langchain_tool() for r in runners.values()]
+            bound = llm.bind_tools(tools)
+            # an agent with one tool (the policy agent) exists to call it: its first turn must be that call, with the
+            # model writing the arguments. In the 31 Oct live run B's and C's policy agents answered from memory
+            # instead in 15 of 15 questions, and code had to run the search.
+            first = bound
+            if len(tools) == 1:
+                try:
+                    first = llm.bind_tools(tools, tool_choice=tools[0].name)
+                except TypeError:              # a test double without tool_choice
+                    first = bound
             msgs: List[Any] = [sys_msg(system_prompt),
                                HumanMessage(content=f"User query: {query}\n\nExtracted constraints (JSON): {json.dumps(constraints_for_model(c))}")]
-            for _ in range(max_iter):
-                ai: AIMessage = bound.invoke(msgs)
+            for turn in range(max_iter):
+                ai: AIMessage = (first if turn == 0 else bound).invoke(msgs)
                 msgs.append(ai)
                 if not getattr(ai, "tool_calls", None):
                     final_text = strip_think(ai.content if isinstance(ai.content, str) else str(ai.content))
@@ -1782,9 +1810,9 @@ def make_specialist_node(agent: str) -> Callable[[HDBCompassState], Dict[str, An
     def node(state: HDBCompassState) -> Dict[str, Any]:
         c = state.get("user_constraints", {})
         query = last_user_query(state)
-        # the optional tools (upfront costs, comparable sales) are offered to the model only when the user asked for
-        # them; Variants A and B keep the full list, so their models' unasked calls still show in Tool F1
-        tools = [name for name in tools_for_agent(agent) if asked_for(name, c, query)]
+        # only the tools this task needs (needed_for_task); Variants A and B keep the full list, so their models'
+        # unasked calls still show in Tool F1
+        tools = [name for name in tools_for_agent(agent) if needed_for_task(name, c, query)]
         outputs, log, errors, final = run_react(agent, tools, AGENT_SYSTEM[agent], query, c)
         update = slot_outputs(requested_outputs(agent, outputs, c, query), c.get("towns") or [])
         update.update({"tool_call_log": log, "errors": errors,
