@@ -158,53 +158,53 @@ export const AgentChat: React.FC<AgentChatProps> = ({
             <div className="welcome-prompts-grid">
               <button
                 className="welcome-prompt-card"
-                onClick={() => handleQuickPrompt('Ai Tong School 1km')}
+                onClick={() => handleQuickPrompt('Find 4-room flats in Bishan under $950k within 1km of Ai Tong School')}
               >
                 <div className="prompt-card-icon school">
                   <School size={14} />
                 </div>
                 <div className="prompt-card-text">
                   <span className="prompt-title">Ai Tong School</span>
-                  <span className="prompt-subtitle">1km MOE Priority Boundary</span>
+                  <span className="prompt-subtitle">Bishan 4-Room &lt; $950k · 1km MOE</span>
                 </div>
               </button>
 
               <button
                 className="welcome-prompt-card"
-                onClick={() => handleQuickPrompt('Catholic High School 1km')}
+                onClick={() => handleQuickPrompt('Find 4-room flats in Bishan under $950k within 1km of Catholic High School')}
               >
                 <div className="prompt-card-icon school">
                   <School size={14} />
                 </div>
                 <div className="prompt-card-text">
                   <span className="prompt-title">Catholic High School</span>
-                  <span className="prompt-subtitle">Bishan Primary 1 Buffer</span>
+                  <span className="prompt-subtitle">Bishan 4-Room &lt; $950k · 1km MOE</span>
                 </div>
               </button>
 
               <button
                 className="welcome-prompt-card"
-                onClick={() => handleQuickPrompt('Ang Mo Kio MRT 300m')}
+                onClick={() => handleQuickPrompt('Find 4-room flats in Ang Mo Kio under $750k within 300m of an MRT')}
               >
                 <div className="prompt-card-icon transit">
                   <Zap size={14} />
                 </div>
                 <div className="prompt-card-text">
                   <span className="prompt-title">Ang Mo Kio MRT</span>
-                  <span className="prompt-subtitle">300m Walk Proximity</span>
+                  <span className="prompt-subtitle">4-Room &lt; $750k · 300m MRT Walk</span>
                 </div>
               </button>
 
               <button
                 className="welcome-prompt-card"
-                onClick={() => handleQuickPrompt('640 Rowell Road 500m')}
+                onClick={() => handleQuickPrompt('Find 4-room flats in Kallang under $800k within 500m of an MRT and hawker')}
               >
                 <div className="prompt-card-icon location">
                   <Building size={14} />
                 </div>
                 <div className="prompt-card-text">
-                  <span className="prompt-title">Rowell Road</span>
-                  <span className="prompt-subtitle">500m Jalan Besar Buffer</span>
+                  <span className="prompt-title">Kallang / Whampoa</span>
+                  <span className="prompt-subtitle">4-Room &lt; $800k · 500m MRT &amp; Hawker</span>
                 </div>
               </button>
             </div>
