@@ -667,6 +667,25 @@ Dry-run checklist (in the demo room, on its network, a day before):
 - [ ] Laptop on power, sleep disabled; on the day, start 30–45 min before presenting
 - [ ] Demo questions chosen from flat search, grants and budget (policy search is still a stand-in)
 
+### Tracing and evals (LangSmith, optional)
+
+```bash
+python -m agents.tracing --check          # does LangSmith accept the key, and where will runs land?
+LLM_PROFILE=none python -m evaluation.langsmith_evals --dataset category_a --upload-only
+LLM_PROFILE=none python -m evaluation.langsmith_evals --dataset category_a --variant C --limit 3
+```
+
+Set `LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY`, `LANGSMITH_ENDPOINT` (your region) and either `LANGSMITH_PROJECT` or
+the agent address (see `.env.example`). Details: `docs/INTERFACES.md` section 13.
+
+| Symptom | Cause and fix |
+|---|---|
+| 403 (or "tracing DISABLED") | Key created in another region or revoked: set `LANGSMITH_ENDPOINT` to the region `--check` names, or make a new key |
+| 401 | Key missing or malformed; check `LANGSMITH_API_KEY` |
+| Nothing is traced, no error | Only one of `LANGSMITH_AGENT_ID` / `LANGSMITH_AGENT_ENVIRONMENT` is set: set both or neither |
+| Nothing is traced, `--check` mentions both | An agent address and `LANGSMITH_PROJECT` are both set: remove one |
+| Runs in the wrong project | Without an address the project defaults to `default`; set `LANGSMITH_PROJECT` |
+
 ### Troubleshooting
 
 | Problem | Action |

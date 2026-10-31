@@ -32,6 +32,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from agents import addons
 from agents.llm import load_config
 from agents.schemas import TOOL_INPUT_MODEL, TOOL_OWNER, ToolCallRecord
+from agents.tracing import traced_tool_call
 
 # Where the REAL implementation of each tool lives (module, attribute).
 REAL_IMPL: Dict[str, Tuple[str, str]] = {
@@ -133,7 +134,9 @@ class ToolRunner:
                 parameters = inspect.signature(self.fn).parameters
                 arguments = {key: value for key, value in arguments.items()
                              if key in parameters and value is not None}
-            result = self.fn(**arguments)
+            # a child run of type tool in LangSmith (a plain call when tracing is off); tools are plain Python here,
+            # so without this they would be missing from the trace
+            result = traced_tool_call(self.name, self.fn, arguments)
             ok, err = True, None
         except Exception as e:  # noqa: BLE001 — surface tool failures to the LLM, don't crash the graph
             result, ok, err = {"error": str(e), "tool": self.name}, False, str(e)

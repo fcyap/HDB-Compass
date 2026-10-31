@@ -266,7 +266,7 @@ def run_one(mod, item: Dict[str, Any], variant: str, profile: Dict[str, Any], ru
     t0 = time.perf_counter()
     try:
         with get_usage_metadata_callback() as cb:
-            state = mod.run(item["query"], item.get("initial_map_state"))
+            state = mod.run(item["query"], item.get("initial_map_state"), question_id=item["id"])
         latency = time.perf_counter() - t0
         row = {"run": run_id, "variant": variant, "id": item["id"], "sub_use_case": item.get("sub_use_case"),
                "profile": profile["name"], "model": profile.get("model"), "latency_s": round(latency, 2),
@@ -295,7 +295,7 @@ def run_follow_up(mod, item: Dict[str, Any], first_state: Dict[str, Any]) -> Dic
     t0 = time.perf_counter()
     try:
         with get_usage_metadata_callback() as cb:
-            state = mod.run(item["follow_up"]["answer"], previous=first_state)
+            state = mod.run(item["follow_up"]["answer"], previous=first_state, question_id=f'{item["id"]}:follow-up')
         return {"status": "model_unreachable" if lost_model(state) else "ok", "fallbacks": model_fallbacks(state),
                 "latency_s": round(time.perf_counter() - t0, 2), "tokens": _token_totals(cb.usage_metadata),
                 "scores": M.ground_truth_scores(follow_up_item(item), state),
@@ -384,6 +384,8 @@ def print_table(agg: Dict[str, Any]) -> None:
 
 def main() -> None:
     import os
+    from agents.tracing import configure_tracing
+    configure_tracing()   # one preflight; a refused key turns tracing off here instead of failing every question
     # Category E measures the core tools: the add-on packs (research tools, school lookup) are off unless a run asks
     # for them (HDB_ADDONS=app|all), so results stay comparable with runs made before the packs existed. Scoped to
     # this run: a caller in the same process (the tests, a notebook) gets its environment back afterwards.

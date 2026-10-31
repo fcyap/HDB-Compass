@@ -85,12 +85,25 @@ from mcp_server.spatial_onemap_tools import (
 from agents.spatial_agent import geo_agent, GeoAgentState
 from agents.arch_3_specialist_5agent import graph as specialist_5agent_graph, sv
 from agents.llm import model_status
+from agents.tracing import configure_tracing, run_config
 
 app = FastAPI(
     title="HDB-Compass Geospatial & Multi-Agent API",
     description="Agentic Geospatial Engine combining SVY21 metric calculations, KD-Tree proximity, and LangGraph WebSocket sync.",
     version="1.0.0"
 )
+
+
+
+def _start_tracing() -> None:
+    # One credential check per server start: a refused LangSmith key turns tracing off with a single log line instead
+    # of an upload error on every question (python -m agents.tracing --check explains it).
+    status = configure_tracing()
+    print(f"LangSmith tracing: {'ON, ' + str(status['destination']) if status['enabled'] else 'off (' + str(status['reason']) + ')'}",
+          flush=True)
+
+
+app.router.add_event_handler("startup", _start_tracing)
 
 app.add_middleware(
     CORSMiddleware,
@@ -387,7 +400,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     active_agents: List[str] = []
 
                     final_state: Optional[Dict[str, Any]] = None
-                    async for mode, chunk in specialist_5agent_graph.astream(st, stream_mode=["updates", "values"]):
+                    async for mode, chunk in specialist_5agent_graph.astream(
+                            st, stream_mode=["updates", "values"], config=run_config("C", session_id=session_id)):
                         if mode == "values":
                             final_state = chunk  # the full state after each step; the last one is the answer's
                             continue
