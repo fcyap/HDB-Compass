@@ -10,7 +10,8 @@ SQL and spatial results on its own, which is the specific weakness this
 variant is meant to expose relative to C.
 
     START → extract_constraints → route_coarse ─┬→ data_agent ───┐
-                                                └→ policy_agent ─┤ → synthesize → finalize → END
+      │                                         └→ policy_agent ─┤ → synthesize → finalize → END
+      └→ menu_pick (a reply picking a menu option: its follow-up question) ─────────→ finalize
 """
 from __future__ import annotations
 
@@ -41,6 +42,11 @@ DATA_SYSTEM = (
 )
 
 
+def start_gate(state: HDBCompassState) -> str:
+    """A reply that picks a menu option is answered with that option's question (as in C); anything else is read."""
+    return "menu_pick" if state.get("menu_followup") else "extract_constraints"
+
+
 def route_coarse_node(state: HDBCompassState) -> Dict[str, Any]:
     routed = sv.route_node(state)  # also adds a clarifying question when nothing can be routed
     fine = routed["active_subagents"]
@@ -59,10 +65,14 @@ def dispatch_coarse(state: HDBCompassState) -> List[Send]:
 
 def data_agent_node(state: HDBCompassState) -> Dict[str, Any]:
     c = state.get("user_constraints", {})
+    owners = ["market_sql", "spatial", "financial"]
     tools = addons.visible_tools(DATA_TOOLS, VARIANT)   # add-on tools only under addons.offer_in: all
-    outputs, log, errors, final = sv.run_react("data", tools, DATA_SYSTEM, sv.last_user_query(state), c,
+    # with them, the same "when to use" lines C's specialists get, and C's market-agent data guide when the shared
+    # extraction step read a data question no specific intent covers (analysis mode); the same coordinates as A and C
+    system = DATA_SYSTEM + sv.addon_prompt(owners, VARIANT) + sv.analysis_prompt(c, VARIANT)
+    outputs, log, errors, final = sv.run_react("data", tools, system, sv.last_user_query(state), c,
                                                max_iter=sv.load_config()["architecture"]["subagent_max_tool_iterations"] * 2,
-                                               plan_agents=["market_sql", "spatial", "financial"])
+                                               plan_agents=owners, known_points=sv.trusted_points(state))
     update = sv.slot_outputs(outputs, c.get("towns") or [])
     # No join in code in B (by design): the candidate list stays empty and the writer reconciles the price and
     # distance results itself, from the data agent's own summary plus the raw tool outputs (supervisor.synthesis_evidence).
@@ -84,13 +94,15 @@ def policy_agent_node(state: HDBCompassState) -> Dict[str, Any]:
 
 def build_graph():
     g = StateGraph(HDBCompassState)
+    g.add_node("menu_pick", sv.menu_pick_reply)
     g.add_node("extract_constraints", sv.extract_constraints_node)
     g.add_node("route_coarse", route_coarse_node)
     g.add_node("data_agent", data_agent_node)
     g.add_node("policy_agent", policy_agent_node)
     g.add_node("synthesize", sv.synthesize_node)
     g.add_node("finalize", sv.finalize_node)
-    g.add_edge(START, "extract_constraints")
+    g.add_conditional_edges(START, start_gate, ["menu_pick", "extract_constraints"])
+    g.add_edge("menu_pick", "finalize")
     g.add_edge("extract_constraints", "route_coarse")
     g.add_conditional_edges("route_coarse", dispatch_coarse, ["data_agent", "policy_agent", "synthesize"])
     g.add_edge("data_agent", "synthesize")

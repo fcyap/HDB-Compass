@@ -14,6 +14,12 @@ at once with MODEL_UNREACHABLE and exit code 3, writing nothing for the rows it 
     LLM_PROFILE=vllm   .venv/bin/python evaluation/run_category_e_prelim.py --variants C --ids E1-01,E2-01
     .venv/bin/python evaluation/run_category_e_prelim.py --summary-only                 # re-aggregate a results file
     LLM_PROFILE=none   .venv/bin/python evaluation/run_category_e_prelim.py --dataset category_c --tag catc
+    LLM_PROFILE=none   .venv/bin/python evaluation/run_category_e_prelim.py --dataset category_a --tag cata
+
+Every variant gets the same tools (Experiment 1). The add-on tool packs (agents/addons) are off for the core sets and
+on for all three variants (HDB_ADDONS=all) for a dataset whose expected calls use an add-on tool, such as Category A;
+HDB_ADDONS=off|all overrides that, and HDB_ADDONS=app (add-ons for Variant C only) is refused. Each row records the
+mode in its settings.
 
 Category C (Member 3's evaluation/category_c_queries.json, read only) is scored on its key clauses: fully right when
 every clause appears in the answer, by Member 3's own matching rule (architecture_metrics.clause_in_answer). The
@@ -45,6 +51,7 @@ RESULTS_DIR = PROJECT_ROOT / "evaluation" / "results"
 QUERIES = PROJECT_ROOT / "evaluation" / "category_e_queries.json"
 VARIED = PROJECT_ROOT / "evaluation" / "category_e_varied.json"   # the same questions in four user styles (vary_category_e.py)
 CATEGORY_C = PROJECT_ROOT / "evaluation" / "category_c_queries.json"   # Member 3's 15 policy questions (read only)
+CATEGORY_A = PROJECT_ROOT / "evaluation" / "category_a_queries.json"   # Member 1's 15 resale-statistics questions
 CATEGORY_B = PROJECT_ROOT / "evaluation" / "category_b_queries.json"   # Member 2's 15 spatial & commute questions
 EXTRA = PROJECT_ROOT / "evaluation" / "category_e_extra.json"     # new towns, school, upfront cost (ground_category_e_extra.py)
 
@@ -54,6 +61,8 @@ def dataset_path(name: str) -> Path:
         return QUERIES
     if name == "varied":
         return VARIED
+    if name in ("category_a", "a"):
+        return CATEGORY_A
     if name in ("category_b", "b"):
         return CATEGORY_B
     if name == "category_c":
@@ -385,24 +394,34 @@ def print_table(agg: Dict[str, Any]) -> None:
               f"{num(cp.get('total_latency_s'), 1)} | {num(cp.get('median_latency_s'))}")
 
 
-def main() -> None:
-    import os
-    from agents.tracing import configure_tracing
-    configure_tracing()   # one preflight; a refused key turns tracing off here instead of failing every question
-    # Category E measures the core tools: the add-on packs (research tools, school lookup) are off unless a run asks
-    # for them (HDB_ADDONS=app|all), so results stay comparable with runs made before the packs existed. Scoped to
-    # this run: a caller in the same process (the tests, a notebook) gets its environment back afterwards.
-    if "HDB_ADDONS" in os.environ:
-        return _main()
-    os.environ["HDB_ADDONS"] = "off"
-    try:
-        return _main()
-    finally:
-        os.environ.pop("HDB_ADDONS", None)
+APP_MODE_REFUSED = ("HDB_ADDONS=app gives the add-on tools to Variant C only, so A, B and C would not get the same "
+                    "tools and Experiment 1 would compare tool lists, not architectures. Unset HDB_ADDONS (the runner "
+                    "then picks off, or all for a dataset that expects an add-on tool), or set it to off or all.")
 
 
-def _main() -> None:
-    ap = argparse.ArgumentParser()
+def addon_mode(items: List[Dict[str, Any]], requested: str = "") -> str:
+    """The add-on mode (agents/addons) a run of these questions uses. Experiment 1 gives A, B and C the same tools, so
+    'app' (add-ons for C only) is refused. An explicit off or all is kept. Otherwise the packs are off, so the core
+    sets (Category E, its varied and extra forms, Category B, Category C) measure the core tools as before the packs
+    existed; a dataset whose expected calls use an add-on tool (Category A expects query_resale_statistics) gets them
+    for every variant ('all'), since with them off no variant could make the expected call."""
+    from agents import addons
+    requested = (requested or "").strip().lower()
+    if requested == "app":
+        raise SystemExit(APP_MODE_REFUSED)
+    if requested:
+        if requested not in addons.OFFER_MODES:
+            raise SystemExit(f"HDB_ADDONS must be one of {addons.OFFER_MODES}, not {requested!r}")
+        return requested
+    expects_addon = any(addons.is_addon(call.get("tool", "")) for item in items
+                        for call in item.get("expected_mcp_calls") or [] if isinstance(call, dict))
+    return "all" if expects_addon else "off"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        epilog="Add-on tools (HDB_ADDONS): off for the core sets; all, for every variant, when the dataset expects an "
+               "add-on tool (category_a). HDB_ADDONS=off|all overrides that; app (Variant C only) is refused.")
     ap.add_argument("--variants", default="A,B,C")
     ap.add_argument("--ids", default="", help="comma-separated query ids; default all")
     ap.add_argument("--limit", type=int, default=0)
@@ -411,9 +430,36 @@ def _main() -> None:
     ap.add_argument("--summary-only", action="store_true")
     ap.add_argument("--rescore", action="store_true", help="recompute scores from stored state with the current metrics")
     ap.add_argument("--dataset", default="", help="'varied' for evaluation/category_e_varied.json, 'extra' for "
-                                                   "evaluation/category_e_extra.json, 'category_c' for Member 3's policy "
-                                                   "questions (or a path); default the 15 grounded Category E questions")
-    args = ap.parse_args()
+                                                   "evaluation/category_e_extra.json, 'category_a' for Member 1's "
+                                                   "resale-statistics questions (run with add-ons on for every "
+                                                   "variant), 'category_b' for Member 2's spatial and commute "
+                                                   "questions, 'category_c' for Member 3's policy questions (or a "
+                                                   "path); default the 15 grounded Category E questions")
+    return ap
+
+
+def main() -> None:
+    import os
+    from agents.tracing import configure_tracing
+    args = build_parser().parse_args()
+    # Every variant gets the same tools (addon_mode): the add-on packs are off for the core sets, so results stay
+    # comparable with runs made before the packs existed, and on for all three variants when the dataset expects an
+    # add-on tool. Scoped to this run: a caller in the same process (the tests, a notebook) gets its environment back.
+    mode = addon_mode(json.loads(dataset_path(args.dataset).read_text()), os.getenv("HDB_ADDONS", ""))
+    configure_tracing()   # one preflight; a refused key turns tracing off here instead of failing every question
+    previous = os.environ.get("HDB_ADDONS")
+    os.environ["HDB_ADDONS"] = mode
+    try:
+        return _main(args)
+    finally:
+        if previous is None:
+            os.environ.pop("HDB_ADDONS", None)
+        else:
+            os.environ["HDB_ADDONS"] = previous
+
+
+def _main(args: Optional[argparse.Namespace] = None) -> None:
+    args = args or build_parser().parse_args()
 
     profile = active_profile()
     queries = dataset_path(args.dataset)
@@ -434,7 +480,7 @@ def _main() -> None:
         rows = list(load_done(path).values())
         # each row is scored against the dataset it was run on (its settings name it); rows from before 30 Oct record
         # none and are looked up in the known datasets by id
-        known = (QUERIES, VARIED, EXTRA, CATEGORY_C, queries)
+        known = (QUERIES, VARIED, EXTRA, CATEGORY_A, CATEGORY_B, CATEGORY_C, queries)
         sets = {q.name: {i["id"]: i for i in json.loads(q.read_text())} for q in known if q.exists()}
         shas = {q.name: hashlib.sha1(q.read_bytes()).hexdigest()[:12] for q in known if q.exists()}
         any_set = {k: i for by_id in sets.values() for k, i in by_id.items()}
@@ -489,7 +535,7 @@ def _main() -> None:
         path.rename(path.with_suffix(f".{datetime.now().strftime('%Y%m%d-%H%M%S')}.bak.jsonl"))
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     todo = [(v, it) for v in variants for it in items if (v, it["id"]) not in done]
-    print(f"profile={profile['name']} model={profile.get('model')} results={path}")
+    print(f"profile={profile['name']} model={profile.get('model')} addons={RUN_SETTINGS['addons']} results={path}")
     print(f"{len(done)} rows already done, {len(todo)} to run")
 
     unreachable = 0
