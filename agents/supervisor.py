@@ -2579,6 +2579,157 @@ def keep_supported_sentences(opening: str, facts: str, user_text: str = "",
     return " ".join(kept), dropped
 
 
+def says_something(opening: str) -> bool:
+    """False for an opening left with only lead-ins whose list was dropped ("The options are:", "**Trade-offs:**")."""
+    return any(not s.strip().strip("*").rstrip().endswith(":") for s in _split_opening(opening))
+
+
+# When nothing of the model's opening survives (in the 31 Oct live runs Qwen3 wrote figures in all 90 C openings, and
+# in 26 of them every sentence was dropped), or there is no model, code writes the opening from the same state the
+# facts come from: one sentence that answers the question, and, when several blocks are listed, which of them is the
+# cheapest (by median price), has the most lease left and is nearest the MRT (or the amenity the user limited). A role
+# is named only when one block holds it at the precision the facts show (three blocks all showing "73 yrs lease" have
+# no longest lease), and only among the blocks the facts list. The opening names blocks and nothing else, so it passes
+# the same figure check as the model's (code_opening drops any sentence that would not).
+# Only C (and the app) gets it: its facts are code-written. B and A keep their own writer and plain template fallback.
+def _sole_best(blocks: List[Dict[str, Any]], value: Callable[[Dict[str, Any]], Any], lowest: bool) -> Optional[Dict[str, Any]]:
+    """The one block with the lowest (or highest) value as the facts write it, or None when a block has no value or
+    two blocks share the best one."""
+    shown = [value(b) for b in blocks]
+    if len(blocks) < 2 or any(v is None for v in shown):
+        return None
+    best = min(shown) if lowest else max(shown)
+    return blocks[shown.index(best)] if shown.count(best) == 1 else None
+
+
+def _join_words(parts: List[str], last: str = "and") -> str:
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + f" {last} " + parts[-1]
+
+
+def trade_off_sentence(blocks: List[Dict[str, Any]], c: Dict[str, Any], more_than_listed: bool = False) -> str:
+    """"Blk 228 is the cheapest, while Blk 288B has the most lease left and is nearest an MRT station" ("cheaper",
+    "more", "nearer" between two blocks); cheapest is by median price, as the facts list it. Each role is held by
+    exactly one listed block; a block holding several is named once. "" when no role is clear."""
+    def shown(v: Any) -> Optional[float]:
+        return None if v is None else float(f"{float(v):.0f}")     # the facts show prices, leases and distances whole
+
+    two = len(blocks) == 2
+    limits = list((c or {}).get("amenity_radii_meters") or {})
+    amenity = next((k for k in ["mrt"] + limits if blocks and all(f"{k}_dist_m" in (b.get("distances") or {})
+                                                                  for b in blocks)), None)
+    # "cheaper", not "the lower median price": the evaluation reads "lower ... price" as a relaxation offered
+    roles = [(_sole_best(blocks, lambda b: shown(b.get("median_resale_price")), True),
+              "is", "cheaper" if two else "the cheapest"),
+             (_sole_best(blocks, lambda b: shown(b.get("median_remaining_lease_years")), False),
+              "has", f"{'more' if two else 'the most'} lease left")]
+    if amenity:
+        place = AMENITY_LABELS.get(amenity, "the " + amenity.replace("_", " "))
+        roles.append((_sole_best(blocks, lambda b: shown((b.get("distances") or {}).get(f"{amenity}_dist_m")), True),
+                      "is", f"{'nearer' if two else 'nearest'} {place}"))
+    numbers = [str(b["block"]).upper() for b in blocks]
+    by_block: Dict[int, List[Tuple[str, str]]] = {}
+    for block, verb, what in roles:
+        if block is not None:
+            by_block.setdefault(blocks.index(block), []).append((verb, what))
+    if not by_block:
+        return ""
+    clauses = []
+    for i, held in by_block.items():
+        b = blocks[i]
+        # the street too when two listed blocks share a number (Blk 101 in two towns)
+        name = f"Blk {b['block']}" + (f" {b['street']}" if numbers.count(numbers[i]) > 1 and b.get("street") else "")
+        # "is the cheapest and nearest an MRT station": a verb is said once for the roles that share it
+        phrases = [f"{verb} {_join_words([w for v, w in held if v == verb])}"
+                   for verb in dict.fromkeys(v for v, _ in held)]
+        both = len(phrases) == 2 and " and " in phrases[0]
+        clauses.append(f"{name} {phrases[0]}, and {phrases[1]}" if both else f"{name} {_join_words(phrases)}")
+    sentence = clauses[0] if len(clauses) == 1 else ", ".join(clauses[:-1]) + ", while " + clauses[-1]
+    return ("Of the listed blocks, " if more_than_listed else "") + sentence + "."
+
+
+def code_opening(state: HDBCompassState, facts: str) -> Tuple[str, List[str]]:
+    """The opening code writes when the model's does not survive: a direct answer, and the trade-off between the
+    listed blocks. Built from the same state as the facts (template_response), so it never says what they do not.
+    Returns (opening, errors); a sentence that would not pass keep_supported_sentences is left out and reported."""
+    c = state.get("user_constraints") or {}
+    blocks = state.get("candidate_blocks_intersection") or []
+    searched = blocks or _sql_blocks(state) is not None or state.get("spatial_block_candidates") is not None
+    partial = any(t in BLOCK_FILTERS for t in unavailable_tools(state))
+    limits = "the limits that could be checked" if partial else "every limit you set"
+    fin = state.get("financial_breakdown") or {}
+    fin_ok = [n for n, v in fin.items() if isinstance(v, dict) and "error" not in v and v.get("status", "ok") == "ok"]
+    clar = clarification_needed(state)
+    unbuilt = unbuilt_tools_used(state)
+    policy_shown = ("retrieve_hdb_policy_knowledge" not in unbuilt
+                    and bool(shown_policy_passages(state.get("rag_policy_passages") or [], user_request(state))))
+    after = (["your grant and budget estimate"] if fin_ok else []) + (["the relevant HDB rules"] if policy_shown else [])
+    follows = (f", and {_join_words(after)} follow{'s' if len(after) == 1 else ''} the list" if after else "")
+    if clar and not fin_ok:
+        follows += "; your grant and budget estimate needs a few more facts, asked for at the end"
+    sentences: List[str] = []
+    if searched and blocks:
+        listed = blocks[:LISTED_BLOCKS]
+        if len(blocks) == 1:
+            sentences.append(f"Only Blk {blocks[0]['block']} meets {limits}{follows}.")
+        elif len(blocks) == 2:
+            sentences.append(f"Both blocks below meet {limits}{follows}.")
+        else:
+            sentences.append(f"All the blocks below meet {limits}{follows}.")
+        if len(listed) > 1:
+            sentences.append(trade_off_sentence(listed, c, more_than_listed=len(blocks) > LISTED_BLOCKS))
+    elif searched:
+        sentences.append("No block meets all the limits that could be checked." if partial
+                         else "No block meets every limit you set at once.")
+        rel = state.get("relaxation") or {}
+        best = rel.get("best_single_change") or {}
+        top = [s for s in rel.get("suggestions") or [] if best and s.get("unlocked_blocks") == best.get("unlocked_blocks")]
+        if top:
+            names = list(dict.fromkeys(f"the {plain_relaxation(s['constraint'], s['original'], s['relaxed'])[0]}"
+                                       for s in top))
+            sentences.append(f"Relaxing {'either ' if len(names) == 2 else ''}{_join_words(names, 'or')} unlocks the "
+                             "most blocks; each option is below.")
+        elif rel.get("suggestions"):
+            sentences.append("Relaxing any one limit on its own unlocks no block either, as shown below.")
+    else:
+        # no flat search: policy first (the question was about the rules), then what the calculators could do
+        if policy_shown:
+            sentences.append("The HDB policy passages that bear on your question are below.")
+        elif state.get("rag_policy_passages") and "retrieve_hdb_policy_knowledge" not in unbuilt:
+            sentences.append("The policy search found no HDB passage that answers this directly.")
+        words = {"calculate_cpf_housing_grants": "housing grants",
+                 "calculate_maximum_affordability": "maximum purchase price",
+                 "calculate_bsd_and_upfront_outlay": "upfront costs"}
+        done = [words.get(n, "estimate") for n in fin_ok]
+        if done:
+            sentences.append(f"Here {'is' if done == ['maximum purchase price'] else 'are'} your {_join_words(done)}, "
+                             "worked out from the facts you gave.")
+        if clar:
+            sentences.append(f"{'The rest of y' if done else 'Y'}our grant and budget estimate needs a few more facts, "
+                             "asked for at the end.")
+        elif fin and not done:
+            sentences.append("Your estimate could not be worked out in full; what is missing is said below.")
+        sql = state.get("sql_market_results") or {}
+        if not sentences and "compute_town_price_timeseries" in sql:
+            sentences.append("The latest town price trends for your search are below.")
+        elif not sentences and sql.get("query_comparable_resale_transactions"):
+            sentences.append("Recent comparable resale sales for your search are summarised below.")
+    kept, errors = [], []
+    for s in filter(None, sentences):
+        if keep_supported_sentences(s, facts)[1]:
+            errors.append(f"synthesize: code opening sentence left out, it failed the figure check: {s[:80]}")
+        else:
+            kept.append(s)
+    return " ".join(kept), errors
+
+
+# A short figure-free example of the opening for the synthesis prompt: it shows the model how to compare in words (the
+# 31 Oct live openings were nearly all figures, and all of those sentences were deleted). The example says nothing about
+# this answer's blocks or limits: the block numbers are placeholders no answer lists, so an example copied as it is
+# gets dropped too. What is true of this answer comes with it, as code's own opening (see synthesize_node).
+OPENING_EXAMPLE = ('"Both blocks below meet every limit you set. Blk 101 is cheaper, while Blk 202 has '
+                   'more lease left and is nearer the MRT station, so the choice is between price and convenience."')
+
+
 def code_written_facts_on() -> bool:
     """The architecture.code_written_facts switch. HDB_CODE_WRITTEN_FACTS=0 or 1 overrides it for one run without
     editing the config (the live ablation), like HDB_EXTRACTION_REASONING. Any other value is refused rather than
@@ -2632,21 +2783,28 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     llm = get_llm()
     facts = template_response(state) if writes_facts_in_code(state) else ""
     policy = policy_answer_passages(state) if facts else None
+    # code's own opening: used when none of the model's survives, or when there is no model (see code_opening)
+    lead, lead_errors = code_opening(state, facts) if facts else ("", [])
     if llm is not None:
         try:
             if facts:
-                numbers = ("write no numbers except block names exactly as the facts give them (any other sentence with a "
-                           "number is removed)")
+                numbers = ("write no numbers at all except block names exactly as the facts give them: every sentence "
+                           "with any other number, in digits or in words, is deleted before the user sees it")
                 if policy:
                     numbers = ("you may state a policy figure (a period, age, percentage or amount) only exactly as the "
                                "Policy lines above write it, digits and unit included (\"10-year MOP\", \"3% to 6%\"), a range "
                                "always whole and never one end of it or ends of two ranges joined; write no other numbers "
-                               "(any other sentence with a number is removed)")
+                               "(every sentence with any other number is deleted before the user sees it)")
                 rule = ("The facts section below was written by code from the tool results and will be shown to the user "
                         "exactly as written, straight after your text:\n---\n" + facts + "\n---\nWrite only a short opening "
                         "(one or two sentences that answer the question directly) and, when there are several options, the "
-                        "trade-offs between them (price vs lease vs distance). Do not repeat or change any price, grant, "
-                        "budget, distance, lease, count or relaxation figure: " + numbers + ", and do not contradict the facts."
+                        "trade-offs between them (price vs lease vs distance) in words: cheaper, more lease left, "
+                        "nearer the MRT station. Do not repeat or change any price, grant, budget, distance, lease, count or "
+                        "relaxation figure: " + numbers + ", and do not contradict the facts. Write no headings, lists or "
+                        "notes on taxes, fees or the HFE letter: the facts already carry them."
+                        + ("" if policy else f" An opening in this spirit, about other blocks: {OPENING_EXAMPLE}")
+                        + (f" What code reads from these facts, which you may reword or add to but must not contradict: "
+                           f"\"{lead}\"" if lead else "")
                         + unchecked)
             msgs = [sys_msg(SYNTH_SYSTEM),
                     HumanMessage(content=f"User query: {user_request(state)}\n\n{rule}\n\nEvidence JSON:\n{json.dumps(evidence, default=str)[:24000]}")]
@@ -2658,13 +2816,21 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
             text = strip_think(text)
             if facts:
                 opening, dropped = keep_supported_sentences(text, facts, user_request(state), policy)
+                # the model's surviving sentences are preferred; code's opening only when none of them says anything
+                use_lead = not says_something(opening)
                 if dropped:
-                    errors.append(f"synthesize: dropped {dropped} opening sentence(s) that stated figures")
+                    errors.append(f"synthesize: dropped {dropped} opening sentence(s) that stated figures"
+                                  + ("; code opening used" if use_lead and lead else ""))
+                if use_lead:
+                    opening = lead
+                    errors += lead_errors
                 text = (opening.strip() + "\n\n" if opening.strip() else "") + facts
         except Exception as e:  # noqa: BLE001
             errors.append(f"synthesize: LLM failed, template used: {type(e).__name__}")
     if not text:
-        text = facts or template_response(state)
+        # no model, or it failed: the code-written facts, led by code's opening (variant C and the app)
+        text = (lead + "\n\n" + facts if lead else facts) or template_response(state)
+        errors += lead_errors
     elif state.get("financial_breakdown") or state.get("rag_policy_passages"):
         if "HFE" not in text:
             text += HFE_DISCLAIMER

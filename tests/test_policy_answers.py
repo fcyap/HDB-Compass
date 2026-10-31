@@ -243,4 +243,4 @@ def test_synthesis_keeps_a_policy_opening_and_the_code_written_policy_lines():
                                     "enhanced_housing_grant": 0, "family_grant": 80000, "proximity_housing_grant": 0,
                                     "total_grants": 80000}}})
     assert "10-year MOP, while" not in mixed["draft_response"]           # grants shown too: the opening states no figure
-    assert "write no numbers except block names" in seen["prompt"]
+    assert "write no numbers at all except block names" in seen["prompt"]
