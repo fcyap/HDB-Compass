@@ -91,5 +91,32 @@ def run_tests():
     print("=" * 70)
 
 
+def test_spatial_tools_suite():
+    run_tests()
+
+
+def test_dual_transit_commute_depends_on_work_destinations():
+    """Different workplace destination pairs must produce destination-specific commute times and block sets."""
+    central_west = compute_dual_transit_commute(
+        candidate_blocks=["Blk 18A HOLLAND DR", "Blk 201D TAMPINES ST 21"],
+        work_dest_a="Raffles Place",
+        work_dest_b="one-north",
+        max_minutes=60,
+    )
+    east = compute_dual_transit_commute(
+        candidate_blocks=["Blk 18A HOLLAND DR", "Blk 201D TAMPINES ST 21"],
+        work_dest_a="Changi Business Park",
+        work_dest_b="Tampines",
+        max_minutes=60,
+    )
+    by_blk_cw = {r["block"]: r for r in central_west}
+    by_blk_east = {r["block"]: r for r in east}
+
+    assert by_blk_cw["18A"]["total_joint_commute_mins"] < by_blk_cw["201D"]["total_joint_commute_mins"]
+    assert by_blk_east["201D"]["total_joint_commute_mins"] < by_blk_east["18A"]["total_joint_commute_mins"]
+    assert by_blk_cw["18A"]["commute_to_dest_a_mins"] != by_blk_east["18A"]["commute_to_dest_a_mins"]
+    assert by_blk_cw["201D"]["commute_to_dest_b_mins"] != by_blk_east["201D"]["commute_to_dest_b_mins"]
+
+
 if __name__ == "__main__":
     run_tests()

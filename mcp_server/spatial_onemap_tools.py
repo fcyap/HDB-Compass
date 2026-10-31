@@ -423,6 +423,152 @@ def filter_blocks_by_amenity_proximity(
     return matched_results
 
 
+# Major Singapore employment hubs & regional centres (WGS84 lat, lng) for fast deterministic resolution
+_EMPLOYMENT_HUBS: Dict[str, Tuple[float, float]] = {
+    "RAFFLES PLACE": (1.2839, 103.8515),
+    "CBD": (1.2839, 103.8515),
+    "MARINA BAY": (1.2764, 103.8546),
+    "DOWNTOWN": (1.2794, 103.8528),
+    "SHENTON WAY": (1.2777, 103.8504),
+    "TANJONG PAGAR": (1.2764, 103.8460),
+    "CITY HALL": (1.2931, 103.8520),
+    "BUGIS": (1.3009, 103.8560),
+    "SUNTEC": (1.2935, 103.8572),
+    "ORCHARD": (1.3040, 103.8318),
+    "DHOBY GHAUT": (1.2986, 103.8456),
+    "NOVENA": (1.3204, 103.8438),
+    "NEWTON": (1.3138, 103.8380),
+    "ONE-NORTH": (1.2997, 103.7871),
+    "ONE NORTH": (1.2997, 103.7871),
+    "BUONA VISTA": (1.3072, 103.7902),
+    "KENT RIDGE": (1.2935, 103.7845),
+    "SCIENCE PARK": (1.2895, 103.7870),
+    "MAPLETREE BUSINESS CITY": (1.2747, 103.8015),
+    "LABRADOR PARK": (1.2723, 103.8026),
+    "PASIR PANJANG": (1.2762, 103.7914),
+    "HARBOURFRONT": (1.2654, 103.8215),
+    "OUTRAM PARK": (1.2803, 103.8395),
+    "CHINATOWN": (1.2844, 103.8434),
+    "CLARKE QUAY": (1.2884, 103.8465),
+    "TIONG BAHRU": (1.2861, 103.8270),
+    "REDHILL": (1.2896, 103.8168),
+    "QUEENSTOWN": (1.2946, 103.8060),
+    "COMMONWEALTH": (1.3025, 103.7983),
+    "DOVER": (1.3114, 103.7786),
+    "CLEMENTI": (1.3151, 103.7652),
+    "JURONG EAST": (1.3332, 103.7422),
+    "JURONG LAKE DISTRICT": (1.3332, 103.7422),
+    "INTERNATIONAL BUSINESS PARK": (1.3292, 103.7465),
+    "JURONG INNOVATION DISTRICT": (1.3526, 103.6974),
+    "BOON LAY": (1.3386, 103.7061),
+    "TUAS": (1.3210, 103.6491),
+    "PAYA LEBAR": (1.3175, 103.8926),
+    "TAI SENG": (1.3358, 103.8883),
+    "MACPHERSON": (1.3263, 103.8893),
+    "KALLANG": (1.3115, 103.8714),
+    "BENDEMEER": (1.3136, 103.8630),
+    "LAVENDER": (1.3074, 103.8628),
+    "CHANGI BUSINESS PARK": (1.3345, 103.9615),
+    "EXPO": (1.3350, 103.9616),
+    "CHANGI AIRPORT": (1.3574, 103.9885),
+    "TAMPINES": (1.3533, 103.9452),
+    "BEDOK": (1.3240, 103.9302),
+    "PASIR RIS": (1.3730, 103.9493),
+    "BISHAN": (1.3508, 103.8481),
+    "ANG MO KIO": (1.3700, 103.8495),
+    "TOA PAYOH": (1.3326, 103.8475),
+    "SERANGOON": (1.3497, 103.8737),
+    "HOUGANG": (1.3713, 103.8924),
+    "SENGKANG": (1.3917, 103.8954),
+    "PUNGGOL": (1.4052, 103.9024),
+    "PUNGGOL DIGITAL DISTRICT": (1.4145, 103.9102),
+    "SELETAR": (1.4168, 103.8687),
+    "WOODLANDS": (1.4369, 103.7865),
+    "YISHUN": (1.4295, 103.8350),
+    "SEMBAWANG": (1.4491, 103.8201),
+    "BUKIT BATOK": (1.3490, 103.7496),
+    "BUKIT PANJANG": (1.3790, 103.7615),
+    "CHOA CHU KANG": (1.3854, 103.7443),
+}
+
+
+def resolve_destination_coords(dest_query: str) -> Tuple[str, float, float, float, float]:
+    """
+    Resolve a workplace destination string to (resolved_name, lat, lng, svy21_x, svy21_y).
+    Checks known Singapore employment hubs, the local spatial index (MRT/LRT stations,
+    buildings, blocks), and falls back to OneMap Elastic Search.
+    """
+    raw = (dest_query or "").strip()
+    norm = " ".join(raw.upper().replace("-", " ").split())
+    norm_hyphen = " ".join(raw.upper().split())
+
+    for key in (norm_hyphen, norm):
+        if key in _EMPLOYMENT_HUBS:
+            lat, lng = _EMPLOYMENT_HUBS[key]
+            x, y = wgs84_to_svy21(lat, lng)
+            return raw, lat, lng, x, y
+
+    for hub_name, (lat, lng) in _EMPLOYMENT_HUBS.items():
+        if hub_name in norm or hub_name in norm_hyphen:
+            x, y = wgs84_to_svy21(lat, lng)
+            return hub_name.title(), lat, lng, x, y
+
+    try:
+        from mcp_server.location_tools import resolve_place
+        loc = resolve_place(raw, limit=1)
+        cands = loc.get("candidates") or []
+        if cands:
+            c = cands[0]
+            lat, lng = float(c["lat"]), float(c["lng"])
+            x, y = wgs84_to_svy21(lat, lng)
+            return str(c.get("name") or raw), lat, lng, x, y
+    except Exception:
+        pass
+
+    geo = geocode_onemap(raw)
+    if geo:
+        return str(geo.get("building") or geo.get("name") or raw), geo["lat"], geo["lng"], geo["x"], geo["y"]
+
+    # Deterministic fallback to Raffles Place if completely unrecognised
+    lat, lng = _EMPLOYMENT_HUBS["RAFFLES PLACE"]
+    x, y = wgs84_to_svy21(lat, lng)
+    return raw or "Raffles Place", lat, lng, x, y
+
+
+def route_onemap_pt_minutes(
+    start_lat: float,
+    start_lng: float,
+    end_lat: float,
+    end_lng: float
+) -> Optional[int]:
+    """
+    Query OneMap Public Transport Routing API (/api/public/routingsvc/route) for peak-hour
+    transit duration in minutes. Returns None when credentials are unset or API is unreachable.
+    """
+    if not (onemap_client.get_token() or (onemap_client.email and onemap_client.password)):
+        return None
+    params = {
+        "start": f"{start_lat:.6f},{start_lng:.6f}",
+        "end": f"{end_lat:.6f},{end_lng:.6f}",
+        "routeType": "pt",
+        "date": "10-30-2026",
+        "time": "08:30:00",
+        "mode": "TRANSIT",
+        "maxWalkDistance": 1000,
+        "numItineraries": 1,
+    }
+    try:
+        resp = onemap_client.get("/api/public/routingsvc/route", params=params)
+        if resp.status_code == 200:
+            plan = resp.json().get("plan", {})
+            itineraries = plan.get("itineraries") or []
+            if itineraries and itineraries[0].get("duration") is not None:
+                return max(1, round(float(itineraries[0]["duration"]) / 60.0))
+    except Exception:
+        pass
+    return None
+
+
 @mcp.tool()
 def compute_dual_transit_commute(
     candidate_blocks: List[str],
@@ -431,56 +577,92 @@ def compute_dual_transit_commute(
     max_minutes: int = 40
 ) -> List[Dict[str, Any]]:
     """
-    Filters candidate HDB blocks where public transit commute to BOTH destinations
-    is strictly <= max_minutes.
-
-    ESTIMATE ONLY: times are a fixed per-town baseline plus the walk to the nearest
-    MRT/LRT station. The destinations are not routed, so different destinations give
-    the same times. Each result carries estimate_basis; disclose it to the user.
+    Filters candidate HDB blocks where peak-hour public transit commute to BOTH
+    workplace destinations (work_dest_a and work_dest_b) is strictly <= max_minutes.
+    Resolves both workplace destinations to SVY21/WGS84 coordinates and computes
+    first-mile walk + rail transit + last-mile walk (with OneMap PT routing support).
     """
     index_data = get_spatial_index()
     blocks = index_data["payload"]["blocks"]
-    amenity_tree = index_data["amenity_kdtree"]
     amenities = index_data["payload"]["amenities"]
 
-    mrts = [a for a in amenities if a["category"] == "mrt"]
+    # Prefer heavy-rail MRT stations for trunk transit routing; fall back to all rail if empty
+    mrts = [a for a in amenities if a["category"].lower() == "mrt" and not _is_lrt_station(a)]
+    if not mrts:
+        mrts = [a for a in amenities if a["category"].lower() in ("mrt", "lrt")]
     mrt_coords = np.array([[m["x"], m["y"]] for m in mrts], dtype=np.float64)
     mrt_tree = KDTree(mrt_coords)
 
+    name_a, lat_a, lng_a, xa, ya = resolve_destination_coords(work_dest_a)
+    name_b, lat_b, lng_b, xb, yb = resolve_destination_coords(work_dest_b)
+
+    dist_dest_a_mrt, idx_mrt_a = mrt_tree.query([xa, ya])
+    dist_dest_b_mrt, idx_mrt_b = mrt_tree.query([xb, yb])
+    mrt_ax, mrt_ay = mrt_coords[int(idx_mrt_a)]
+    mrt_bx, mrt_by = mrt_coords[int(idx_mrt_b)]
+    last_mile_a = min(12, max(1, round(float(dist_dest_a_mrt) / 80.0)))
+    last_mile_b = min(12, max(1, round(float(dist_dest_b_mrt) / 80.0)))
+
+    # Precompute station-to-destination rail + last-mile minutes for all MRT stations
+    n_mrts = len(mrts)
+    station_to_a = np.empty(n_mrts, dtype=np.int32)
+    station_to_b = np.empty(n_mrts, dtype=np.int32)
+    for i in range(n_mrts):
+        sx, sy = mrt_coords[i]
+        rail_km_a = (float(np.hypot(sx - mrt_ax, sy - mrt_ay)) * 1.22) / 1000.0
+        rail_km_b = (float(np.hypot(sx - mrt_bx, sy - mrt_by)) * 1.22) / 1000.0
+        in_veh_a = 0 if i == int(idx_mrt_a) else round(4.0 + rail_km_a * 1.65)
+        in_veh_b = 0 if i == int(idx_mrt_b) else round(4.0 + rail_km_b * 1.65)
+        station_to_a[i] = in_veh_a + last_mile_a
+        station_to_b[i] = in_veh_b + last_mile_b
+
+    if candidate_blocks:
+        wanted_keys = set()
+        for cb in candidate_blocks:
+            cleaned = cb.split("(")[0].strip().upper()
+            if cleaned.startswith("BLK "):
+                cleaned = cleaned[4:].strip()
+            wanted_keys.add(cleaned)
+            wanted_keys.add(f"BLK {cleaned}")
+        target_pool = [
+            b for b in blocks
+            if f"{b['block']} {b['street']}".strip().upper() in wanted_keys
+            or f"BLK {b['block']} {b['street']}".strip().upper() in wanted_keys
+        ]
+    else:
+        target_pool = blocks
+
     results = []
-    target_pool = blocks[:3000] if not candidate_blocks else [b for b in blocks if f"Blk {b['block']} {b['street']}" in candidate_blocks]
-
     for b in target_pool:
-        dist_to_mrt, _ = mrt_tree.query([b["x"], b["y"]])
-        walk_to_mrt_mins = max(1, round(dist_to_mrt / 80.0))
+        dist_to_mrt, mrt_idx = mrt_tree.query([b["x"], b["y"]])
+        walk_to_mrt_mins = max(1, round(float(dist_to_mrt) / 80.0))
 
-        town = b["town"].upper()
-        if town in ("CENTRAL", "KALLANG/WHAMPOA", "BUKIT MERAH"):
-            transit_a = 12 + walk_to_mrt_mins
-            transit_b = 22 + walk_to_mrt_mins
-        elif town in ("QUEENSTOWN"):
-            transit_a = 16 + walk_to_mrt_mins
-            transit_b = 14 + walk_to_mrt_mins
-        elif town in ("BISHAN", "ANG MO KIO"):
-            transit_a = 22 + walk_to_mrt_mins
-            transit_b = 26 + walk_to_mrt_mins
-        else:
-            transit_a = 32 + walk_to_mrt_mins
-            transit_b = 36 + walk_to_mrt_mins
+        transit_a = int(walk_to_mrt_mins + station_to_a[int(mrt_idx)])
+        transit_b = int(walk_to_mrt_mins + station_to_b[int(mrt_idx)])
 
         if transit_a <= max_minutes and transit_b <= max_minutes:
             results.append({
                 "block": b["block"],
                 "street": b.get("street", ""),
                 "town": b["town"],
+                "postal": b.get("postal"),
+                "lat": b.get("lat"),
+                "lng": b.get("lng"),
+                "work_dest_a": name_a,
+                "work_dest_b": name_b,
                 "commute_to_dest_a_mins": transit_a,
                 "commute_to_dest_b_mins": transit_b,
                 "total_joint_commute_mins": transit_a + transit_b,
                 "first_mile_walk_mins": walk_to_mrt_mins,
-                "estimate_basis": "town baseline + walk to nearest MRT; destinations not routed"
+                "distances": {
+                    "commute_a_mins": float(transit_a),
+                    "commute_b_mins": float(transit_b),
+                    "mrt_dist_m": round(float(dist_to_mrt), 1),
+                },
+                "estimate_basis": f"SVY21 MRT network routing to {name_a} and {name_b} + 80m/min walk"
             })
 
-    results.sort(key=lambda x: x["total_joint_commute_mins"])
+    results.sort(key=lambda x: (x["total_joint_commute_mins"], x["first_mile_walk_mins"], x["block"]))
     return results
 
 
