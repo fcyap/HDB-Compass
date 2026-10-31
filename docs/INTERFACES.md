@@ -50,7 +50,7 @@ Location resolution remains the spatial workstream's responsibility. Source
 coverage, missing geocodes, low samples and truncated examples are explicit.
 See [comparable semantics](MARKET_DATA.md#comparable-resale-transactions).
 
-## 1. The 23 tools and who owns them (12 core tools + 11 add-on tools, see §8)
+## 1. The 25 tools and who owns them (12 core tools + 13 add-on tools, see §8 and §11)
 
 | # | Tool | Owner | Agent | Input model | Output model |
 |---|---|---|---|---|---|
@@ -386,3 +386,48 @@ flat" stays a budget. A block list says "meet every limit you set" only if the u
 **Routing lock.** `tests/test_scope_routing.py` holds a table of questions with the route and tools each must take. It
 locks Category C (15 policy questions all go to `['policy_rag']` by regex) and the Category E routes, so a routing change
 that moves either fails the test. It runs with `HDB_ADDONS=off` set inside the test module only.
+
+
+## 11. Broad market questions: grouped statistics and drill-down (Member 1)
+
+**Block features** (`mcp_server/block_features.py`). Built once per market-database snapshot and cached: for every
+block with a geocode in `block_locations`, its town, nearest MRT station and distance (LRT excluded), nearest LRT,
+nearest hawker centre and supermarket distances, and primary schools within 1 km. Distances are straight-line SVY21
+metres from the station point in the spatial index (not station exits); interchange duplicates are merged by name.
+
+**Tools** (research add-on pack, owner `market_sql`):
+- `query_resale_statistics` - group sales by one or two of `distance_band`, `town`, `station`, `street`, `flat_type`,
+  `year`, `storey_band`, `lease_band`; filters `towns`, `flat_types`, `station`, `near` (`mrt`, `mrt_lrt`, `lrt`,
+  `hawker`, `supermarket`, `school`) with `max_distance_m` or `bands` (default 0-200 / 200-500 / 500-1,000 / >1,000 m);
+  period `lookback_years` (default 1) or `start_month`/`end_month`; `sort_by`, `order`, `top_n` (10), `include_trend`.
+  Returns per group: count, median, p25/p75, median $/sqm, 1-year and period change, optional yearly medians, and
+  `drill` parameters for the next level; plus an island-wide (or filtered) baseline, the period, snapshot id and the
+  distance definition. Groups with fewer than 10 sales are left out. Invalid values return the allowed lists.
+- `describe_resale_data` - the catalog: towns, flat types, MRT and LRT station names, amenity categories, period
+  covered, metrics and definitions.
+
+**How a question reaches them.**
+- *Rule shapes, answered by code with no model call:* statistics/history/prices/listings near a generic amenity
+  (distance bands); "by town" / "which towns"; "which MRT stations are most/least expensive"; near vs far; "<town> by
+  station"; floors / lease left / by year (grouped by that dimension, a "near X" becomes a filter); "over the last N
+  years" / "since YYYY" (trend); "across Singapore"; region words ("the east", "north-east", "west", "north",
+  "central") become that URA region's HDB towns, stated in the answer. A stated distance ("within 300m of an MRT") is
+  used, clamped to 50-3,000 m with a note. Named places ("around Bishan MRT") still go to the area tools.
+- *Analysis mode, the model decides:* any other data question (price, sales, median, value, premium, compare...) goes
+  to the market agent with the analysis tool set (catalog, grouped statistics, area tools, block history, snapshot,
+  town ranking and trends) and up to 6 tool steps; with no model it falls back to a distance-band or by-town overview.
+  Off when `HDB_ADDONS=off` (the evaluation default).
+
+**The answer.** Code writes it: a title, the headline (the biggest gap or the top group, with figures), a table of
+the top groups ("...and N more"), yearly trends when asked, and notes (period, distance definition, LRT handling,
+"past sales, not live listings" for listings questions, a like-for-like warning for storey/lease groupings). The model
+may only add a checked opening. The map shows station or town markers.
+
+**Drill-down.** Chips (and clicks on station/town markers) send complete questions: distance bands → by town / by
+station; a town → its stations; a station → the existing area statistics within the radius; a block → its sales
+history; each level has a "back" chip. They travel in `state["suggestions"]`, not as a pending clarification, so a
+click is answered as a fresh question on the fast path.
+
+**Tests.** `tests/test_analysis_questions.py` (rule shapes, analysis mode with a fake model, negatives, the chip walk);
+the tool's figures are checked against independent SQL. `evaluation/category_a_queries.json` seeds Category A
+questions whose ground truth comes from independent SQL (`evaluation/build_category_a.py`).

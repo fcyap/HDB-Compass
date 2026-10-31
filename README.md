@@ -37,8 +37,8 @@ flowchart LR
         LLM["LLM gateway agents/llm.py<br/>ollama · vllm · groq · openai · none"]
     end
 
-    subgraph TOOLS["Tools · mcp_server/ (23 = 12 core + 11 add-on)"]
-        MCP["FastMCP server<br/>mcp_server/server.py<br/>exposes all 23 tools"]
+    subgraph TOOLS["Tools · mcp_server/ (25 = 12 core + 13 add-on)"]
+        MCP["FastMCP server<br/>mcp_server/server.py<br/>exposes all 25 tools"]
         T["Market · Spatial · Financial · Policy tools<br/>(see diagram 3)"]
     end
 
@@ -111,11 +111,13 @@ flowchart TD
 
 **Follow-ups:** when facts are missing (money facts, which place, which school) or the question is vague, the answer ends with one question or a numbered menu, shown as clickable chips; the backend keeps the session's last state, so the reply completes the original request.
 
+**Broad questions:** "statistics near MRT stations", "by town", "which stations are priciest", "in the east" are answered from grouped resale statistics (code-written tables), with chips to drill down from island-wide to a town, a station's area and a block's sales; other data questions go to the market agent's analysis mode. Details: `docs/INTERFACES.md` §11.
+
 **Never an unrelated answer:** nothing defaults to the policy search any more. Policy passages are shown only for a question that names an HDB rule and only when the search finds a real match (keyword-score floor); price questions get town medians, and unsupported asks (a single-destination commute, price forecasts) are declined plainly. `tests/test_scope_routing.py` locks this, and locks the Category C/E benchmark routes. Details: `docs/INTERFACES.md` §10.
 
 ### 3. Agents and the tools they can use
 
-All tools are called through the tool registry (argument validation, mock/real switch, call logging) and are also exposed to any MCP client by the FastMCP server. **Core** tools are the proposal's 12; **add-on** tools come from the packs in `agents/addons/` (`research`, `schools`) and are offered to the app and Variant C (switch: `addons.offer_in`, see `docs/INTERFACES.md` §8).
+All tools are called through the tool registry (argument validation, mock/real switch, call logging) and are also exposed to any MCP client by the FastMCP server. **Core** tools are the proposal's 12; the 13 **add-on** tools come from the packs in `agents/addons/` (`research`, `schools`) and are offered to the app and Variant C (switch: `addons.offer_in`, see `docs/INTERFACES.md` §8).
 
 ```mermaid
 flowchart LR
@@ -135,6 +137,8 @@ flowchart LR
         a6["find_resale_blocks_near ➕"]
         a7["get_area_resale_statistics ➕"]
         a8["get_area_price_trend ➕"]
+        a9["query_resale_statistics ➕"]
+        a10["describe_resale_data ➕"]
     end
 
     subgraph SPA["Geospatial & Commute agent · spatial"]
@@ -186,6 +190,8 @@ flowchart LR
 | `find_resale_blocks_near` ➕ | market_sql | Blocks around a place, each with its median |
 | `get_area_resale_statistics` ➕ | market_sql | Price distribution around a place |
 | `get_area_price_trend` ➕ | market_sql | How prices around a place changed |
+| `query_resale_statistics` ➕ | market_sql | Sales grouped island-wide or by town, station, distance band, street, flat type, year, storey or lease, with drill-down |
+| `describe_resale_data` ➕ | market_sql | What the resale data covers: towns, flat types, stations, period, metrics |
 | `filter_blocks_by_amenity_proximity` | spatial | Blocks within X m of MRT, hawker, supermarket… |
 | `verify_primary_school_distance` | spatial | Blocks within 1 km / 1–2 km of a named primary school |
 | `compute_dual_transit_commute` | spatial | Commute estimate to two workplaces (town-level) |
