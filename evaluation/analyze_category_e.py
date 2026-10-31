@@ -6,7 +6,8 @@ both) and writes a markdown report with:
   1. per-variant Experiment 1 table (Tool F1, Param EM, routing, CSR, fabricated blocks, E1/E2 behaviour,
      latency P50/P95, tokens, errors), and the same per category
   2. ground-truth results: Category E blocks and figures; Category C key clauses, with the clauses in Member 3's
-     ground truth that are known to be wrong listed beside them
+     ground truth that are known to be wrong listed beside them; Category A group figures (median, sales, per sqm),
+     with a caveat when the answers' database snapshot is not the one the ground truth was built on
   3. a Wilson 95% interval on every task-success and fully-right rate, and a per-question paired table (A vs C,
      B vs C) with an exact McNemar test
   4. a cost proxy (tokens and latency; no paid API)
@@ -28,12 +29,14 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from evaluation import architecture_metrics as M  # noqa: E402
 
-# the 15 grounded questions, their varied-phrasing rewrites ("E1-01~casual") and Member 3's Category C policy
-# questions, so any of these runs can be analysed
-ITEMS = {i["id"]: i for name in ("category_e_queries.json", "category_e_varied.json", "category_c_queries.json")
+# the 15 grounded questions, their varied-phrasing rewrites ("E1-01~casual"), Member 3's Category C policy
+# questions and the Category A statistics questions, so any of these runs can be analysed
+ITEMS = {i["id"]: i for name in ("category_e_queries.json", "category_e_varied.json", "category_c_queries.json",
+                                 "category_a_queries.json")
          if (PROJECT_ROOT / "evaluation" / name).exists()
          for i in json.loads((PROJECT_ROOT / "evaluation" / name).read_text())}
-CATEGORY_NAMES = {"E": "Category E (multi-agent search)", "C": "Category C (policy questions)"}
+CATEGORY_NAMES = {"E": "Category E (multi-agent search)", "C": "Category C (policy questions)",
+                  "A": "Category A (historical resale statistics)"}
 
 
 def cat(r: Dict[str, Any]) -> str:
@@ -182,6 +185,45 @@ def policy_table(rows: List[Dict[str, Any]]) -> str:
             str(sum(1 for _, g in gts if g["success"] and g.get("known_wrong_clauses"))),
         ]) + " |")
     return "\n".join(out) if len(out) > 2 else "_No Category C rows._"
+
+
+def statistics_table(rows: List[Dict[str, Any]]) -> str:
+    """Category A answers against the ground-truth groups' figures."""
+    out = ["| Variant | Questions | Fully right: every asked group figure (Wilson 95% CI) | Group figures right | "
+           "Group figures contradicted | Groups with no median stated | Tool F1 | Param EM | Answers on the truth's snapshot |",
+           "|---|---|---|---|---|---|---|---|---|"]
+    for v in sorted({r["variant"] for r in rows}):
+        rs = [r for r in rows if r["variant"] == v and cat(r) == "A"]
+        gts = [(r["scores"], r["scores"]["ground_truth"]) for r in rs if r.get("status") == "ok"
+               and ((r.get("scores") or {}).get("ground_truth") or {}).get("kind") == "statistics"]
+        if not gts:
+            continue
+        right, total = sum(g["figures_correct"] for _, g in gts), sum(g["figures_total"] for _, g in gts)
+        snaps = [g["snapshot_matches"] for _, g in gts if g.get("snapshot_matches") is not None]
+        out.append("| " + " | ".join([
+            v, str(len(rs)), M.rate_with_ci(sum(1 for _, g in gts if g["success"]), len(rs)),
+            f"{right}/{total} ({right / total:.0%})" if total else "–",
+            str(sum(g["figures_wrong"] for _, g in gts)), str(sum(len(g["groups_missing"]) for _, g in gts)),
+            f(mean(s["tool_selection"]["f1"] for s, _ in gts)), f(mean(s["parameter_em"]["rate"] for s, _ in gts)),
+            f"{sum(snaps)}/{len(snaps)}" if snaps else "unknown",
+        ]) + " |")
+    return "\n".join(out) if len(out) > 2 else "_No Category A rows._"
+
+
+def snapshot_caveat(rows: List[Dict[str, Any]]) -> str:
+    """A warning when Category A answers came from another database snapshot than the ground truth."""
+    gts = [r["scores"]["ground_truth"] for r in rows if cat(r) == "A" and r.get("status") == "ok"
+           and ((r.get("scores") or {}).get("ground_truth") or {}).get("kind") == "statistics"]
+    stale = [g for g in gts if g.get("snapshot_matches") is False]
+    if not stale:
+        return ""
+    truth = sorted({g["snapshot_truth"] for g in stale})
+    used = sorted({g["snapshot_answer"] for g in stale})
+    return (f"> **Caveat: ground truth from another database snapshot.** {len(stale)} of {len(gts)} Category A answers "
+            f"came from snapshot {', '.join(used)}, while `evaluation/category_a_queries.json` was built on "
+            f"{', '.join(truth)}. Figures are still compared, but a figure that changed between the snapshots is scored "
+            "against stale truth; rebuild the file on this database (`python -m evaluation.build_category_a`) before "
+            "quoting these results.")
 
 
 def known_wrong_caveat(rows: List[Dict[str, Any]]) -> str:
@@ -402,7 +444,8 @@ def main() -> None:
           "Task success: an E1 answer recommends at least one block and every "
           "recommended block satisfies every constraint with none fabricated; an E2 answer presents nothing as a match and "
           "offers a concrete trade-off (C's structured relaxation, or the same advice in any variant's text). A Category C "
-          "policy answer succeeds when it contains every key clause of the question.", "",
+          "policy answer succeeds when it contains every key clause of the question. A Category A statistics answer "
+          "succeeds when it states every ground-truth group's asked figures beside that group and contradicts none.", "",
           "## Per category", "", category_table(rows), ""]
     if len(cats) > 1:
         md += ["The per-variant table above pools the categories; the questions differ in kind, so compare variants "
@@ -430,6 +473,15 @@ def main() -> None:
                "with the hand-written search phrase in `expected_mcp_calls`, which no variant reproduces word for "
                "word; read Tool F1 and routing for whether the policy tool was chosen.", "",
                known_wrong_caveat(rows), ""]
+    if "A" in cats:
+        md += ["## Category A: resale statistics against the ground-truth figures", "", statistics_table(rows), "",
+               "Fully right: for every ground-truth group the answer states the median price (and the number of sales "
+               "when the question asks for statistics, the price per sqm when it asks per square metre) beside that "
+               "group's label, within $1 or the rounding the answer uses ($515k, $1.45M), and no figure it gives for a "
+               "group disagrees with the truth. Group figures right is the share of those asked figures stated right, "
+               "so partial answers show; contradicted counts group figures the answer states wrongly (a missing figure "
+               "is not counted as wrong). A3-03 asks for the 'average' but its ground truth holds medians.", "",
+               snapshot_caveat(rows), ""]
     md += ["## Paired comparison on the same questions", "", paired_table(rows), "",
            "## Cost proxy", "", cost_table(rows), "",
            "## By sub-use case", "", subcase_table(rows), "",

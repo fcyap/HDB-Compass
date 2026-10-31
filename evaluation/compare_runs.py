@@ -1,5 +1,5 @@
 """
-Ground-truth results across several Category E or C runs (evaluation/compare_runs.py). Member 4.
+Ground-truth results across several Category E, C or A runs (evaluation/compare_runs.py). Member 4.
 
 One run per question and variant can be luck; this puts repeated runs side by side with the mean and range, so a
 claim such as "C answers most questions fully right" carries its spread. Each cell also carries a Wilson 95%
@@ -29,7 +29,9 @@ MEASURES = [("fully right", lambda gt: gt.get("success")),
             ("exact blocks", lambda gt: gt.get("blocks_exact")),
             ("E1 grants and max price", lambda gt: gt.get("grants_correct") and gt.get("max_price_correct")
              if "grants_correct" in gt else None),
-            ("E1 stamp duty and upfront cash", lambda gt: gt.get("upfront_correct"))]
+            ("E1 stamp duty and upfront cash", lambda gt: gt.get("upfront_correct")),
+            # Category A: whether the answer's statistics came from the snapshot the ground truth was built on
+            ("A answer on the truth's snapshot", lambda gt: gt.get("snapshot_matches"))]
 
 
 def resolve(arg: str) -> Path:
