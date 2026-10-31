@@ -151,8 +151,11 @@ def _place_intents(q: str, addresses: List[str], has_point: bool = False) -> Dic
     out["wants_nearby_amenities"] = bool(addresses or has_point) and _has("nearby", q)
     out["wants_area_statistics"] = bool(addresses or has_point) and _has("area", q) and _has("stats", q)
     m = _AREA_RADIUS.search(q)
-    if out["wants_area_statistics"] and m:
-        out["area_radius_meters"] = int(min(max(float(m.group(1)) * (1000 if m.group(2).lower() == "km" else 1), 50), 3000))
+    if (out["wants_area_statistics"] or out["wants_nearby_amenities"]) and m:
+        stated = float(m.group(1)) * (1000 if m.group(2).lower() == "km" else 1)
+        out["area_radius_meters"] = int(min(max(stated, 50), 3000))
+        if int(stated) != out["area_radius_meters"]:
+            out["radius_clamped_from"] = int(stated)
     if out["wants_price_assessment"]:
         for m in re.finditer(r"\$\s?(\d[\d,]*(?:\.\d+)?\s*[km]?)(?!\s*(?:/|per|a)\s*month)", q, re.I):
             out["asking_price_sgd"] = _money(m.group(1))
@@ -197,6 +200,13 @@ def apply_map_pin(c: Dict[str, Any], query: str, pin: Optional[Tuple[float, floa
             note += "; it is not on an HDB block, so pin a block to check its prices"
         assumptions.append(note + ".")
         c.update(_place_intents(query, addresses, has_point=True))
+    if radius_meters and (c.get("wants_area_statistics") or c.get("wants_nearby_amenities")) \
+            and not c.get("area_radius_meters"):
+        # no distance in the text: the radius set on the map is the one asked for (a stated distance wins)
+        c["area_radius_meters"] = int(min(max(float(radius_meters), 50), 3000))
+        c["area_radius_from_pin"] = True
+        if int(radius_meters) != c["area_radius_meters"]:
+            c["radius_clamped_from"] = int(radius_meters)
 
 
 # ---------------------------------------------------------------------------
@@ -405,6 +415,26 @@ def _flat_type(c: Dict[str, Any], assumptions: List[str], purpose: str) -> str:
     return DEFAULT_FLAT_TYPE
 
 
+def _radius_notes(c: Dict[str, Any], assumptions: List[str], radius: int) -> None:
+    """Say where the radius came from when it was not typed in the question: the map control, or a clamped value."""
+    notes = []
+    if c.get("area_radius_from_pin"):
+        notes.append(f"Used a radius of {radius} m, as set on the map (within {radius} m of your pin). "
+                     f"Say a distance (e.g. 'within 300m') to override it.")
+    if c.get("radius_clamped_from"):
+        notes.append(f"{c['radius_clamped_from']} m is outside the supported 50-3000 m, so {radius} m was used.")
+    for note in notes:
+        if note not in assumptions:
+            assumptions.append(note)
+
+
+def _nearby_radius(c: Dict[str, Any]) -> int:
+    """Radius for a nearby-amenities lookup: a distance per amenity, else one stated or set on the map, else 1 km."""
+    radius = max([v for k, v in (c.get("amenity_radii_meters") or {}).items() if k != "school"]
+                 or [c.get("area_radius_meters") or c.get("pin_radius_meters") or 1000])
+    return int(min(max(radius, 50), 5000))
+
+
 def _area_arg(c: Dict[str, Any], assumptions: List[str]) -> Optional[Dict[str, Any]]:
     """The circle for an area question: the first named place (or the map pin) and its radius."""
     if not c.get("wants_area_statistics"):
@@ -414,6 +444,10 @@ def _area_arg(c: Dict[str, Any], assumptions: List[str]) -> Optional[Dict[str, A
     if not place:
         return None
     radius = c.get("area_radius_meters")
+    if radius and c.get("area_radius_from_pin"):
+        _radius_notes(c, assumptions, radius)
+    elif radius and c.get("radius_clamped_from"):
+        _radius_notes(c, assumptions, radius)
     if not radius:
         radius = VAGUE_RADIUS_METERS
         note = (f"'Around' was taken as within {radius} m straight-line of the place. "
@@ -463,9 +497,9 @@ def research_plan(agent: str, c: Dict[str, Any], query: str) -> List[Tuple[str, 
             plan.append(("compare_bto_launch_vs_resale", dict(bto_project_name=c["bto_project_name"],
                                                               flat_type=_flat_type(c, assumptions, "the BTO comparison"))))
     elif agent == "spatial" and needs_spatial_agent(c):
-        radius = max([v for k, v in (c.get("amenity_radii_meters") or {}).items() if k != "school"]
-                     or [c.get("pin_radius_meters") or 1000])
-        radius = int(min(max(radius, 50), 5000))
+        radius = _nearby_radius(c)
+        if not any(k != "school" for k in c.get("amenity_radii_meters") or {}):
+            _radius_notes(c, assumptions, radius)
         for address in (c.get("addresses") or [])[:2]:
             plan.append(("get_nearby_amenities", dict(address=address, radius_meters=radius)))
         if not c.get("addresses") and c.get("map_pin"):
@@ -844,3 +878,27 @@ def answerable_without_model(c: Dict[str, Any], query: str) -> bool:
     if not (any(c.get(k) for k in FAST_INTENTS) or c.get("bto_project_name")):
         return False
     return not is_block_search(c, query)
+
+
+# ---------------------------------------------------------------------------
+# Radius chips: re-ask a pin / area answer with another radius
+# ---------------------------------------------------------------------------
+RADIUS_CHIPS = ((200, "200m", "Within 200 m"), (500, "500m", "Within 500 m"), (1000, "1km", "Within 1 km"))
+
+
+def radius_chips(c: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Chips for an area-statistics or nearby-amenities answer about one place: each is a complete question that
+    gives the same question another radius (current one left out). Empty when there is nothing to re-ask."""
+    if c.get("clarifications") or not (c.get("addresses") or c.get("map_pin")):
+        return []
+    place = c["addresses"][0] if c.get("addresses") else "here"
+    if c.get("wants_area_statistics"):
+        current = c.get("area_radius_meters") or VAGUE_RADIUS_METERS
+        template = "What are resale prices within {r} of {p}?"
+    elif c.get("wants_nearby_amenities") and not (c.get("amenity_radii_meters") or {}):
+        current = _nearby_radius(c)
+        template = "What is near {p} within {r}?"
+    else:
+        return []
+    return [{"label": label, "text": template.format(r=text, p=place)}
+            for meters, text, label in RADIUS_CHIPS if meters != current]

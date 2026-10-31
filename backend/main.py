@@ -349,7 +349,7 @@ async def websocket_endpoint(websocket: WebSocket):
             query_text = message.get("query", "").strip()
             pinned_lat = message.get("lat")
             pinned_lng = message.get("lng")
-            radius = float(message.get("radius_meters", 1000.0))
+            radius = float(message.get("radius_meters", 500.0))
 
             if not query_text and pinned_lat is None:
                 continue
@@ -399,6 +399,10 @@ async def websocket_endpoint(websocket: WebSocket):
 
                             if node_output.get("clarification"):
                                 current_clarification = chip_clarification(node_output["clarification"])
+                            elif node_output.get("suggestions"):
+                                # radius chips: shown like option chips, but not a pending question (the next turn is fresh)
+                                current_clarification = {"kind": "suggestion", "question": None,
+                                                         "options": node_output["suggestions"]}
 
                             node_errors = node_output.get("errors") or []
                             if any(

@@ -3419,7 +3419,7 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     if clar and clar["question"] not in text:
         text = text.rstrip() + "\n\n" + clar["question"]
     return {"draft_response": text, "map_ui_payload": payload, "tool_call_log": log, "errors": errors,
-            "clarification": clar}
+            "clarification": clar, "suggestions": [] if clar else ri.radius_chips(c)}
 
 
 # ---------------------------------------------------------------------------
