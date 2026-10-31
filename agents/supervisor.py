@@ -226,8 +226,8 @@ def named_towns(text: str, any_case_short: bool = False) -> List[str]:
     """The HDB towns a text names: full names, place aliases ("Tiong Bahru") and short forms ("AMK", "JE"). The regex
     reading and the check on a model's reading both use this one map, so code never drops a town the prompt taught the
     model to read. Short forms are whole words in upper case ("JE", not "je" in "jeans"); any_case_short also accepts
-    "amk" written in lower case, for checking a town the model already read."""
-    up = text.upper()
+    "amk" written in lower case, for checking a town the model already read. "Bt" is Bukit ("Bt Batok", "Bt Merah")."""
+    up = re.sub(r"\bBT\.?\s+", "BUKIT ", text.upper())
     towns = [t for t in HDB_TOWNS if t in up]
     for alias, town in TOWN_ALIASES.items():
         if alias in up and town not in towns:
@@ -239,10 +239,11 @@ def named_towns(text: str, any_case_short: bool = False) -> List[str]:
 
 
 # A school's name: up to four words before School/Primary/High ("Ai Tong School", "St. Hilda's Primary School",
-# "CHIJ St. Nicholas Girls' School", "Anglo-Chinese School (Junior)"). "High" is a whole word and not "high floor".
+# "CHIJ St. Nicholas Girls' School", "Anglo-Chinese School (Junior)"). A bare "High" is a whole word in name casing
+# ("Catholic High") and not a floor ("MRT high-floor", "high up", "pref high flr").
 _SCHOOL_WORD = r"(?:St\.|[A-Za-z][A-Za-z'’\-]*)"
-_SCHOOL_END = (r"(?:Primary Schools?|Schools?|Primary|High)\b(?:\s*\((?:Primary|Junior|Secondary)\))?"
-               r"(?!\s+(?:floors?|storeys?|stor(?:e)?y|rise|level)\b)")
+_SCHOOL_END = (r"(?:Primary Schools?|Schools?|Primary|(?-i:High))\b(?:\s*\((?:Primary|Junior|Secondary)\))?"
+               r"(?![\s\-]+(?:floors?|flrs?|fl|storeys?|stor(?:e)?y|rise|level|up)\b)")
 _SCHOOL_AFTER = re.compile(rf"\b(?:of|near|to)\s+(?:to\s+)?((?:{_SCHOOL_WORD}\s+){{1,4}}{_SCHOOL_END})", re.I)
 _SCHOOL_AT_START = re.compile(rf"\s*((?:{_SCHOOL_WORD}\s+){{1,4}}{_SCHOOL_END})\s*"
                               r"(?=[12]\s*(?:[-–]\s*2\s*)?km\b|within\b|[.?!]|$)", re.I)
@@ -265,30 +266,40 @@ def school_named(text: str) -> Optional[str]:
         candidates.append(start.group(1))
     for candidate in candidates:
         candidate = candidate.strip()
+        if ri.generic_school_phrase(candidate) and candidate.lower() not in {"primary school", "school"}:
+            return candidate
+        # "the Henry Park Primary School", "our Rosyth School": the name follows the determiner
+        candidate = re.sub(r"^(?:(?:the|a|an|our|my|your|his|her|their)\s+)+", "", candidate, flags=re.I)
         name_words = re.sub(_SCHOOL_END + r"\s*$", "", candidate, flags=re.I).split()
         if candidate.lower() in {"primary school", "school", "moe primary school"} or candidate.lower().endswith("for primary"):
             continue
-        if ri.generic_school_phrase(candidate):
-            return candidate
-        if not name_words or any(w[0].islower() and _NOT_A_NAME_WORD.match(w) for w in name_words):
+        if (not name_words or any(w[0].islower() and _NOT_A_NAME_WORD.match(w) for w in name_words)
+                or any(w.upper() in {"MRT", "LRT"} for w in name_words)):    # "near MRT High floor" names a station
             continue
         return candidate
     return None
 
 
-# A workplace or commute destination: capitalised words ("Raffles Place", "Changi Business Park", "NUS") or one-north.
-# So "my commute to work is long", "close to my parents" and "to MRT" are not workplaces, and a time limit after the
-# name ("to Jurong East under 45 min") is not part of it.
+# A workplace or commute destination after "to". In the clause that says "commute" the place may be typed in lower
+# case ("commute to raffles place under 45 min"); elsewhere only capitalised words ("Raffles Place", "NUS") or one-north
+# count. So "my commute to work is long", "close to my parents", "move to Sengkang", "open to Bishan" and "to MRT" are not
+# workplaces, and a time limit after the name ("to Jurong East under 45 min") is not part of it.
 _PLACE_WORD = r"(?:one-north|[A-Z][A-Za-z0-9'’\-]*)"
-_DESTINATION = re.compile(rf"(?<![A-Za-z])(?i:(?<!close )(?<!near )(?<!next )(?<!walk )(?<!walking )(?<!distance )to)\s+"
-                          rf"({_PLACE_WORD}(?:\s+{_PLACE_WORD}){{0,3}})")
+_DESTINATION = re.compile(r"(?<![A-Za-z])(?<!close )(?<!closer )(?<!near )(?<!nearer )(?<!next )(?<!walk )(?<!walking )"
+                          r"(?<!distance )(?<!move )(?<!moving )(?<!moved )(?<!relocate )(?<!relocating )(?<!open )"
+                          r"(?<!opened )(?<!back )(?<!upgrade )(?<!upgrading )(?<!downgrade )(?<!downgrading )to\s+"
+                          # read ahead without consuming, so "to one-north and to jurong east" gives both
+                          r"(?=((?:one-north|[A-Za-z][A-Za-z0-9'’\-]*)(?:\s+(?:one-north|[A-Za-z][A-Za-z0-9'’\-]*)){0,4}))",
+                          re.I)
+_IN_COMMUTE_CLAUSE = re.compile(r"\bcommute\b[^,.;!?]*$", re.I)
 _NOT_A_WORKPLACE = {"MRT", "LRT", "HDB", "BTO", "WORK", "OFFICE", "HOME", "SCHOOL", "STATION"}
+_STATION_WORDS = {"MRT", "LRT", "STATION", "INTERCHANGE"}
+# lower-case words that start no place name: "commute to my office", "commute to and from work", "to both offices"
+_NOT_A_PLACE_START = re.compile(r"^(?:my|our|your|his|her|their|a|an|and|both|each|either|all|get|reach|go|be|"
+                                r"there|here|it|them|work|office|home|school|mrt|lrt|station)$", re.I)
 # where a workplace stated after "work at" ends: a limit, a time or the next clause ("Raffles Place within 30 minutes")
 _WORKPLACE_END = re.compile(r"\s+(?:under|within|less|below|max\w*|no|at|by|daily|every|each|should|must|is|are|was|and|"
                             r"with|where|but|so|which|that|for|to|near|on|in|from|or|while|plus|\d)\b.*$", re.I)
-_COMMUTE_MINUTES = re.compile(r"(?:under|within|less than|max)\s*(\d{2})\s*min(?:s|utes)?\b"
-                              r"(?!\s*(?:walk|walking|on foot|by foot|(?:away\s+)?(?:from|of|to)\s+(?:an?\s+|the\s+)?"
-                              r"(?:nearest\s+)?(?:mrt|lrt|train|station|bus|hawker|supermarket|park|clinic|school)))", re.I)
 
 
 def workplaces(q: str) -> Tuple[List[str], List[Tuple[int, int]]]:
@@ -308,9 +319,55 @@ def workplaces(q: str) -> Tuple[List[str], List[Tuple[int, int]]]:
         add(_WORKPLACE_END.sub("", m.group(1)), m.start(1))
     if len(found) < 2 and re.search(r"\bcommute\b", q, re.I):
         for m in _DESTINATION.finditer(q):
-            if m.group(1).split()[-1].upper() not in _NOT_A_WORKPLACE | {"INTERCHANGE"}:   # "to Bishan MRT" is a station
-                add(m.group(1), m.start(1))
+            commute_clause = bool(_IN_COMMUTE_CLAUSE.search(q[:m.start()]))
+            start = m.start(1)
+            words = m.group(1).split()
+            if words[0].lower() == "the":                    # "commute to the CBD"
+                start, words = start + len(words[0]) + 1, words[1:]
+            if commute_clause:
+                words = _WORKPLACE_END.sub("", " ".join(words)).split()
+            else:                                            # outside the commute clause, name casing only
+                cased = [bool(re.fullmatch(_PLACE_WORD, w)) for w in words] + [False]
+                words = words[:cased.index(False)]
+            if not words or _NOT_A_PLACE_START.match(words[0]) and words[0][0].islower():
+                continue
+            if words[-1].upper() in _STATION_WORDS:
+                if not commute_clause or len(words) == 1:    # "10 min walk to Bishan MRT" is a station
+                    continue
+                words = words[:-1]                           # "commute to Raffles Place MRT": the place
+            add(" ".join(words), start)
     return found, spans
+
+
+# A minutes limit ("under 45 mins") is the commute limit unless it is about an amenity or family: "MRT within 10 mins",
+# "near clinic within 10 min", "within 10 mins of my parents", "within 15 mins by bus to MRT", "10 min walk".
+_MINUTES_LIMIT = re.compile(r"(?:under|within|less than|max)\s*(\d{2})\s*min(?:s|utes)?\b", re.I)
+_AMENITY_PLACE = (r"(?:mrt|lrt|trains?|stations?|bus(?: stops?| interchange)?|hawker\w*|food (?:centre|court)s?|"
+                  r"supermarkets?|markets?|malls?|parks?|clinics?|polyclinics?|hospitals?|schools?|parents?|in-laws|"
+                  r"family|mum|mom|dad|grand\w+)")
+_AMENITY_AFTER = re.compile(r"\s*(?:walk|walking|on foot|by foot|(?:by (?:bus|train|mrt|car|taxi)\s+)?(?:away\s+)?"
+                            rf"(?:from|of|to)\s+(?:(?:an?|the|my|our|his|her|their)\s+)?(?:nearest\s+)?{_AMENITY_PLACE}\b)", re.I)
+_AMENITY_BEFORE = re.compile(rf"\b{_AMENITY_PLACE}\b", re.I)
+_COMMUTE_WORDS = re.compile(r"\b(?:commut\w*|travel\w*|journey|work|office|workplaces?|cbd)\b"
+                            r"|\bto\s+(?:one-north|(?-i:[A-Z][a-z]))", re.I)
+
+
+def commute_limits(q: str) -> List[int]:
+    """The commute limits in minutes the message states. A limit tied to an amenity or to family, by the words right
+    after it or by the words before it in its clause with no commute word nearby, is not one."""
+    out: List[int] = []
+    matches = list(_MINUTES_LIMIT.finditer(q))
+    for i, m in enumerate(matches):
+        clause_start = max(q.rfind(p, 0, m.start()) for p in ",.;!?")
+        before = q[max(clause_start + 1, matches[i - 1].end() if i else 0):m.start()]
+        nxt = matches[i + 1].start() if i + 1 < len(matches) else len(q)
+        after = re.split(r"[,.;!?]|\band\b", q[m.end():nxt], maxsplit=1)[0]
+        if _AMENITY_AFTER.match(q, m.end()):
+            continue
+        if _AMENITY_BEFORE.search(before) and not _COMMUTE_WORDS.search(before) and not _COMMUTE_WORDS.search(after):
+            continue
+        out.append(int(m.group(1)))
+    return out
 
 
 # The regex reading of a policy question: an HDB rule named outright (MOP, EIP, Prime/Plus) or asked about in other
@@ -440,8 +497,9 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
         towns = [t for t in towns if t in named_towns(rest)]
 
     # two different limits ("30 mins to Raffles Place and 40 mins to Jurong East") keep the stricter one: one limit
-    # holds for every workplace, and a looser limit than the user stated is never applied
-    commute_mins = [int(m.group(1)) for m in _COMMUTE_MINUTES.finditer(q)]
+    # holds for every workplace, and a looser limit than the user stated is never applied. An amenity's minutes ("MRT
+    # within 10 mins") are not a commute limit (commute_limits).
+    commute_mins = commute_limits(q)
     max_commute = min(commute_mins) if commute_mins else None
 
     policy = q if policy_wording(q, money_stated=bool(income or amounts)) else None
@@ -1509,6 +1567,7 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
     llm = get_llm()
     extracted: Optional[ExtractedConstraints] = None
     model_reading: Optional[Dict[str, Any]] = None
+    model_policy = False
     errors: List[str] = []
     source = "regex"
     system = EXTRACT_SYSTEM
@@ -1539,6 +1598,7 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
             model_reading = extracted.model_dump()
             if extracted.financial_inputs is not None:
                 model_reading["financial_inputs"] = extracted.financial_inputs.model_dump(exclude_unset=True)
+            model_policy = bool(extracted.policy_question)
             # merge: regex fills anything the model left empty (cheap robustness)
             rb = rule_based_extract(query).model_dump()
             merged = extracted.model_dump()
@@ -1559,7 +1619,8 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
     constraints = extracted.model_dump()
     if extracted.financial_inputs is not None:
         constraints["financial_inputs"] = extracted.financial_inputs.model_dump(exclude_unset=True)
-    constraints = _finalize_constraints(constraints, query, state, errors, from_model=source != "regex")
+    constraints = _finalize_constraints(constraints, query, state, errors, from_model=source != "regex",
+                                        model_policy=model_policy)
     constraints["extraction_source"] = source
     return {"user_constraints": constraints, "errors": errors, "model_constraints": model_reading}
 
@@ -1578,10 +1639,11 @@ def money_question(query: str, c: Dict[str, Any]) -> bool:
 
 
 def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCompassState, errors: List[str],
-                          from_model: bool, with_history: bool = True) -> Dict[str, Any]:
+                          from_model: bool, with_history: bool = True, model_policy: bool = True) -> Dict[str, Any]:
     """Everything code does to a reading, whichever path produced it (model, regex fallback or the app's fast path),
     so the paths cannot drift apart. with_history=False reads this message alone (the fast path's self-contained
-    questions); otherwise earlier turns and any open follow-up question are carried in."""
+    questions); otherwise earlier turns and any open follow-up question are carried in. model_policy: the model itself
+    filled policy_question (not the regex merge that fills what the model left empty)."""
     prior = state.get("prior_constraints") if with_history else None
     pending = state.get("pending_clarification") if with_history else None
     # calculator facts come from the user's own words in every turn so far, never from the model's reading of them
@@ -1598,10 +1660,11 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
                                            if v is not None and v > 0}
     _verify_extraction(constraints, query, errors, from_model=from_model)
     if from_model and constraints.get("policy_question") and not scope.mentions_policy_topic(query) \
-            and not policy_wording(query, money_stated=calculator_facts(constraints)):
+            and not (model_policy and policy_wording(query, money_stated=calculator_facts(constraints))):
         # the model filed a vague question ("Should I buy BTO or resale?") as a policy question; the policy search
         # would return loosely related rules, so the user gets the menu instead (decide_routing). A rule question in
-        # words code reads itself ("Can I buy a resale flat after selling my condo?") keeps the model's reading.
+        # words code reads itself ("Can I buy a resale flat after selling my condo?") keeps the model's own reading;
+        # code never adds a policy route the model did not choose ("Can I buy a 4-room in Tampines under $600k?").
         constraints["policy_question"] = None
         errors.append("extract_constraints: model's policy reading dropped: the message names no HDB rule")
     if pending and pending.get("kind", "financial") == "financial":
