@@ -309,3 +309,39 @@ def test_stamp_duty_alone_gives_the_duty_and_runs_only_the_upfront_calculator():
     assert [r["tool"] for r in out["tool_call_log"]] == ["calculate_bsd_and_upfront_outlay"]
     assert "Buyer's stamp duty: **$12,600**" in out["draft_response"]
     assert not out.get("clarification")
+
+
+@pytest.mark.parametrize("query, kept", [
+    ("Should I buy BTO or resale?", False),            # found with Groq: filed as policy, got unrelated rules
+    ("What flat should I buy?", False),
+    ("Can a PR buy a resale HDB flat?", True),          # a real rule question keeps the model's reading
+])
+def test_models_policy_reading_needs_a_named_rule(monkeypatch, query, kept):
+    from agents.schemas import LLMExtractedConstraints
+
+    class Structured:
+        def invoke(self, _messages):
+            return {"parsed": LLMExtractedConstraints(policy_question=query), "raw": None}
+
+    class Model:
+        def with_structured_output(self, _schema, method=None, include_raw=False):
+            return Structured()
+
+    monkeypatch.setattr(sv, "get_llm", lambda *a, **k: Model())
+    c = sv.extract_constraints_node(sv.initial_state(query, "C"))["user_constraints"]
+    assert bool(c.get("policy_question")) is kept
+    assert (sv.decide_routing(c) == ["policy_rag"]) is kept
+
+
+def test_launch_question_offers_one_chip_per_launch_that_runs_the_comparison(monkeypatch):
+    # found in review: the launch list had no options, so the page showed no chips for it. App mode: a named launch
+    # is planned by the research pack, which the routing table otherwise switches off
+    monkeypatch.setenv("HDB_ADDONS", "app")
+    from agents import arch_3_specialist_5agent as C
+    from backend.main import chip_clarification
+    menu = C.run("I want to buy a bto but im not sure what to buy")
+    picked = C.run("1", previous=menu)
+    chips = chip_clarification(picked["clarification"])["options"]
+    assert chips and chips[0]["label"] in picked["clarification"]["question"]
+    out = C.run(chips[0]["text"], previous=picked)
+    assert [r["tool"] for r in out["tool_call_log"]] == ["compare_bto_launch_vs_resale"]

@@ -1472,6 +1472,11 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     constraints["amenity_radii_meters"] = {k: v for k, v in (constraints.get("amenity_radii_meters") or {}).items()
                                            if v is not None and v > 0}
     _verify_extraction(constraints, query, errors, from_model=from_model)
+    if from_model and constraints.get("policy_question") and not scope.mentions_policy_topic(query):
+        # the model filed a vague question ("Should I buy BTO or resale?") as a policy question; the policy search
+        # would return loosely related rules, so the user gets the menu instead (decide_routing)
+        constraints["policy_question"] = None
+        errors.append("extract_constraints: model's policy reading dropped: the message names no HDB rule")
     if pending and pending.get("kind", "financial") == "financial":
         conversation = " ".join(m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict))
         answers = parse_clarification_answer(query, pending["needed"], conversation)

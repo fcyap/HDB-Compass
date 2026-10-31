@@ -151,6 +151,21 @@ _OPTION_WORDS = {
 }
 
 
+# Words that name an HDB rule. A model sometimes files a vague question ("Should I buy BTO or resale?") as a policy
+# question; without one of these the policy search only returns loosely related passages, so the menu is asked instead.
+_POLICY_TOPIC = re.compile(
+    r"\b(?:mop|minimum occupation|occupy|occupation|eligib\w*|qualif\w*|grants?|ehg|phg|subsid\w*|schemes?|quotas?|eip|"
+    r"ethnic\w*|spr|prs?|permanent residents?|citizens?|citizenship|foreigners?|singles?|unmarried|married|fianc\w*|"
+    r"divorc\w*|widow\w*|second[- ]?timers?|first[- ]?timers?|income (?:ceiling|cap|limit)s?|wait[- ]?out|"
+    r"rent(?:ing)? out|sublet\w*|prime|plus|standard flats?|clawback|resale levy|levy|hfe|"
+    r"loan|ltv|msr|tdsr|cpf|ownership|own(?:ing)? (?:a |another |private )|private propert\w*|rules?|allowed|"
+    r"permitted|policy|policies|restrict\w*|requirements?|criteria|age limit|how (?:long|many times))\b", re.I)
+
+
+def mentions_policy_topic(text: str) -> bool:
+    return bool(_POLICY_TOPIC.search(text or ""))
+
+
 def menu_variant(query: str) -> str:
     bto = bool(re.search(r"\bbtos?\b", query, re.I))
     resale = bool(re.search(r"\bresale\b", query, re.I))
@@ -194,7 +209,10 @@ def _followup(key: str) -> Dict[str, object]:
     if key == "launch":
         names = bto_projects()
         listed = ", ".join(names) if names else "none loaded"
-        return {"kind": "bto_launch", "needed": [], "question": f"Which launch? I have data for: {listed}."}
+        # one chip per launch; its text is a complete question, so a click runs the comparison on its own
+        options = [{"label": n, "text": f"How does {n} compare with resale prices?"} for n in names]
+        return {"kind": "bto_launch", "needed": [], "question": f"Which launch? I have data for: {listed}.",
+                "options": options}
     if key == "budget":
         return {"kind": "financial",
                 "needed": ["citizenship_pair", "first_timer_status", "monthly_income", "youngest_buyer_age", "oldest_buyer_age"],
