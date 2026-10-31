@@ -153,6 +153,16 @@ def honest_step(node_name: str, node_output: Dict[str, Any], desc: str) -> str:
     if node_name == "policy_rag_agent" and \
             sv.load_config().get("tools", {}).get("use_mock", {}).get("retrieve_hdb_policy_knowledge") == "mock":
         return "Stand-in only (the real policy search is not built yet); no rules are quoted."
+    if node_name in ("spatial_agent", "market_sql_agent", "financial_agent"):
+        agent_key = node_name.replace("_agent", "")
+        calls = [t.get("tool") for t in (node_output.get("tool_call_log") or [])
+                 if t.get("agent") == agent_key and t.get("tool")]
+        if node_name == "spatial_agent" and calls:
+            cands = node_output.get("spatial_block_candidates")
+            suffix = f" ({len(cands)} candidate block(s))" if isinstance(cands, list) else ""
+            return f"Executed spatial tools: {', '.join(calls)}{suffix}."
+        if calls:
+            return f"{desc} [{', '.join(calls)}]"
     return desc
 
 
