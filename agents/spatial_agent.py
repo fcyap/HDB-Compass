@@ -27,6 +27,8 @@ from mcp_server.spatial_onemap_tools import (
     get_spatial_index,
     verify_primary_school_distance,
     filter_blocks_by_amenity_proximity,
+    _match_school,
+    _geocode_names_school,
 )
 from agents.state import HDBCompassState, UserConstraints
 
@@ -98,40 +100,34 @@ def resolve_location_node(state: GeoAgentState) -> Dict[str, Any]:
     if get_spatial_index:
         try:
             s_idx = get_spatial_index()
-            query_lower = query.lower()
-            for s in s_idx["payload"]["schools"]:
-                s_name = s["name"].lower()
-                s_clean = s_name.replace("primary school", "").replace("primary", "").replace("school", "").strip()
-                s_alias = s.get("alias", "").lower().replace("primary", "").replace("school", "").strip()
-
-                # Dynamic matching against school name or alias
-                matched = False
-                if len(s_clean) >= 3 and s_clean in query_lower:
-                    matched = True
-                elif len(s_alias) >= 3 and s_alias in query_lower:
-                    matched = True
-
-                if matched:
-                    lat, lng = s["lat"], s["lng"]
-                    x, y = s["x"], s["y"]
-                    school_full = s.get("alias") or s["name"]
-                    logs.append({
-                        "step": "RESOLVE_LOCATION",
-                        "message": f"Identified MOE Primary School: {school_full} in {s.get('town')} (Lat: {lat:.5f}, Lng: {lng:.5f})",
-                        "status": "success"
-                    })
-                    return {
-                        "step": "LOCATION_RESOLVED",
-                        "target_name": school_full,
-                        "school_name": school_full,
-                        "town": s.get("town"),
-                        "lat": lat,
-                        "lng": lng,
-                        "svy21_x": x,
-                        "svy21_y": y,
-                        "radius_meters": radius if radius != 300 else 1000.0,
-                        "logs": logs
-                    }
+            school_query = re.sub(
+                r"\b(?:\d+(?:\.\d+)?\s*(?:km|m|meters|kilometer)|within|near|around|of|from|to|find|search|hdb|blocks?|flats?|resale|priority|boundary)\b",
+                " ",
+                query,
+                flags=re.IGNORECASE,
+            ).strip()
+            s = _match_school(school_query or query, s_idx["payload"]["schools"])
+            if s:
+                lat, lng = s["lat"], s["lng"]
+                x, y = s["x"], s["y"]
+                school_full = s["name"]
+                logs.append({
+                    "step": "RESOLVE_LOCATION",
+                    "message": f"Identified MOE Primary School: {school_full} in {s.get('town')} (Lat: {lat:.5f}, Lng: {lng:.5f})",
+                    "status": "success"
+                })
+                return {
+                    "step": "LOCATION_RESOLVED",
+                    "target_name": school_full,
+                    "school_name": school_full,
+                    "town": s.get("town"),
+                    "lat": lat,
+                    "lng": lng,
+                    "svy21_x": x,
+                    "svy21_y": y,
+                    "radius_meters": radius if radius != 300 else 1000.0,
+                    "logs": logs
+                }
         except Exception as e:
             print(f"School lookup error: {e}")
 
@@ -175,7 +171,7 @@ def resolve_location_node(state: GeoAgentState) -> Dict[str, Any]:
             "status": "fallback"
         })
 
-    is_school = "school" in resolved_name.lower() or "primary" in resolved_name.lower()
+    is_school = bool(geo and _geocode_names_school(geo, search_term))
     detected_school_name = resolved_name if is_school else None
 
     return {
