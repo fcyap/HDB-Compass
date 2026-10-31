@@ -393,15 +393,22 @@ def test_a_catholic_school_search_asks_instead_of_claiming_every_limit():
     assert state["draft_response"] == SCHOOL_NAME_QUESTION and not state["tool_call_log"]
 
 
-def test_a_school_name_extraction_could_not_read_is_said_to_be_unchecked():
-    # no model: the guard reads the name, extraction does not, so no school check runs
+def test_a_school_name_with_st_is_read_and_checked():
+    # the reading fix reads "St. Hilda's", so the school limit is checked, not left unchecked
     state = C.run("4-room in Bishan under $800k within 1km of St. Hilda's Primary School")
+    assert state["user_constraints"].get("school_name") == "St. Hilda's Primary School"
+    assert "verify_primary_school_distance" in [r["tool"] for r in state["tool_call_log"]]
+    assert not sv.school_unchecked(state)
+
+
+def test_a_described_school_in_a_is_said_to_be_unchecked():
+    # A has no guard node: "a Catholic School" names no school, so no school check runs and the answer says so
+    state = A.run("4-room in Bishan under $800k within 1km of a Catholic School")
     assert not state["user_constraints"].get("school_name")
     assert "verify_primary_school_distance" not in [r["tool"] for r in state["tool_call_log"]]
     text = state["draft_response"]
     assert state["candidate_blocks_intersection"] and sv.school_unchecked(state)
     assert "every limit you set" not in text and "match all stated constraints" not in text
-    assert text.startswith("All the blocks below meet the limits that could be checked.")
     assert sv.UNCHECKED_SCHOOL in text
     evidence, _ = sv.synthesis_evidence({**state, "variant": "B"})
     assert sv.UNCHECKED_SCHOOL[2:] in evidence["could_not_check"]

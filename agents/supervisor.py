@@ -269,6 +269,7 @@ def school_named(text: str) -> Optional[str]:
         candidate = candidate.strip()
         if ri.generic_school_phrase(candidate) and candidate.lower() not in {"primary school", "school"}:
             return candidate
+        described = re.match(r"(?:a|an)\s", candidate, re.I)
         # "the Henry Park Primary School", "our Rosyth School": the name follows the determiner
         candidate = re.sub(r"^(?:(?:the|a|an|our|my|your|his|her|their)\s+)+", "", candidate, flags=re.I)
         name_words = re.sub(_SCHOOL_END + r"\s*$", "", candidate, flags=re.I).split()
@@ -276,6 +277,8 @@ def school_named(text: str) -> Optional[str]:
             continue
         if (not name_words or any(w[0].islower() and _NOT_A_NAME_WORD.match(w) for w in name_words)
                 or any(w.upper() in {"MRT", "LRT"} for w in name_words)):    # "near MRT High floor" names a station
+            continue
+        if described and not names_a_school(candidate):   # "a Catholic School": a kind of school; C's guard asks which
             continue
         return candidate
     return None
