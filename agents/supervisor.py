@@ -222,20 +222,137 @@ def _clauses_of(text: str) -> List[str]:
     return [c for _, clauses in _sentences_and_clauses(text) for c in clauses]
 
 
+def named_towns(text: str, any_case_short: bool = False) -> List[str]:
+    """The HDB towns a text names: full names, place aliases ("Tiong Bahru") and short forms ("AMK", "JE"). The regex
+    reading and the check on a model's reading both use this one map, so code never drops a town the prompt taught the
+    model to read. Short forms are whole words in upper case ("JE", not "je" in "jeans"); any_case_short also accepts
+    "amk" written in lower case, for checking a town the model already read."""
+    up = text.upper()
+    towns = [t for t in HDB_TOWNS if t in up]
+    for alias, town in TOWN_ALIASES.items():
+        if alias in up and town not in towns:
+            towns.append(town)
+    for short, town in TOWN_SHORT.items():
+        if re.search(rf"\b{short}\b", text, re.I if any_case_short else 0) and town not in towns:
+            towns.append(town)
+    return towns
+
+
+# A school's name: up to four words before School/Primary/High ("Ai Tong School", "St. Hilda's Primary School",
+# "CHIJ St. Nicholas Girls' School", "Anglo-Chinese School (Junior)"). "High" is a whole word and not "high floor".
+_SCHOOL_WORD = r"(?:St\.|[A-Za-z][A-Za-z'’\-]*)"
+_SCHOOL_END = (r"(?:Primary Schools?|Schools?|Primary|High)\b(?:\s*\((?:Primary|Junior|Secondary)\))?"
+               r"(?!\s+(?:floors?|storeys?|stor(?:e)?y|rise|level)\b)")
+_SCHOOL_AFTER = re.compile(rf"\b(?:of|near|to)\s+(?:to\s+)?((?:{_SCHOOL_WORD}\s+){{1,4}}{_SCHOOL_END})", re.I)
+_SCHOOL_AT_START = re.compile(rf"\s*((?:{_SCHOOL_WORD}\s+){{1,4}}{_SCHOOL_END})\s*"
+                              r"(?=[12]\s*(?:[-–]\s*2\s*)?km\b|within\b|[.?!]|$)", re.I)
+# A word written in lower case that never starts or makes up a school's name: "near my kids school", "close to MRT
+# with high floor", "to our old school", "the nearest school". A capitalised word is the user's own name casing.
+_NOT_A_NAME_WORD = re.compile(r"^(?:a|an|the|my|our|your|his|her|their|its|this|that|to|of|near|with|by|at|in|on|for|"
+                              r"from|and|or|nearest|closest|nearby|any|some|old|new|current|future|same|kids?|kids'|"
+                              r"kid's|sons?|son's|daughters?|daughter's|child|child's|children|children's|mrt|lrt|"
+                              r"station|flats?|resale|room|hdb|bto|is|are|be|go|goes|going|attend\w*|which|where|"
+                              r"secondary)$", re.I)
+
+
+def school_named(text: str) -> Optional[str]:
+    """The school the message names, or None. A word in lower case counts only when it can be part of a name
+    ("catholic high school"), so a lower-case phrase about some school is never read as one. A phrase that names no
+    school at all ("near good schools") is returned as it is: _verify_extraction then asks which school is meant."""
+    candidates = [m.group(1) for m in _SCHOOL_AFTER.finditer(text)]
+    start = _SCHOOL_AT_START.match(text)
+    if start:
+        candidates.append(start.group(1))
+    for candidate in candidates:
+        candidate = candidate.strip()
+        name_words = re.sub(_SCHOOL_END + r"\s*$", "", candidate, flags=re.I).split()
+        if candidate.lower() in {"primary school", "school", "moe primary school"} or candidate.lower().endswith("for primary"):
+            continue
+        if ri.generic_school_phrase(candidate):
+            return candidate
+        if not name_words or any(w[0].islower() and _NOT_A_NAME_WORD.match(w) for w in name_words):
+            continue
+        return candidate
+    return None
+
+
+# A workplace or commute destination: capitalised words ("Raffles Place", "Changi Business Park", "NUS") or one-north.
+# So "my commute to work is long", "close to my parents" and "to MRT" are not workplaces, and a time limit after the
+# name ("to Jurong East under 45 min") is not part of it.
+_PLACE_WORD = r"(?:one-north|[A-Z][A-Za-z0-9'’\-]*)"
+_DESTINATION = re.compile(rf"(?<![A-Za-z])(?i:(?<!close )(?<!near )(?<!next )(?<!walk )(?<!walking )(?<!distance )to)\s+"
+                          rf"({_PLACE_WORD}(?:\s+{_PLACE_WORD}){{0,3}})")
+_NOT_A_WORKPLACE = {"MRT", "LRT", "HDB", "BTO", "WORK", "OFFICE", "HOME", "SCHOOL", "STATION"}
+# where a workplace stated after "work at" ends: a limit, a time or the next clause ("Raffles Place within 30 minutes")
+_WORKPLACE_END = re.compile(r"\s+(?:under|within|less|below|max\w*|no|at|by|daily|every|each|should|must|is|are|was|and|"
+                            r"with|where|but|so|which|that|for|to|near|on|in|from|or|while|plus|\d)\b.*$", re.I)
+_COMMUTE_MINUTES = re.compile(r"(?:under|within|less than|max)\s*(\d{2})\s*min(?:s|utes)?\b"
+                              r"(?!\s*(?:walk|walking|on foot|by foot|(?:away\s+)?(?:from|of|to)\s+(?:an?\s+|the\s+)?"
+                              r"(?:nearest\s+)?(?:mrt|lrt|train|station|bus|hawker|supermarket|park|clinic|school)))", re.I)
+
+
+def workplaces(q: str) -> Tuple[List[str], List[Tuple[int, int]]]:
+    """Workplaces and commute destinations the message names, and where they are in it (so a town named only as a
+    workplace is not also a search town)."""
+    found: List[str] = []
+    spans: List[Tuple[int, int]] = []
+
+    def add(name: str, start: int) -> None:
+        name = name.strip(" -'’")
+        if name and name.upper() not in _NOT_A_WORKPLACE and name.lower() not in {w.lower() for w in found}:
+            found.append(name)
+        if name:
+            spans.append((start, start + len(name)))
+
+    for m in re.finditer(r"\bworks?\s+(?:at|in)\s+([A-Za-z0-9 \-'’]+?)(?=[,.;?!]|\s+and\b|$)", q, re.I):
+        add(_WORKPLACE_END.sub("", m.group(1)), m.start(1))
+    if len(found) < 2 and re.search(r"\bcommute\b", q, re.I):
+        for m in _DESTINATION.finditer(q):
+            if m.group(1).split()[-1].upper() not in _NOT_A_WORKPLACE | {"INTERCHANGE"}:   # "to Bishan MRT" is a station
+                add(m.group(1), m.start(1))
+    return found, spans
+
+
+# The regex reading of a policy question: an HDB rule named outright (MOP, EIP, Prime/Plus) or asked about in other
+# words (who may buy, which grants exist, how long to wait, renting out). It also keeps a model's policy reading that
+# scope's topic words miss. "plus" only in the Plus-classification sense: "plus $30,000 in cash" is not a policy question.
+_POLICY_WORDING = re.compile(
+    r"\b(mop|minimum occupation|prime|plus (?:flats?|models?|bto|resale|classification)|standard flat|clawback|subsidy recovery|eip|ethnic\w*|quota\w*|wait[- ]out|eligible|eligibility (?:criteria|requirements?|rules?|conditions?|to )|scheme\w*|rental restriction|exempt\w*"
+    r"|not married|unmarried|fianc[eé]e?s?|apply(?:ing)? for (?:an? )?(?:[2-5][- ]room )?(?:flexi )?btos?|can (?:we|i) (?:buy|apply)"
+    # rules asked about in other words: "grant rules", "2-room Flexi", "how long must I wait", "can I rent out",
+    # "after selling my private property"
+    r"|(?:grant|housing|hdb|resale|bto) rules?"
+    r"|how long (?:must|do|should|will|would) (?:i|we) (?:have to )?wait (?:before|until|to) (?:i |we )?(?:can )?(?:buy|apply|purchase)"
+    r"|(?:sold|selling|disposed of|disposal of) (?:my |our |the |a )?private (?:residential )?propert(?:y|ies)"
+    # who may buy, which grants exist, income limits, how often one may apply (the stems above need endings)
+    r"|(?:can|may|could) (?:an? )?(?:pr|prs|permanent residents?|foreigners?|singles?|singaporeans?|divorcees?|widow(?:er)?s?)\s+(?:aged? \d{2}\s+)?(?:buy|apply|own|purchase|get)"
+    r"|(?:pr|prs|permanent residents?|foreigners?|singles?|divorcees?|widow(?:er)?s?)\s+(?:allowed|able|permitted|eligible)\s+to\s+(?:buy|apply|own|purchase)"
+    r"|(?:what|which) (?:housing |cpf )?grants? (?:are|is|exist|does|(?:can|could|do|would|will|am|might)(?! (?:we|i)\b))|grants? (?:are )?(?:available|offered)|grants? for (?:first|second|singles?|young|large|married|couples?|families|seniors?|resale|bto)|income (?:ceiling|cap|limit)s?"
+    r"|how many times (?:can|may) (?:i|we) apply|second[- ]?timers?"
+    # a named grant explained, the rules for a purchase, CPF use: "What is the Enhanced CPF Housing Grant?",
+    # "What are the rules for buying a resale flat with my parents?", "Can I use CPF for an HDB downpayment?"
+    r"|what (?:is|are) (?:the |an? )?(?:ehg|phg|enhanced (?:cpf )?housing grant|proximity (?:housing )?grant|family grant|step-up grant|half-housing grant)"
+    r"|rules (?:for|on|about) (?:buying|selling|owning|renting|subletting|applying)"
+    r"|(?:can|may) (?:i|we) use (?:my |our )?cpf (?:for|to)"
+    r"|(?:can|may) (?:i|we) (?:rent out|sublet)|rent out (?:my|our|the) (?:whole )?(?:flat|room|bedroom|unit)|buyback)\b", re.I)
+# "What grants can we get?" asks which grants exist when the user gives no figures, but with income, CPF or ages stated
+# it is the grant calculator's question (Category E: "what grants do we get and what's our max budget?")
+_OWN_GRANT_ASK = re.compile(r"\b(?:what|which) (?:housing |cpf )?grants? (?:can|could|do|would|will|might) (?:we|i)\b", re.I)
+
+
+def policy_wording(q: str, money_stated: bool = False) -> bool:
+    """Whether the message asks about an HDB rule in words code reads (the regex reading of policy_question).
+    money_stated: the user gave the calculators figures (income, CPF, cash), so "what grants can we get?" is theirs."""
+    return bool(_POLICY_WORDING.search(q)) or (bool(_OWN_GRANT_ASK.search(q)) and not money_stated)
+
+
 def rule_based_extract(query: str) -> ExtractedConstraints:
     """Regex extractor: the no-LLM path and the safety net when structured output fails."""
     nearby = school_location_request(query)
     if nearby is not None:
         return ExtractedConstraints(nearby_schools=nearby)
     q = query
-    qu = q.upper()
-    towns = [t for t in HDB_TOWNS if t in qu]
-    for alias, town in TOWN_ALIASES.items():
-        if alias in qu and town not in towns:
-            towns.append(town)
-    for short, town in TOWN_SHORT.items():
-        if re.search(rf"\b{short}\b", q) and town not in towns:   # case-sensitive: "AMK", not "amk" inside a word
-            towns.append(town)
+    towns = named_towns(q)
     for word, digit in NUMBER_WORDS.items():
         q = re.sub(rf"\b{word}(?=[- ]?(?:room|rm)\b)", digit, q, flags=re.I)
     # "4-room", "4rm"; not a room count ("at least 2 rooms", "3 bedrooms")
@@ -299,64 +416,35 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
         if dist >= 20:
             radii.setdefault(AMENITY_WORDS[m.group(3).lower()], int(dist))
 
-    school = None
-    for m in re.finditer(r"(?:of|near|to)\s+((?:[A-Z][a-zA-Z'’]+\s){1,4}(?:Primary School|School|Primary|High))", q, re.I):
-        candidate = m.group(1).strip()
-        if candidate.lower() not in {"primary school", "school", "moe primary school"} and not candidate.lower().endswith("for primary"):
-            school = candidate
-            radius = 2000 if re.search(r"\b(?:1\s*[-–]\s*)?2\s*km\b|\b2000\s*m\b", q, re.I) else 1000
-            radii.setdefault("school", radius)
-            break
-    if not school:
-        m = re.match(r"\s*([A-Za-z'’ -]+?\b(?:Primary School|School|Primary|High))\s*(?=[12]\s*(?:[-–]\s*2\s*)?km\b|within\b|[.?!]|$)", q, re.I)
-        if m:
-            candidate = m.group(1).strip()
-            if candidate.lower() not in {"primary school", "school", "moe primary school"} and not candidate.lower().endswith("for primary"):
-                school = candidate
-                radius = 2000 if re.search(r"\b(?:1\s*[-–]\s*)?2\s*km\b|\b2000\s*m\b", q, re.I) else 1000
-                radii.setdefault("school", radius)
+    # a name in the user's own casing, or lower-case words that can be a name (school_named)
+    school = school_named(q)
+    if school:
+        radius = 2000 if re.search(r"\b(?:1\s*[-–]\s*)?2\s*km\b|\b2000\s*m\b", q, re.I) else 1000
+        radii.setdefault("school", radius)
 
     own = statements(q, own=True)
     income = stated_income(own, is_couple(q))
-    cpf = bound_amounts(own, is_couple(q)).get("cpf_oa_balance")   # paired with its own word (never the income just before it)
+    amounts = bound_amounts(own, is_couple(q))
+    cpf = amounts.get("cpf_oa_balance")   # paired with its own word (never the income just before it)
 
     # the legacy scheme label, from the same stated reading as the calculator facts (nothing inferred from "couple")
     pair, first = citizenship_stated(q), first_timer_stated(q)
     scheme = {"SC_Single": "SC_Single_35", "SC_PR": "SC_PR_FirstTimer" if first else None,
               "SC_SC": {True: "SC_SC_FirstTimer", False: "SC_SC_SecondTimer"}.get(first)}.get(pair or "")
 
-    work = [w.strip() for w in re.findall(r"work(?:s)?\s+(?:at|in)\s+([A-Za-z0-9 \-']+?)(?=[,.;]|\s+and\b|$)", q, re.I)]
-    if len(work) < 2 and re.search(r"\bcommute\b", q, re.I):
-        dest_matches = [w.strip() for w in re.findall(r"(?:commute\b.*?to|\bto)\s+([A-Z][A-Za-z0-9 \-']+?)(?=[,.;?!]|\s+(?:and\s+(?:under|within|less|max|to)|with|where)|\s+and\b|$)", q, re.I)]
-        for d in dest_matches:
-            if d and d not in work:
-                work.append(d)
-        if len(work) >= 2:
-            # If a town was only matched because it was a commute destination (e.g. "to Jurong East"), drop from search towns
-            work_uppers = {w.upper() for w in work}
-            towns = [t for t in towns if t not in work_uppers or f"in {t.lower()}" in q.lower()]
+    work, work_spans = workplaces(q)
+    if len(work) >= 2:
+        # a town named only as a workplace ("We work at Raffles Place and work at Jurong East. Find flats in Bukit
+        # Merah") is not a search town; one also named elsewhere ("flats in Jurong East") stays
+        rest = "".join(" " if any(a <= i < b for a, b in work_spans) else ch for i, ch in enumerate(q))
+        towns = [t for t in towns if t in named_towns(rest)]
 
-    max_commute = None
-    commute_mins = [int(m.group(1)) for m in re.finditer(r"(?:under|within|less than|max)\s*(\d{2})\s*min(?:s|utes)?\b(?!\s*(?:walk|walking|on foot|by foot))", q, re.I)]
-    if commute_mins:
-        max_commute = max(commute_mins)
+    # two different limits ("30 mins to Raffles Place and 40 mins to Jurong East") keep the stricter one: one limit
+    # holds for every workplace, and a looser limit than the user stated is never applied
+    commute_mins = [int(m.group(1)) for m in _COMMUTE_MINUTES.finditer(q)]
+    max_commute = min(commute_mins) if commute_mins else None
 
-    policy = None
-    # "plus" only in the Plus-classification sense: "plus $30,000 in cash" is not a policy question.
-    if re.search(r"\b(mop|minimum occupation|prime|plus (?:flats?|models?|bto|resale|classification)|standard flat|clawback|subsidy recovery|eip|ethnic\w*|quota\w*|wait[- ]out|eligible|eligibility (?:criteria|requirements?|rules?|conditions?|to )|scheme\w*|rental restriction|exempt\w*"
-                 r"|not married|unmarried|fianc[eé]e?s?|apply(?:ing)? for (?:an? )?(?:[2-5][- ]room )?(?:flexi )?btos?|can (?:we|i) (?:buy|apply)"
-                 # rules asked about in other words: "grant rules", "2-room Flexi", "how long must I wait", "can I rent out",
-                 # "after selling my private property"
-                 r"|(?:grant|housing|hdb|resale|bto) rules?"
-                 r"|how long (?:must|do|should|will|would) (?:i|we) (?:have to )?wait (?:before|until|to) (?:i |we )?(?:can )?(?:buy|apply|purchase)"
-                 r"|(?:sold|selling|disposed of|disposal of) (?:my |our |the |a )?private (?:residential )?propert(?:y|ies)"
-                 # who may buy, which grants exist, income limits, how often one may apply (the stems above need endings)
-                 r"|(?:can|may|could) (?:an? )?(?:pr|prs|permanent residents?|foreigners?|singles?|singaporeans?|divorcees?|widow(?:er)?s?)\s+(?:buy|apply|own|purchase|get)"
-                 r"|(?:pr|prs|permanent residents?|foreigners?|singles?|divorcees?|widow(?:er)?s?)\s+(?:allowed|able|permitted|eligible)\s+to\s+(?:buy|apply|own|purchase)"
-                 r"|(?:what|which) (?:housing |cpf )?grants? (?:are|is|exist|can|could|do|does|would|will|am|might)|grants? (?:are )?(?:available|offered)|grants? for (?:first|second|singles?|young|large|married|couples?|families|seniors?|resale|bto)|income (?:ceiling|cap|limit)s?"
-                 r"|how many times (?:can|may) (?:i|we) apply|second[- ]?timers?"
-                 r"|(?:can|may) (?:i|we) (?:rent out|sublet)|rent out (?:my|our|the) (?:whole )?(?:flat|room|bedroom|unit)|buyback)\b", q, re.I):
-        policy = q
+    policy = q if policy_wording(q, money_stated=bool(income or amounts)) else None
 
     base = dict(
         towns=towns, flat_types=flat_types, max_budget_sgd=budget, min_remaining_lease_years=lease,
@@ -1457,6 +1545,12 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
             for k, v in rb.items():
                 if merged.get(k) in (None, [], {}, False) and v not in (None, [], {}, False):
                     merged[k] = v
+            # Assumptions and questions are printed as they stand in the facts section code writes, so they are
+            # code's own (the research reading of this message), never the model's free text.
+            for k in MODEL_FREE_TEXT_FIELDS:
+                if merged.get(k) != rb.get(k):
+                    errors.append(f"extract_constraints: model-written {k} replaced by code's")
+                merged[k] = rb.get(k) or []
             extracted = ExtractedConstraints(**merged)
     if extracted is None:
         if llm is not None:
@@ -1468,6 +1562,19 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
     constraints = _finalize_constraints(constraints, query, state, errors, from_model=source != "regex")
     constraints["extraction_source"] = source
     return {"user_constraints": constraints, "errors": errors, "model_constraints": model_reading}
+
+
+# A question about the buyer's own money or eligibility: the calculators or the policy agent answer it, never resale
+# price statistics ("How much grant can I get?", "How much is the stamp duty?", "How much can we afford?").
+_MONEY_ASK = re.compile(r"\b(?:grants?|ehg|phg|cpf|loans?|borrow\w*|mortgage|interest rates?|stamp dut(?:y|ies)|bsd|absd|"
+                        r"down ?payments?|resale levy|levy|ltv|msr|tdsr|hfe|eligib\w*)\b"
+                        r"|\b(?:can|could) (?:we|i) afford\b|\bhow much (?:can|could|should) (?:we|i) (?:afford|pay|spend)\b", re.I)
+
+
+def money_question(query: str, c: Dict[str, Any]) -> bool:
+    """Whether the message asks about the buyer's money (grants, loan, stamp duty, CPF, what they can afford). A budget
+    or "afford" also counts when the user gave calculator facts ("we earn 9k, what's our budget?")."""
+    return bool(_MONEY_ASK.search(query)) or (has_financial_facts(c) and bool(re.search(r"\b(?:budget|afford\w*)\b", query, re.I)))
 
 
 def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCompassState, errors: List[str],
@@ -1490,9 +1597,11 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     constraints["amenity_radii_meters"] = {k: v for k, v in (constraints.get("amenity_radii_meters") or {}).items()
                                            if v is not None and v > 0}
     _verify_extraction(constraints, query, errors, from_model=from_model)
-    if from_model and constraints.get("policy_question") and not scope.mentions_policy_topic(query):
+    if from_model and constraints.get("policy_question") and not scope.mentions_policy_topic(query) \
+            and not policy_wording(query, money_stated=calculator_facts(constraints)):
         # the model filed a vague question ("Should I buy BTO or resale?") as a policy question; the policy search
-        # would return loosely related rules, so the user gets the menu instead (decide_routing)
+        # would return loosely related rules, so the user gets the menu instead (decide_routing). A rule question in
+        # words code reads itself ("Can I buy a resale flat after selling my condo?") keeps the model's reading.
         constraints["policy_question"] = None
         errors.append("extract_constraints: model's policy reading dropped: the message names no HDB rule")
     if pending and pending.get("kind", "financial") == "financial":
@@ -1516,6 +1625,7 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     constraints["analysis_mode"] = False
     if (with_history and not pending and not constraints.get("clarifications") and not constraints.get("place_options")
             and not constraints.get("addresses") and not constraints.get("map_pin") and scope.mentions_data(query)
+            and not money_question(query, constraints)
             and addons.offered_in(state.get("variant"), bool(state.get("fast_path")))
             # nothing specific was recognised; a town on its own (which only started a block search) does not count
             and not decide_routing({**constraints, "towns": []})):
@@ -1529,6 +1639,8 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
 
 
 FAST_PATH_SOURCE = "regex:fast_path"
+# free-text fields of the model's schema that the answer prints verbatim: code writes them, the model's are dropped
+MODEL_FREE_TEXT_FIELDS = ("assumptions", "clarifications")
 
 
 def _apply_map_pin(c: Dict[str, Any], query: str, state: HDBCompassState, prior: Optional[Dict[str, Any]] = None,
@@ -1549,12 +1661,17 @@ def _verify_extraction(c: Dict[str, Any], query: str, errors: List[str], from_mo
         c["comparable_resale"] = None
         errors.append("extract_constraints: comparable coordinates were not in the message; dropped")
     if from_model and c.get("towns"):
-        qu = query.upper()
-        stated = {t for t in HDB_TOWNS if t in qu} | {town for alias, town in TOWN_ALIASES.items() if alias in qu}
+        # the same names, aliases and short forms ("JE", "AMK", "TPY") the prompt teaches and the regex reads
+        stated = set(named_towns(query, any_case_short=True))
         invented = [t for t in c["towns"] if t not in stated]
         if invented:
             c["towns"] = [t for t in c["towns"] if t in stated]
             errors.append(f"extract_constraints: towns not named in the message were dropped: {invented}")
+    if from_model and c.get("nearby_schools") and school_location_request(query) is None:
+        # a school lookup around an address replaces the whole search (decide_routing), so it needs the same words
+        # from the user that the code path reads ("schools near Blk 123 Bishan St 12"), not "flats near a school"
+        c["nearby_schools"] = None
+        errors.append("extract_constraints: model's nearby-schools lookup dropped: the message asks for no schools near a place")
     if ri.generic_school_phrase(c.get("school_name")):
         c["school_name"] = None
         (c.get("amenity_radii_meters") or {}).pop("school", None)
