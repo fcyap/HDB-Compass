@@ -221,7 +221,7 @@ def test_auditor_recipe_in_the_contract_separates_the_model_opening_from_the_cod
 
     class Writer:
         def invoke(self, _msgs):
-            return AIMessage(content="Both Ang Mo Kio blocks fit your search.")
+            return AIMessage(content="Blk 102 is the better pick for the train.")
 
     with patch.object(sv, "get_llm", return_value=Writer()):
         after = {**state, **sv.synthesize_node({**state, "draft_response": ""})}
@@ -229,5 +229,6 @@ def test_auditor_recipe_in_the_contract_separates_the_model_opening_from_the_cod
     facts = sv.template_response(after) if sv.writes_facts_in_code(after) else ""
     draft = after["draft_response"]
     opening = draft.split(facts, 1)[0].strip() if facts and facts in draft else draft
-    assert opening == "Both Ang Mo Kio blocks fit your search."
+    # in a block search code's own answer leads the opening, and the model's checked sentence follows it
+    assert opening == sv.code_opening(after, facts)[0] + " Blk 102 is the better pick for the train."
     assert sv.template_response(state) == facts                     # the same text on every retry of the loop

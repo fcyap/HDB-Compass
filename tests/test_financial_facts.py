@@ -233,7 +233,8 @@ def test_c_answer_facts_are_written_by_code():
     with patch.object(sv, "get_llm", return_value=Writer()):
         out = sv.synthesize_node({**state, "draft_response": ""})
     facts = sv.template_response(state)
-    assert out["draft_response"].startswith("Both Ang Mo Kio blocks fit.")
+    # code's own answer goes first; "Both Ang Mo Kio blocks fit." only restates it, so it is not repeated
+    assert out["draft_response"].startswith(sv.code_opening(state, facts)[0] + "\n\n" + facts)
     assert "$600,000" not in out["draft_response"]                          # the sentence with a wrong price is dropped
     assert facts in out["draft_response"]                                  # the facts section is the code's, verbatim
     assert "will be shown to the user exactly as written" in seen["prompt"]

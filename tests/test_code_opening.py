@@ -186,6 +186,203 @@ def test_every_code_opening_on_the_evaluation_questions_passes_the_figure_check_
         assert set(M.recommended_block_numbers(opening)) <= listed, qid
         if item.get("sub_use_case") == "E2":
             assert M.recommended_block_numbers(opening) == [], qid               # no block presented as a match
+        # code's own trade-off passes the comparison check the model's sentences face
+        assert sv.comparisons_hold(opening, s.get("candidate_blocks_intersection", [])[:sv.LISTED_BLOCKS]), qid
+        if sv.clarification_needed(s):                 # an estimate that still needs facts is never said to follow
+            assert "budget estimate follow" not in opening and "needs a few more facts" in opening, qid
+
+
+# --- what the lead says follows the list (review of the code opening, 31 Oct) ------------------------------------------
+
+GRANTS = {"status": "ok", "enhanced_housing_grant": 0, "family_grant": 80000, "proximity_housing_grant": 0,
+          "total_grants": 80000}
+BUDGET = {"status": "ok", "max_purchase_price": 784366, "max_loan_amount": 569366, "monthly_instalment": 2583,
+          "binding_constraint": "MSR"}
+NEEDS = {"status": "needs_information", "missing_inputs": ["cash_savings"]}
+MOP = [{"text": "[Plus Flats > MOP]\nPlus flats have a 10-year MOP.", "source_url": "https://www.hdb.gov.sg/x"}]
+
+
+def search_with(**extra):
+    """A two-block search answer with the given financial results or policy passages."""
+    return {"messages": [{"role": "user", "content": "What is the MOP for Plus flats?"}],
+            "candidate_blocks_intersection": [block("627", 655000, 65.5, 379.2), block("102", 710000, 65.7, 333.9)],
+            "sql_market_results": {"query_resale_blocks_by_criteria": {"blocks": []}}, **extra}
+
+
+def answer_of(s):
+    return sv.code_opening_parts(s, sv.template_response(s))[0][0]
+
+
+def test_the_lead_says_only_what_was_worked_out_follows_the_list():
+    # E1-07 gives no cash savings: the grants are worked out, the budget is asked for at the end
+    s = state_for("E1-07")
+    assert sv.code_opening(s, sv.template_response(s))[0].startswith(
+        "Both blocks below meet every limit you set, and your housing grants follow the list; the rest of your grant "
+        "and budget estimate needs a few more facts, asked for at the end.")
+    meets = "Both blocks below meet every limit you set"
+    assert answer_of(search_with(financial_breakdown={"calculate_cpf_housing_grants": GRANTS,
+                                                      "calculate_maximum_affordability": NEEDS})) == (
+        meets + ", and your housing grants follow the list; the rest of your grant and budget estimate needs a few "
+        "more facts, asked for at the end.")
+    assert answer_of(search_with(financial_breakdown={"calculate_maximum_affordability": BUDGET})) == \
+        meets + ", and your maximum purchase price follows the list."
+    assert answer_of(search_with(financial_breakdown={"calculate_cpf_housing_grants": GRANTS,
+                                                      "calculate_maximum_affordability": BUDGET})) == \
+        meets + ", and your grant and budget estimate follows the list."
+    assert answer_of(search_with(financial_breakdown={"calculate_cpf_housing_grants": GRANTS,
+                                                      "calculate_maximum_affordability": {"error": "boom"}})) == \
+        meets + ", and your housing grants follow the list; part of your estimate could not be worked out, as said below."
+    assert answer_of(search_with(financial_breakdown={"calculate_maximum_affordability": {"error": "boom"}})) == \
+        meets + "; your estimate could not be worked out, as said below."
+
+
+def test_the_verb_agrees_with_what_follows_the_list():
+    # "the relevant HDB rules follow", not "follows" (one item, but a plural noun)
+    assert answer_of(search_with(rag_policy_passages=MOP)) == \
+        "Both blocks below meet every limit you set, and the relevant HDB rules follow the list."
+    assert answer_of(search_with(rag_policy_passages=MOP, financial_breakdown={"calculate_maximum_affordability": BUDGET})) \
+        == "Both blocks below meet every limit you set, and your maximum purchase price and the relevant HDB rules " \
+           "follow the list."
+
+
+def test_trend_and_comparables_leads_promise_a_summary_only_when_there_is_one():
+    q = {"messages": [{"role": "user", "content": "How have Bishan resale prices moved?"}]}
+    trend = {"summary": [{"town": "BISHAN", "latest_quarter": "2026Q3", "latest_median_price": 700000,
+                          "median_price_per_sqm": 7000, "yoy_appreciation_pct": 2.0}], "metadata": {}}
+    none = {"summary": [], "metadata": {"towns_without_data": ["BISHAN"]}}
+    assert answer_of({**q, "sql_market_results": {"compute_town_price_timeseries": trend}}) == \
+        "The latest town price trends for your search are below."
+    s = {**q, "sql_market_results": {"compute_town_price_timeseries": none}}
+    assert answer_of(s) == "No recent town price trend could be found for your search; the reason is below."
+    assert sv.synthesize_node({**s, "draft_response": ""})["draft_response"] == (
+        answer_of(s) + "\n\n- BISHAN: no transactions for the requested flat type in the trend window.")
+    found = {"status": "ok", "criteria": {"flat_type": "4 ROOM", "radius_meters": 500},
+             "metadata": {"window_start_month": "2025-10", "window_end_month": "2026-09"},
+             "summary": {"transaction_count": 12, "block_count": 4,
+                         "price": {"median": 650000, "lower_quartile": 620000, "upper_quartile": 690000}}}
+    assert answer_of({**q, "sql_market_results": {"query_comparable_resale_transactions": found}}) == \
+        "Recent comparable resale sales for your search are summarised below."
+    for empty in ({"status": "ok", "summary": None, "metadata": {}}, {"error": "database unavailable"},
+                  {"status": "no_coverage", "summary": None, "metadata": {}}):
+        s = {**q, "sql_market_results": {"query_comparable_resale_transactions": empty}}
+        assert answer_of(s) == "No comparable resale sales could be summarised for your search; the reason is below.", empty
+
+
+# --- the model's comparisons are checked against the listed blocks -----------------------------------------------------
+
+def test_comparisons_are_checked_against_the_listed_blocks():
+    pair = [block("201E", 600000, 70, 355), block("899", 610000, 71, 346)]        # live31 E1-05: 355 m against 346 m
+    assert not sv.comparisons_hold("The slight price difference is offset by a longer lease for Blk 899, while Blk 201E "
+                                   "is marginally closer to the MRT.", pair)
+    assert sv.comparisons_hold("Blk 899 is a little nearer the MRT station, while Blk 201E is cheaper.", pair)
+    assert sv.comparisons_hold("Blk 201E is cheaper than Blk 899.", pair)
+    assert not sv.comparisons_hold("Blk 899 is cheaper than Blk 201E.", pair)
+    e107 = [block("62", 600000, 72, 384), block("11", 640000, 70, 354)]           # live31_varied E1-07~casual
+    assert not sv.comparisons_hold("Blk 62 is cheaper and closer to MRT, but has a slightly shorter lease.", e107)
+    assert sv.comparisons_hold("The higher price of Blk 11 offers slightly less lease time but is closer to the MRT "
+                               "station.", e107)
+    three = [block("761", 600000, 73, 188), block("763", 590000, 73, 297), block("762", 641500, 72, 241)]
+    assert sv.comparisons_hold("The price difference is minimal, but **Blk 761** is closest to the MRT station, while "
+                               "**Blk 763** is the most affordable.", three)
+    # what cannot be checked is not kept: no block named, "cheaper" among three with no "than", a block list, a
+    # negation, a distance to no named place
+    for sentence in ("Offers the lowest price but also the shortest lease.", "Blk 761 is more expensive.",
+                     "Blk 761 and 762 are cheaper.", "Blk 763 is not cheaper.", "Blk 763 is closer."):
+        assert not sv.comparisons_hold(sentence, three), sentence
+    assert not sv.comparisons_hold("This change allows options slightly further from the MRT.", [])   # no-match answer
+    assert sv.comparisons_hold("Both blocks are in Ang Mo Kio.", pair)                               # compares nothing
+    # a place the user limited that has no words of its own is read by its name
+    cc = [block("1", 500000, 70, community_club=100), block("2", 600000, 70, community_club=300)]
+    assert sv.trade_off_sentence(cc, {"amenity_radii_meters": {"community_club": 500}}) == \
+        "Blk 1 is cheaper and nearer the community club."
+    assert sv.comparisons_hold("Blk 1 is cheaper and nearer the community club.", cc)
+
+
+# --- synthesis: code's answer first in a block search; the model's checked sentences follow ----------------------------
+
+def test_a_false_model_comparison_is_dropped_and_code_trade_off_is_used():
+    s = state_for("E1-05")
+    facts = sv.template_response(s)
+    w = Writer("Blk 201E is marginally closer to the MRT. This purchase-only ceiling excludes taxes, fees, and cash over "
+               "valuation.")
+    with patch.object(sv, "get_llm", return_value=w):
+        out = sv.synthesize_node({**s, "draft_response": ""})
+    assert out["draft_response"] == sv.code_opening(s, facts)[0] + "\n\n" + facts
+    assert "Blk 899 has more lease left and is nearer an MRT station" in out["draft_response"]
+    assert out["errors"] == [
+        "synthesize: dropped 1 opening sentence(s) that compared blocks in a way the facts do not bear out; code opening used",
+        "synthesize: dropped 1 opening sentence(s) that leaned on the sentence before"]
+
+
+def test_a_true_model_comparison_follows_code_answer_in_place_of_code_trade_off():
+    s = state_for("E1-04")
+    facts = sv.template_response(s)
+    answer, trade, _ = sv.code_opening_parts(s, facts)
+    text = "Blk 86 offers a longer lease but is farther from the MRT. Blk 14 is closer to the MRT but has a shorter lease."
+    w = Writer(text)
+    with patch.object(sv, "get_llm", return_value=w):
+        out = sv.synthesize_node({**s, "draft_response": ""})
+    assert trade and out["draft_response"] == " ".join(answer) + " " + text + "\n\n" + facts
+    assert out["errors"] == []
+    # the prompt gives code's first sentence, says not to restate it and that comparisons are checked
+    assert " ".join(answer) in w.prompt and "Do not say again whether the blocks meet the limits" in w.prompt
+    assert "checked against the facts" in w.prompt and trade in w.prompt
+
+
+def test_notes_a_restated_answer_and_a_sentence_leaning_on_a_dropped_one_give_way_to_code_opening():
+    s = state_for("E1-01")
+    facts = sv.template_response(s)
+    for text in ("Ensure you account for additional costs like taxes and fees.",                       # live32 E1-01
+                 "Note: This is a conditional estimate. Final eligibility and amounts require an HDB Flat Eligibility "
+                 "(HFE) letter."):                                                                     # live31 E1-02
+        with patch.object(sv, "get_llm", return_value=Writer(text)):
+            out = sv.synthesize_node({**s, "draft_response": ""})
+        assert out["draft_response"].startswith(sv.code_opening(s, facts)[0] + "\n\n" + facts), text
+        assert out["errors"][0].startswith("synthesize: dropped") and "note the facts carry" in out["errors"][0], text
+    s = state_for("E2-03")
+    facts = sv.template_response(s)
+    with patch.object(sv, "get_llm", return_value=Writer("No block satisfies every constraint at once.")):
+        out = sv.synthesize_node({**s, "draft_response": ""})
+    assert out["draft_response"] == sv.code_opening(s, facts)[0] + "\n\n" + facts and out["errors"] == []
+    w = Writer("Relaxing the MRT distance to 550m unlocks 3 blocks. This increases the budget requirement but keeps the "
+               "lease unchanged. No other single limit unlocks as many.")
+    with patch.object(sv, "get_llm", return_value=w):
+        out = sv.synthesize_node({**s, "draft_response": ""})
+    assert out["draft_response"] == sv.code_opening(s, facts)[0] + " No other single limit unlocks as many.\n\n" + facts
+    assert out["errors"] == ["synthesize: dropped 1 opening sentence(s) that stated figures",
+                             "synthesize: dropped 1 opening sentence(s) that leaned on the sentence before"]
+    # live31_varied E2-03~shorthand: kept after a restated answer, "this" would point at code's sentence instead
+    with patch.object(sv, "get_llm", return_value=Writer("No block satisfies every constraint at once. This increases the "
+                                                         "budget requirement but keeps the lease unchanged.")):
+        out = sv.synthesize_node({**s, "draft_response": ""})
+    assert out["draft_response"] == sv.code_opening(s, facts)[0] + "\n\n" + facts
+    assert out["errors"] == ["synthesize: dropped 1 opening sentence(s) that leaned on the sentence before; code opening used"]
+
+
+def test_outside_a_block_search_the_model_sentences_still_lead_and_policy_notes_stay():
+    grants_only = {"messages": [{"role": "user", "content": "What grants can we get?"}],
+                   "financial_breakdown": {"calculate_cpf_housing_grants": GRANTS}}
+    facts = sv.template_response(grants_only)
+    with patch.object(sv, "get_llm", return_value=Writer("You qualify for the Family Grant.")):
+        out = sv.synthesize_node({**grants_only, "draft_response": ""})
+    assert out["draft_response"].startswith("You qualify for the Family Grant.\n\n" + facts)
+    with patch.object(sv, "get_llm", return_value=Writer("These figures are indicative; the HFE letter confirms them.")):
+        out = sv.synthesize_node({**grants_only, "draft_response": ""})
+    assert out["draft_response"].startswith("Here are your housing grants, worked out from the facts you gave.\n\n")
+    p = {"messages": [{"role": "user", "content": "What is the MOP for Plus flats?"}], "rag_policy_passages": MOP}
+    with patch.object(sv, "get_llm", return_value=Writer("You can check this with your HFE letter.")):
+        out = sv.synthesize_node({**p, "draft_response": ""})
+    assert out["draft_response"].startswith("You can check this with your HFE letter.\n\n")    # policy: the HFE may be asked
+
+
+def test_a_failure_after_the_model_replied_lets_none_of_its_text_through():
+    s = state_for("E1-03")
+    facts = sv.template_response(s)
+    with patch.object(sv, "get_llm", return_value=Writer("Blk 627 is at $1.")), \
+            patch.object(sv, "check_model_opening", side_effect=ValueError):
+        out = sv.synthesize_node({**s, "draft_response": ""})
+    assert out["draft_response"] == sv.code_opening(s, facts)[0] + "\n\n" + facts and "$1." not in out["draft_response"]
+    assert out["errors"] == ["synthesize: LLM failed, template used: ValueError"]
 
 
 # --- synthesis: the model's opening first, code's when none of it survives ------------------------------------------
@@ -209,7 +406,10 @@ def test_a_surviving_model_sentence_is_kept_and_a_bare_lead_in_is_not():
     w = Writer("Both Ang Mo Kio blocks fit; Blk 102 is the better pick for the train. Blk 627 costs $655,000.")
     with patch.object(sv, "get_llm", return_value=w):
         out = sv.synthesize_node({**s, "draft_response": ""})
-    assert out["draft_response"] == "Both Ang Mo Kio blocks fit; Blk 102 is the better pick for the train.\n\n" + facts
+    # code's answer and trade-off first (the model compared nothing), then the model's sentence; "Both ... fit" only
+    # restated code's answer
+    assert out["draft_response"] == (sv.code_opening(s, facts)[0] + " Blk 102 is the better pick for the train.\n\n"
+                                     + facts)
     assert out["errors"] == ["synthesize: dropped 1 opening sentence(s) that stated figures"]
     for bare in ("Blk 627 costs $655,000. The options are:", "Blk 627 is $655k. **Trade-offs:**"):
         with patch.object(sv, "get_llm", return_value=Writer(bare)):
