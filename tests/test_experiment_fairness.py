@@ -7,7 +7,9 @@ Experiment 1 fairness and answer correctness (tests/test_experiment_fairness.py)
   * An empty commute result empties the candidate set; the amenity filter's [] is not replaced by commute results.
   * A commute limit no check applied (one workplace) is said to be unchecked, never "every limit you set".
   * A, B and C accept the same coordinates in a model's tool call: the map pin and coordinates the user typed.
-  * C's school guard accepts real school names with "St." or a hyphen.
+  * C's school guard accepts real school names with "St." or a hyphen, and still asks for a description ("a Catholic
+    School", "SAP School"); a school no check read is said to be unchecked, and an unchecked commute gives its reason
+    only from what was read.
   * B answers a menu pick with the option's question instead of showing the menu again.
 
     LLM_PROFILE=none .venv/bin/python -m pytest tests/test_experiment_fairness.py -q
@@ -249,7 +251,7 @@ def test_single_workplace_commute_limit_is_not_claimed_as_met():
     assert state["candidate_blocks_intersection"]
     assert "every limit you set" not in text and "match all stated constraints" not in text
     assert text.startswith("All the blocks below meet the limits that could be checked.")
-    assert sv.UNCHECKED_COMMUTE in text
+    assert sv.UNCHECKED_COMMUTE_READ[1] in text
 
 
 def test_a_commute_limit_alone_is_not_a_limit_the_blocks_met():
@@ -262,9 +264,9 @@ def test_a_commute_limit_alone_is_not_a_limit_the_blocks_met():
     facts = sv.template_response(state)
     opening, _ = sv.code_opening(state, facts)
     assert opening.startswith("Blocks with recent 4-room sales in Bedok, cheapest first")
-    assert sv.UNCHECKED_COMMUTE in facts
+    assert sv.UNCHECKED_COMMUTE_READ[1] in facts
     evidence, _ = sv.synthesis_evidence({**state, "variant": "B"})
-    assert evidence["could_not_check"] == [sv.UNCHECKED_COMMUTE[2:]]
+    assert evidence["could_not_check"] == [sv.UNCHECKED_COMMUTE_READ[1][2:]]
 
 
 def test_a_commute_checked_for_two_workplaces_is_a_met_limit():
@@ -275,7 +277,7 @@ def test_a_commute_checked_for_two_workplaces_is_a_met_limit():
              "tool_call_log": [{"agent": "spatial", "tool": "compute_dual_transit_commute", "arguments": {}, "ok": True}]}
     assert not sv.commute_unchecked(state)
     facts = sv.template_response(state)
-    assert sv.UNCHECKED_COMMUTE not in facts and "match all stated constraints" in facts
+    assert "commute limit was not checked" not in facts and "match all stated constraints" in facts
     assert sv.code_opening(state, facts)[0].startswith("Only Blk 1 meets every limit you set")
     # a commute limit on a question with no block search says nothing about blocks
     assert not sv.commute_unchecked({"user_constraints": {"max_commute_minutes": 30}, "tool_call_log": []})
@@ -362,3 +364,83 @@ def test_a_menu_pick_gets_its_follow_up_question(monkeypatch, mod):
     assert second["draft_response"] == second["menu_followup"]["question"] != first["draft_response"]
     assert second["draft_response"].startswith("Tell me the town, flat type and budget")
     assert second["clarification"] == second["menu_followup"] and not second["tool_call_log"]
+
+
+# --- review follow-ups: the school guard still asks for descriptions; an unread school or commute is said plainly ---
+CLEMENTI = "Which flats in Clementi are 1km from {}?"
+
+
+@pytest.mark.parametrize("query", [CLEMENTI.format(w) for w in ["a Catholic School", "SAP School", "an IP School",
+                                                                "a GEP Primary School", "a Girls' School",
+                                                                "a Chinese Primary School", "an Elite School",
+                                                                "a Reputable Primary School"]]
+                         + ["Looking For HDB In Sengkang, 1km From Primary School",
+                            "Tampines High floor flat within 1km of school pls"])
+def test_school_guard_asks_for_a_description_or_title_case_wording(query):
+    assert not sv.names_a_school(query)
+    out = sv.input_guardrail_node({"messages": [{"role": "user", "content": query}]})
+    assert out.get("draft_response") == SCHOOL_NAME_QUESTION
+
+
+@pytest.mark.parametrize("name", ["Catholic High School", "Methodist Girls' School", "Singapore Chinese Girls' School",
+                                  "Tampines Primary School", "New Town Primary School"])
+def test_real_names_with_descriptive_words_still_name_a_school(name):
+    assert sv.names_a_school(SCHOOL_Q.format(name))
+
+
+def test_a_catholic_school_search_asks_instead_of_claiming_every_limit():
+    state = C.run("Which 4-room flats in Clementi under $600k are within 1km of a Catholic School?")
+    assert state["draft_response"] == SCHOOL_NAME_QUESTION and not state["tool_call_log"]
+
+
+def test_a_school_name_extraction_could_not_read_is_said_to_be_unchecked():
+    # no model: the guard reads the name, extraction does not, so no school check runs
+    state = C.run("4-room in Bishan under $800k within 1km of St. Hilda's Primary School")
+    assert not state["user_constraints"].get("school_name")
+    assert "verify_primary_school_distance" not in [r["tool"] for r in state["tool_call_log"]]
+    text = state["draft_response"]
+    assert state["candidate_blocks_intersection"] and sv.school_unchecked(state)
+    assert "every limit you set" not in text and "match all stated constraints" not in text
+    assert text.startswith("All the blocks below meet the limits that could be checked.")
+    assert sv.UNCHECKED_SCHOOL in text
+    evidence, _ = sv.synthesis_evidence({**state, "variant": "B"})
+    assert sv.UNCHECKED_SCHOOL[2:] in evidence["could_not_check"]
+
+
+def test_a_checked_school_or_a_question_without_a_search_is_not_unchecked():
+    blocks = [{"block": "1", "street": "A ST", "median_resale_price": 400000.0}]
+    q = "Find 4-room flats in Bishan within 1km of Ai Tong School"
+    state = {"messages": [{"role": "user", "content": q}], "candidate_blocks_intersection": blocks,
+             "user_constraints": {"towns": ["BISHAN"], "school_name": "Ai Tong School"}, "tool_call_log": []}
+    assert not sv.school_unchecked(state)
+    assert not sv.school_unchecked({**state, "user_constraints": {}, "candidate_blocks_intersection": []})
+    assert sv.school_unchecked({**state, "user_constraints": {"towns": ["BISHAN"]}})
+    # schools near an address is a different lookup, not a school limit on a block search
+    near = {**state, "messages": [{"role": "user", "content": "primary schools within 1km of Blk 123 Bishan St 12"}],
+            "user_constraints": {}}
+    assert not sv.school_unchecked(near)
+
+
+@pytest.mark.parametrize("query", [
+    "Find 4-room flats in Punggol under $600k with a commute under 30 min to Raffles Place and one-north",
+    "Find 4-room flats in Sengkang under $600k with commute under 40 min to Raffles Place and Jurong East",
+])
+def test_unchecked_commute_line_never_says_the_user_did_not_name_two(query):
+    state = C.run(query)
+    assert sv.commute_unchecked(state)
+    text = state["draft_response"]
+    assert "did not name two" not in text
+    assert sv.unchecked_commute_line(state) in text
+
+
+def test_unchecked_commute_reason_follows_what_was_read():
+    base = {"user_constraints": {"max_commute_minutes": 30}}
+    assert sv.unchecked_commute_line(base) == sv.UNCHECKED_COMMUTE_READ[0]
+    one = {"user_constraints": {"max_commute_minutes": 30, "work_destinations": ["Raffles Place"]}}
+    assert sv.unchecked_commute_line(one) == sv.UNCHECKED_COMMUTE_READ[1]
+    # two workplaces read but no commute check ran (or it failed): no reason is given, only that it was not checked
+    two = {"user_constraints": {"max_commute_minutes": 30, "work_destinations": ["Raffles Place", "one-north"]},
+           "candidate_blocks_intersection": [{"block": "1", "street": "A ST"}],
+           "tool_call_log": [{"tool": "compute_dual_transit_commute", "ok": False, "error": "timeout"}]}
+    assert sv.commute_unchecked(two)
+    assert sv.not_checked_lines(two) == [sv.UNCHECKED_COMMUTE]

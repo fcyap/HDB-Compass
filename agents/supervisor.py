@@ -49,7 +49,8 @@ from agents.schemas import (
     block_key,
 )
 from agents.state import HDBCompassState
-from agents.school_queries import guard_school_request, present_school_result, school_location_request
+from agents.school_queries import (SCHOOL_NAME_QUESTION, guard_school_request, present_school_result,
+                                   school_location_request)
 from agents.tool_registry import ToolRunner, build_runners, tools_for_agent
 
 SPECIALISTS = ["market_sql", "spatial", "financial", "policy_rag"]
@@ -2820,8 +2821,34 @@ def has_research_evidence(state: HDBCompassState) -> bool:
     return bool(state.get("location_results")) or any(name in sql for name in RESEARCH_TOOLS)
 
 
-UNCHECKED_COMMUTE = ("- Your commute limit was not checked: the commute check works out travel times to two "
-                     "workplaces, and this search did not name two.")
+# Why a commute limit was not checked, by what code knows: the workplaces it read (never "you did not name two", which
+# may contradict the user's words when the reading missed one), or no reason when two were read but no check ran.
+UNCHECKED_COMMUTE = "- Your commute limit was not checked."
+UNCHECKED_COMMUTE_READ = {0: ("- Your commute limit was not checked: the commute check works out travel times to two "
+                              "workplaces, and I could not read a workplace in your message."),
+                          1: ("- Your commute limit was not checked: the commute check works out travel times to two "
+                              "workplaces, and I could read only one in your message.")}
+UNCHECKED_SCHOOL = ("- Your school distance limit was not checked: I could not tell which school you meant. "
+                    "Please give the school's full name.")
+
+
+def unchecked_commute_line(state: HDBCompassState) -> str:
+    """The line not_checked_lines adds for commute_unchecked: the reason only when fewer than two workplaces were read."""
+    read = len((state.get("user_constraints") or {}).get("work_destinations") or [])
+    return UNCHECKED_COMMUTE_READ.get(read, UNCHECKED_COMMUTE)
+
+
+def school_unchecked(state: HDBCompassState) -> bool:
+    """Whether a block search ran for a message that asks for blocks near a school but no school name reached the
+    constraints. C's guard asks "Which primary school?" when no school is named; when the guard read a name that
+    extraction could not ("St. Hilda's Primary School" with no model), or in A and B, which have no guard, the search
+    runs without the school check, and the answer must say so rather than claim every limit was met."""
+    if (state.get("user_constraints") or {}).get("school_name"):
+        return False
+    searched = (state.get("candidate_blocks_intersection") or _sql_blocks(state) is not None
+                or state.get("spatial_block_candidates") is not None)
+    # the guard with "no school named" says whether the words ask for a distance to a school (school_queries)
+    return bool(searched) and guard_school_request(last_user_query(state), lambda q: False) == SCHOOL_NAME_QUESTION
 
 
 def commute_unchecked(state: HDBCompassState) -> bool:
@@ -2841,13 +2868,15 @@ def commute_unchecked(state: HDBCompassState) -> bool:
 
 def partly_checked(state: HDBCompassState) -> bool:
     """Whether the blocks were checked against only some of the limits the user set: a block filter could not load,
-    or a commute limit was never checked (commute_unchecked)."""
-    return any(t in BLOCK_FILTERS for t in unavailable_tools(state)) or commute_unchecked(state)
+    or a commute or school limit was never checked (commute_unchecked, school_unchecked)."""
+    return (any(t in BLOCK_FILTERS for t in unavailable_tools(state)) or commute_unchecked(state)
+            or school_unchecked(state))
 
 
 def not_checked_lines(state: HDBCompassState) -> List[str]:
     lines = [f"- {NOT_CHECKED[t]} could not be checked: that tool is unavailable right now." for t in unavailable_tools(state)]
-    return lines + ([UNCHECKED_COMMUTE] if commute_unchecked(state) else [])
+    lines += [unchecked_commute_line(state)] if commute_unchecked(state) else []
+    return lines + ([UNCHECKED_SCHOOL] if school_unchecked(state) else [])
 
 
 def synthesis_evidence(state: HDBCompassState) -> Tuple[Dict[str, Any], str]:
@@ -3663,20 +3692,32 @@ def menu_pick_reply(state: HDBCompassState) -> Dict[str, Any]:
 # A school's name as people write it, for the school guard only: capitalised words ending in School, Primary or High,
 # with "St." abbreviations, hyphens ("Anglo-Chinese"), initials ("CHIJ"), apostrophes and a campus in brackets. The
 # extraction regex needs every word to be letters only, so the guard asked "Which primary school?" for "St. Hilda's
-# Primary School" although the message named it. Case-sensitive: "a primary school" names no school.
+# Primary School" although the message named it. Case-sensitive: "a primary school" names no school. "High" is not a
+# school when a floor follows it ("Tampines High floor flat").
 _SCHOOL_NAME = re.compile(r"(?<![\w'’.-])((?:[A-Z][A-Za-z'’]*\.?(?:-[A-Z][A-Za-z'’]*)*\s+){1,5})"
-                          r"(?:Primary School|School|Primary|High)\b(?:\s*\([A-Z][A-Za-z ]*\))?")
-_NOT_A_NAME = frozenset({"a", "an", "the", "any", "my", "our", "which", "what", "moe", "primary", "secondary", "good",
-                         "best", "top", "popular", "nearby", "near", "find", "show", "list", "is", "are", "of", "to",
-                         "within", "in", "and", "or", "hdb", "flats", "blocks", "school", "schools"})
+                          r"(?:Primary School|School|Primary|High(?![\s-]*(?:[Ff]loors?|[Ss]tor(?:e)?ys?|[Ll]evels?|[Rr]ise)\b))"
+                          r"\b(?:\s*\([A-Z][A-Za-z ]*\))?")
+# Words that describe a kind of school or belong to the sentence, not to a name: a match made only of these (and of
+# research_intents' generic school words: "SAP", "Elite", "Reputable"...) names no school, so the guard still asks.
+# "Catholic High School" and "Methodist Girls' School" keep a name word ("high", "methodist").
+_NOT_A_NAME = frozenset({"a", "an", "the", "any", "my", "our", "her", "his", "their", "your", "which", "what", "moe",
+                         "primary", "secondary", "good", "best", "top", "popular", "nearby", "near", "nearest",
+                         "closest", "find", "show", "list", "looking", "is", "are", "of", "to", "from", "for", "at",
+                         "by", "with", "around", "within", "in", "and", "or", "hdb", "flat", "flats", "block", "blocks",
+                         "school", "schools", "catholic", "christian", "gep", "ip", "girls", "boys", "girl", "boy",
+                         "chinese", "english", "malay", "tamil", "mission", "international", "private", "government",
+                         "aided", "autonomous", "independent", "integrated", "special", "neighbourhood", "neighborhood",
+                         "co", "ed", "mixed", "single", "sex", "same", "new", "kid", "kids", "child", "children", "son",
+                         "daughter"})
 
 
 def names_a_school(text: str) -> bool:
-    """Whether the message names a specific school (_SCHOOL_NAME): at least one word of the name is not a generic word
-    such as "The", "Primary" or "MOE"."""
+    """Whether the message names a specific school (_SCHOOL_NAME): at least one word of the name is not a generic or
+    descriptive word such as "The", "Primary", "MOE", "Catholic" or "SAP"."""
     for m in _SCHOOL_NAME.finditer(text or ""):
-        words = [w.strip(".'’").lower() for w in re.split(r"[\s-]+", m.group(1)) if w]
-        if any(w not in _NOT_A_NAME for w in words):
+        words = [re.sub(r"['’]s?$", "", w.strip(".")).lower() for w in re.split(r"[\s-]+", m.group(1)) if w]
+        name = [w for w in words if w and w not in _NOT_A_NAME]
+        if name and not ri.generic_school_phrase(" ".join(name)):
             return True
     return False
 
