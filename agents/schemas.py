@@ -49,6 +49,7 @@ class ExtractedConstraints(BaseModel):
     max_budget_sgd: Optional[float] = None
     min_remaining_lease_years: Optional[int] = None
     amenity_radii_meters: Dict[str, int] = Field(default_factory=dict, examples=[{"mrt": 300, "hawker": 200}])
+    mrt_station: Optional[str] = Field(None, description="A named MRT/LRT station the mrt distance is measured to, e.g. 'Novena'")
     household_income: Optional[float] = None
     citizenship_scheme: Optional[Literal["SC_SC_FirstTimer", "SC_PR_FirstTimer", "SC_Single_35", "SC_SC_SecondTimer"]] = Field(
         None, description="Household scheme; leave null unless the user states citizenship or household type")
@@ -79,6 +80,9 @@ class ExtractedConstraints(BaseModel):
     wants_town_ranking: bool = False
     wants_option_comparison: bool = False
     wants_price_assessment: bool = False
+    wants_flat_affordability: bool = Field(False, description="Whether the user can afford one named block: a block address plus an afford/budget ask")
+    wants_area_affordability: bool = Field(False, description="Whether the user can afford a flat in an area (a town, a named "
+                                                              "MRT station or a distance limit), with no one block named")
     wants_nearby_amenities: bool = False
     wants_area_statistics: bool = False
     area_radius_meters: Optional[int] = Field(None, ge=50, le=3000, description="Radius for an area question, e.g. 'within 300m of Blk 277'")
@@ -409,6 +413,8 @@ class FilterBlocksByAmenityProximityInput(BaseModel):
     amenity_constraints: Dict[str, int] = Field(
         ..., description="Max walking distance in metres per amenity; keys: mrt, hawker, supermarket",
         examples=[{"mrt": 400, "hawker": 500}])
+    mrt_station: Optional[str] = Field(None, description="One named station (e.g. 'Novena') the mrt distance is measured to; "
+                                                          "null means the nearest station")
 
 
 class SpatialBlockRecord(BlockRef):

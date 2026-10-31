@@ -46,7 +46,8 @@ def chip_clarification(c: Dict[str, Any]) -> Dict[str, Any]:
     the text to send when clicked (menu options have both; location options only a label, which is also what to send)."""
     options = [{"label": str(o.get("label") or o.get("text") or ""), "text": str(o.get("text") or o.get("label") or "")}
                for o in c.get("options") or [] if isinstance(o, dict)]
-    return {"kind": c.get("kind"), "question": c.get("question"), "options": [o for o in options if o["label"]]}
+    return {"kind": c.get("kind"), "question": c.get("question"), "needed": list(c.get("needed") or []),
+            "options": [o for o in options if o["label"]]}
 
 
 def log_chat_turn(question: str, state: Dict[str, Any], seconds: float, turn: int) -> None:
@@ -417,6 +418,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     current_qualifying: List[str] = []
                     current_school_lookup = None
                     current_clarification = None   # kind, question, options of an open follow-up, for the answer chips
+                    current_flat_type = "4 ROOM"   # the searched flat type, for the candidate cards' action buttons
                     active_agents: List[str] = []
 
                     final_state: Optional[Dict[str, Any]] = None
@@ -457,6 +459,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
                             if node_name == "extract_constraints":
                                 c = node_output.get("user_constraints", {})
+                                if c.get("flat_types"):
+                                    current_flat_type = str(c["flat_types"][0])
                                 t_str = ", ".join(c.get("towns", [])) or "Any"
                                 b_val = c.get("max_budget_sgd")
                                 b_str = f"${b_val:,}" if b_val else "Any"
@@ -575,6 +579,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 "qualifying_blocks": current_qualifying if current_qualifying else None,
                                 "school_lookup": current_school_lookup,
                                 "clarification": current_clarification,
+                                "flat_type": current_flat_type,
                             })
                             await asyncio.sleep(0.04)
                     if final_state is not None:

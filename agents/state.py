@@ -15,6 +15,7 @@ class UserConstraints(TypedDict, total=False):
     max_budget_sgd: Optional[float]
     min_remaining_lease_years: Optional[int]
     amenity_radii_meters: Dict[str, int]   # e.g. {"mrt": 300, "hawker": 200, "school": 1000}
+    mrt_station: Optional[str]             # a named station the mrt radius is measured to ("Novena"); None = nearest
     household_income: Optional[float]
     citizenship_scheme: Optional[str]      # e.g. "SC_SC_FirstTimer", "SC_Single_35"
     financial_inputs: Optional[Dict[str, Any]]

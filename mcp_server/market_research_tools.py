@@ -374,6 +374,18 @@ WHERE block_key = ? AND flat_type = ? AND month BETWEEN ?::DATE AND ?::DATE
 """.strip()
 
 
+BLOCK_LEASE_SQL = """
+SELECT (arg_max(remaining_lease_months, month) - date_diff('month', max(month), ?::DATE)) / 12.0
+FROM resale_transactions WHERE block_key = ?
+""".strip()
+
+
+def _block_lease_now(con, key: str, end: date) -> Optional[float]:
+    """The block's remaining lease at `end`, from its latest sale of any flat type (lease is a block property)."""
+    row = con.execute(BLOCK_LEASE_SQL, [end, key]).fetchone()
+    return round(row[0], 1) if row and row[0] is not None else None
+
+
 def _block_stats(con, key: str, flat_type: str, start: date, end: date) -> Dict[str, Any]:
     cursor = con.execute(BLOCK_STATS_SQL, [end, key, flat_type, start, end])
     return dict(zip([c[0] for c in cursor.description], cursor.fetchone()))
@@ -450,15 +462,20 @@ def assess_resale_price(address: str, flat_type: str, asking_price: Optional[flo
     with open_market_database() as con:
         snapshot, url, first, latest, _ = _snapshot(con)
         block = _block_stats(con, block_key(location.block, location.street), args.flat_type, start, end)
-        percentile = None
-        if args.asking_price is not None and comparable.get("summary"):
+        lease_now = _block_lease_now(con, block_key(location.block, location.street), latest)
+        percentile = nearby_lease = None
+        if comparable.get("summary"):
             params = {"start": start, "end": end, "flat_type": args.flat_type,
                       "min_area": criteria["min_floor_area_sqm"], "max_area": criteria["max_floor_area_sqm"],
                       "min_storey": None, "max_storey": None, "min_lease": None, "max_lease": None,
                       "latitude": location.lat, "longitude": location.lng, "radius": args.radius_meters,
                       "asking": args.asking_price}
-            below, total = con.execute(PERCENTILE_SQL, params).fetchone()
-            percentile = round(100 * below / total, 1) if total else None
+            if args.asking_price is not None:
+                below, total = con.execute(PERCENTILE_SQL, params).fetchone()
+                percentile = round(100 * below / total, 1) if total else None
+            lease_row = con.execute(COMPARABLE_CTE + "\nSELECT median(lease_years_at_reference) FROM nearby",
+                                    {k: v for k, v in params.items() if k != "asking"}).fetchone()
+            nearby_lease = round(lease_row[0], 1) if lease_row and lease_row[0] is not None else None
     nearby = None
     if comparable.get("summary"):
         s = comparable["summary"]
@@ -485,7 +502,7 @@ def assess_resale_price(address: str, flat_type: str, asking_price: Optional[flo
     return AssessResalePriceOutput(
         status=status, location=location, flat_type=args.flat_type, same_block=same_block, nearby=nearby,
         asking_price=args.asking_price, asking_percentile=percentile, asking_vs_nearby_median_pct=gap,
-        position=position,
+        position=position, remaining_lease_years=lease_now, nearby_median_lease_years=nearby_lease,
         message={"ok": f"Compared with {nearby['transaction_count'] if nearby else 0} nearby sales around {location.name}.",
                  "insufficient_sample": "Few nearby sales match; treat the comparison as limited evidence.",
                  "no_matches": "No nearby sales match these criteria; filters were not widened."}[status],

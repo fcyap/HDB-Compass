@@ -17,6 +17,9 @@ import {
   MapPin,
 } from 'lucide-react';
 import { Mascot3D, MascotAvatar, useMascotFavicon } from './Mascot';
+import { ShortlistTray } from './ShortlistTray';
+import { HouseholdForm } from './HouseholdForm';
+import { useShortlist, blockLabel } from '../shortlist';
 
 export interface LogMessage {
   id: string;
@@ -37,8 +40,9 @@ export interface StructuredAgentData {
   market_summary?: any;
   financial_summary?: any;
   policy_notes?: string[];
-  clarification?: { kind?: string; question?: string; options: { label: string; text: string }[] };
+  clarification?: { kind?: string; question?: string; needed?: string[]; options: { label: string; text: string }[] };
   school_lookup?: { status: string; schools: { name: string; distance_meters: number }[] };
+  flat_type?: string;
 }
 
 export interface ChatMessage {
@@ -81,6 +85,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
   const [inputValue, setInputValue] = useState('');
   const [showPinHint, setShowPinHint] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const shortlist = useShortlist();
   const busy = agentStatus === 'SEARCHING';   // one answer at a time: the app tracks a single running reply
 
   // the composer grows with the text, up to about six lines, like Grok's
@@ -320,6 +325,16 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                     </div>
                   )}
 
+                  {/* Household facts form for an open financial follow-up (latest answer only) */}
+                  {msg.id === messages[messages.length - 1]?.id && msg.structuredData?.clarification?.kind === 'financial' &&
+                    (msg.structuredData.clarification.needed?.length ?? 0) > 0 && (
+                    <HouseholdForm
+                      needed={msg.structuredData.clarification.needed!}
+                      disabled={agentStatus !== 'READY'}
+                      onSubmit={handleQuickPrompt}
+                    />
+                  )}
+
                   {/* Candidate HDB Blocks Cards */}
                   {msg.structuredData?.qualifying_blocks && msg.structuredData.qualifying_blocks.length > 0 && (
                     <div className="candidate-blocks-section">
@@ -356,6 +371,10 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                             }
                           }
 
+                          const flatType = msg.structuredData?.flat_type || '4 ROOM';
+                          const blockName = blockLabel(cleanName);
+                          const saved = shortlist.has({ block: blockName, flat_type: flatType });
+
                           return (
                             <div
                               key={bIdx}
@@ -365,6 +384,22 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                               <div className="block-pill-header">
                                 <span className="block-code" title={cleanName}>{cleanName}</span>
                                 {dist && <span className="block-distance-badge">{dist}</span>}
+                              </div>
+                              <div className="card-actions">
+                                <button type="button" className="card-action" disabled={agentStatus !== 'READY'}
+                                  onClick={(e) => { e.stopPropagation(); handleQuickPrompt(`Is the price fair for a ${flatType} at ${blockName}?`); }}>
+                                  Price check
+                                </button>
+                                <button type="button" className="card-action" disabled={agentStatus !== 'READY'}
+                                  onClick={(e) => { e.stopPropagation(); handleQuickPrompt(`Can we afford a ${flatType} at ${blockName}?`); }}>
+                                  Afford?
+                                </button>
+                                <button type="button" className={`card-action card-star${saved ? ' saved' : ''}`}
+                                  aria-pressed={saved} aria-label={saved ? `Remove ${blockName} from shortlist` : `Add ${blockName} to shortlist`}
+                                  title={saved ? 'Remove from shortlist' : 'Add to shortlist'}
+                                  onClick={(e) => { e.stopPropagation(); shortlist.toggle({ block: blockName, flat_type: flatType }); }}>
+                                  {saved ? '\u2605' : '\u2606'}
+                                </button>
                               </div>
                               <div className="block-meta">
                                 {dist ? (
@@ -446,6 +481,13 @@ export const AgentChat: React.FC<AgentChatProps> = ({
             <MapPin size={13} /> Click anywhere on the map to pin a spot and see what's nearby.
           </div>
         )}
+        <ShortlistTray
+          items={shortlist.items}
+          disabled={agentStatus !== 'READY'}
+          onRemove={shortlist.remove}
+          onClear={shortlist.clear}
+          onCompare={handleQuickPrompt}
+        />
         <form onSubmit={handleSubmit} className={`composer${wsConnected ? '' : ' offline'}`}>
           <button
             type="button"
