@@ -305,6 +305,7 @@ export function App() {
           onThemeChange={setTheme}
           selectedBlockHighlight={selectedBlockHighlight}
           clearTrigger={clearTrigger}
+          onDrillQuestion={handleSendQuery}
         />
       }
     />

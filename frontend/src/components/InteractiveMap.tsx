@@ -38,6 +38,9 @@ interface InteractiveMapProps {
   onThemeChange?: (theme: string) => void;
   selectedBlockHighlight?: string | null;
   clearTrigger?: number;
+  // A click on a station or town marker that came from a grouped-statistics answer asks that marker's drill-down
+  // question (the marker carries the question text), exactly as its chip would.
+  onDrillQuestion?: (question: string) => void;
 }
 
 export const ONEMAP_THEMES: Record<string, string> = {
@@ -87,7 +90,10 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   onThemeChange,
   selectedBlockHighlight,
   clearTrigger,
+  onDrillQuestion,
 }) => {
+  const onDrillQuestionRef = useRef(onDrillQuestion);
+  onDrillQuestionRef.current = onDrillQuestion;
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
@@ -508,6 +514,20 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         const feature = e.features[0];
         const coordinates = (feature.geometry as any).coordinates.slice();
         const props = feature.properties || {};
+
+        // A station or town marker from a grouped answer: show its figures and ask its drill-down question.
+        if (props.drill_question) {
+          const median = props.median_resale_price ? `$${Number(props.median_resale_price).toLocaleString()}` : '';
+          if (popupRef.current) popupRef.current.remove();
+          popupRef.current = new maplibregl.Popup({ offset: 12 })
+            .setLngLat(coordinates)
+            .setHTML(`<div style="font-family: sans-serif; padding: 6px; color: #073E40;"><strong>${props.name}</strong><br/>` +
+              `<span style="font-size: 11px;">Median ${median} (${props.transaction_count} sales)</span><br/>` +
+              `<span style="font-size: 11px; color: #006865;">Asking the next question...</span></div>`)
+            .addTo(map);
+          onDrillQuestionRef.current?.(String(props.drill_question));
+          return;
+        }
 
         const blockName = props.name || 'HDB Block';
         const priceStr = props.median_resale_price
