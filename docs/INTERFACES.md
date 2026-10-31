@@ -349,3 +349,40 @@ would you like to know about Blk …?") or `school` ("which primary school?"). T
 carry into a **reply** to an open question but not into a new question; `ALWAYS_FRESH_KEYS` (assumptions, questions
 asked) never carry. The app's fast path (no model call for a fully recognised question) reads one message only and
 is never used for a reply.
+
+## 10. Scope check, menus and unsupported asks (Member 1)
+
+**Scope check (`agents/scope.py`, code only).** Stand-in for Member 5's input guardrail until it lands: `classify` sorts a
+message into in-scope, off-topic (weather, laptops), other-property (condo, EC, landed), prompt-injection, a price
+forecast, or small talk (hi, thanks). Anything but in-scope gets a fixed reply that lists what the app can do; no agent
+or tool runs. Housing words are matched on whole words, and a bare town name counts as in scope. Mid-conversation, a
+short reply to an open question is never judged on its own. Member 5's guardrail runs first when it is on; this only
+fills the gap.
+
+**Menu clarification.** An in-scope message that names nothing the tools can act on ("What flat should I buy?",
+"I want to buy a bto but im not sure what to buy") no longer falls through to the policy search. It gets a numbered
+menu: `clarification = {"kind": "menu", "question", "options": [{"key", "label", "text"}]}`. The user can reply with the
+option number, its exact label or a short keyword; `scope.resolve_menu_reply` turns that into `menu_followup`, the
+option's own follow-up question (`bto_launch`, `financial`, `rules`, `towns`, `search` kinds), or None when the reply is a
+new question (then it is handled as one). The websocket `STEP_UPDATE` carries `clarification` as
+`{"kind", "question", "options": [{"label", "text"}]}`; the page shows the options as chips and sends `text` on click.
+Location clarifications (`kind: "location"`) have only a label, which is used as the text.
+
+**Policy relevance floor.** `RetrieveHdbPolicyKnowledgeOutput.best_keyword_score` (new, optional float) is the best raw
+BM25 score of the retrieved passages. The supervisor says "no policy passage matches" when it is below the floor instead
+of printing the nearest weak passages. Member 3/4: the field is additive; the policy tool's other outputs are unchanged.
+
+**Town price questions.** "How much is a 4-room in Tampines?", "median price of 5-room flats in Punggol" and "Is Woodlands
+cheaper than Yishun" go to `get_market_snapshot` (the town snapshot) instead of a block search. With two towns the answer
+adds a line saying which is cheaper and by how much.
+
+**Unsupported asks.** `scope.unsupported_reply`: a commute question naming one workplace gets "I can't estimate a single
+commute yet..." with no search, because `compute_dual_transit_commute` uses town-level averages and ignores destinations.
+Two-workplace questions and searches with a commute limit are unchanged. "stamp duty on a $600k flat" (also "a flat costing
+$600k") is read as a purchase price for `calculate_bsd_and_upfront_outlay` when the user asks for upfront costs; "find a $600k
+flat" stays a budget. A block list says "meet every limit you set" only if the user set a limit; otherwise it reads
+"Blocks with recent 4-room sales in Tampines, cheapest first."
+
+**Routing lock.** `tests/test_scope_routing.py` holds a table of questions with the route and tools each must take. It
+locks Category C (15 policy questions all go to `['policy_rag']` by regex) and the Category E routes, so a routing change
+that moves either fails the test. It runs with `HDB_ADDONS=off` set inside the test module only.
