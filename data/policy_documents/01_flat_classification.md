@@ -38,7 +38,7 @@ The table below outlines the ten statutory regulatory dimensions across Standard
 | **Locational Attributes** | Islandwide good locations | Choice locations within regions (near MRT / town centre) | Prime, ultra-central, downtown enclaves |
 | **Baseline BTO Subsidies** | Standard market subsidies | Standard subsidies + **Additional market subsidies** | Standard subsidies + **Highest additional market subsidies** |
 | **Minimum Occupation Period (MOP)** | **5 years** | **10 years** | **10 years** |
-| **Subsidy Recovery (Clawback) on 1st Resale** | **None (0%)** | **3% to 6%** of resale price or valuation (whichever is higher) | **6% to 9%** of resale price or valuation (whichever is higher) |
+| **Subsidy Recovery (Clawback) on 1st Resale** | **None (0%)** | **6% to 8%** of resale price or valuation (whichever is higher) | **6% to 9%** (typically 9% for current launches) of resale price or valuation (whichever is higher) |
 | **Whole-Flat Rental After MOP** | **Permitted** (subject to HDB approval) | **Strictly Prohibited for life** | **Strictly Prohibited for life** |
 | **Bedroom Subletting (Spare Rooms)** | Permitted after MOP (and during MOP for 3-room+) | Permitted after 10-year MOP (owner must reside) | Permitted after 10-year MOP (owner must reside) |
 | **Resale Buyer Income Ceiling** | **No income ceiling** on open market | **$14,000/month** (Families) / **$7,000/month** (Singles) | **$14,000/month** (Families) / **$7,000/month** (Singles) |
@@ -56,7 +56,7 @@ Prime flats represent the pinnacle of public housing convenience and subsidy. To
 - **Why Subsidy Recovery Exists:** Prime flats require substantial additional taxpayer subsidies above standard BTO flats to price them within reach of eligible Singaporean households.
 - **The Clawback Mechanism:** First-hand owners who sell their Prime flat on the open market after completing the 10-year MOP must refund a fixed percentage of the gross transaction proceeds to HDB.
   $$\text{Subsidy Recovery Amount} = \max(\text{Resale Transacted Price}, \text{Official HDB Valuation}) \times \text{Clawback Rate}$$
-- **Clawback Range:** Typically **6% to 9%**, determined and announced at the launch of each individual BTO project (e.g., Crawford Heights launched in October 2024 has an 8% subsidy recovery rate).
+- **Clawback Range:** Typically **6% to 9%**, determined and announced at the launch of each individual BTO project (e.g., Crawford Heights launched in October 2024 has a 9% subsidy recovery rate).
 - **Subsequent Resales:** Subsidy recovery applies **only to the first resale** by the original BTO buyer. Subsequent resale buyers who later sell the flat do not pay subsidy recovery, because they purchased the flat at fair market resale value without the initial government subsidy.
 
 ### 3.2 10-Year Minimum Occupation Period (MOP)
@@ -88,7 +88,7 @@ Plus flats bridge the gap between Standard and Prime flats. They occupy highly a
 
 ### 4.1 Subsidy Recovery (Clawback) Rate
 - Plus flats receive additional market subsidies, though lower than Prime flats.
-- First-hand buyers are subject to a **3% to 6% subsidy recovery rate** on the higher of the resale price or market valuation upon the first resale.
+- First-hand buyers are subject to a **6% to 8% subsidy recovery rate** on the higher of the resale price or market valuation upon the first resale.
 - Example: If a Plus flat in Bayshore is sold on the open market for $900,000 with a 6% clawback, the seller must return $54,000 ($900,000 \times 0.06) to HDB upon completion of sale.
 
 ### 4.2 10-Year Minimum Occupation Period (MOP)

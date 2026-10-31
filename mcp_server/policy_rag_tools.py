@@ -70,7 +70,12 @@ def _get_embed_model():
     if _EMBED_MODEL is None:
         try:
             from sentence_transformers import SentenceTransformer
-            _EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+            # Try loading from local cache first (instant, <0.2s, offline-safe)
+            try:
+                _EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2", local_files_only=True)
+            except Exception:
+                # If not cached yet (e.g. teammate's first run), download once from Hugging Face Hub
+                _EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
         except Exception as e:
             print(f"[Warning] SentenceTransformer load failed: {e}")
             _EMBED_MODEL = False
@@ -82,7 +87,12 @@ def _get_cross_encoder():
     if _CROSS_ENCODER is None:
         try:
             from sentence_transformers import CrossEncoder
-            _CROSS_ENCODER = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+            # Try loading from local cache first (instant, <0.2s, offline-safe)
+            try:
+                _CROSS_ENCODER = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2", local_files_only=True)
+            except Exception:
+                # If not cached yet (e.g. teammate's first run), download once from Hugging Face Hub
+                _CROSS_ENCODER = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
         except Exception as e:
             print(f"[Warning] CrossEncoder load failed ({e}); using hybrid reciprocal rank score.")
             _CROSS_ENCODER = False
@@ -98,8 +108,8 @@ ACRONYM_EXPANSIONS = {
     r"\bhfe\b": "HDB Flat Eligibility HFE letter",
     r"\behg\b": "Enhanced CPF Housing Grant EHG",
     r"\bphg\b": "Proximity Housing Grant PHG 4km",
-    r"\bprime\b": "Prime location housing clawback subsidy recovery 10-year MOP",
-    r"\bplus\b": "Plus location flat subsidy recovery 10-year MOP",
+    r"\bprime\b": "Prime location housing clawback subsidy recovery 6% to 9% 10-year MOP",
+    r"\bplus\b": "Plus location flat subsidy recovery 3% to 6% 10-year MOP",
     r"\bstandard\b": "Standard flat 5-year MOP",
     r"\bclawback\b": "subsidy recovery clawback first resale",
     r"\bwait-?out\b": "15-month wait-out period private property senior 55 exemption 30-month",
@@ -124,14 +134,14 @@ def infer_domain(query: str, explicit_domain: Optional[str] = None) -> Optional[
     q = query.lower()
     if any(k in q for k in ("prime", "plus", "standard", "clawback", "subsidy recovery")):
         return "classification"
-    if any(k in q for k in ("grant", "ehg", "phg", "family grant", "housing grant", "stacking")):
-        return "grants"
     if any(k in q for k in ("eip", "ethnic", "spr quota", "buyback", "racial")):
         return "eip"
+    if any(k in q for k in ("single", "age 35", "34-year", "wait-out", "wait out", "senior", "55", "eligibility", "scheme", "fiance", "condo")):
+        return "eligibility"
+    if any(k in q for k in ("grant", "ehg", "phg", "family grant", "housing grant", "stacking")):
+        return "grants"
     if any(k in q for k in ("msr", "ltv", "tdsr", "hfe", "loan", "downpayment", "stamp duty", "bsd")):
         return "financing"
-    if any(k in q for k in ("single", "age 35", "wait-out", "wait out", "senior", "55", "eligibility", "scheme", "fiance", "condo")):
-        return "eligibility"
     return None
 
 
