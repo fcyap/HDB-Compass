@@ -399,6 +399,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
                             if node_output.get("clarification"):
                                 current_clarification = chip_clarification(node_output["clarification"])
+                            elif node_output.get("suggestions"):
+                                # drill-down follow-ups are whole questions, not answers to one: they travel in the same
+                                # chip field but are no pending clarification, so a click takes the fast path
+                                current_clarification = chip_clarification({"kind": "drilldown", "question": None,
+                                                                            "options": node_output["suggestions"]})
 
                             node_errors = node_output.get("errors") or []
                             if any(

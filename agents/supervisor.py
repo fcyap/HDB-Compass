@@ -3089,6 +3089,10 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
         elif fin and not done:
             sentences.append("Your estimate could not be worked out in full; what is missing is said below.")
         sql = state.get("sql_market_results") or {}
+        stats = sql.get("query_resale_statistics")
+        if isinstance(stats, dict) and not sentences:
+            sentences.append("Here are the resale figures for your question, worked out from past sales."
+                             if stats.get("status") == "ok" else "That breakdown could not be worked out; the reason is below.")
         # a lead promises a summary only when the tool found one; otherwise it points to the reason the facts give
         if not sentences and "compute_town_price_timeseries" in sql:
             trend = sql["compute_town_price_timeseries"] or {}
@@ -3419,7 +3423,7 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     if clar and clar["question"] not in text:
         text = text.rstrip() + "\n\n" + clar["question"]
     return {"draft_response": text, "map_ui_payload": payload, "tool_call_log": log, "errors": errors,
-            "clarification": clar}
+            "clarification": clar, "suggestions": ri.drilldown_suggestions(state) if not clar else []}
 
 
 # ---------------------------------------------------------------------------

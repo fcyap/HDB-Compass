@@ -815,6 +815,13 @@ def research_lines(state: Dict[str, Any]) -> List[str]:
 
     lines.extend(_area_lines(sql))
 
+    catalog = sql.get("describe_resale_data")
+    if catalog and "error" not in catalog:
+        lines.extend(_catalog_lines(catalog))
+    stats = sql.get("query_resale_statistics")
+    if stats and "error" not in stats:
+        lines.extend(stats_lines(stats, c))
+
     histories = sql.get("get_block_transaction_history")
     for h in ([histories] if isinstance(histories, dict) else histories or []):
         if "error" in h:
@@ -886,6 +893,260 @@ def research_lines(state: Dict[str, Any]) -> List[str]:
         # a menu is a numbered list of its own and reads better without a "Question:" label
         lines.append(question if c.get("menu_options") else f"**Question:** {question}")
     return lines
+
+
+# ---------------------------------------------------------------------------
+# Grouped statistics: the answer, the drill-down chips and the map (query_resale_statistics)
+# ---------------------------------------------------------------------------
+NEAR_A = {"mrt": "an MRT station", "mrt_lrt": "an MRT or LRT station", "lrt": "an LRT station", "hawker": "a hawker centre",
+          "supermarket": "a supermarket", "school": "a primary school"}
+NEAR_PLURAL = {"mrt": "MRT stations", "mrt_lrt": "MRT or LRT stations", "lrt": "LRT stations", "hawker": "hawker centres",
+               "supermarket": "supermarkets", "school": "primary schools"}
+DIM_HEADER = {"distance_band": "Distance", "town": "Town", "station": "Nearest station", "street": "Street",
+              "flat_type": "Flat type", "year": "Year", "storey_band": "Storey", "lease_band": "Lease left"}
+DRILL_RADII = (200, 500, 1000)
+
+
+def _flat_words(flats: List[str]) -> str:
+    words = [f"{f.split()[0]}-room" if re.match(r"\d ROOM$", f) else f.lower() for f in flats]
+    return " and ".join(words)
+
+
+def _within(label: str) -> str:
+    """'0-200 m' -> 'within 200 m'."""
+    m = re.match(r"0-([\d,]+ m)$", label)
+    return f"within {m.group(1)}" if m else label
+
+
+def _gap(a: float, b: float) -> str:
+    pct = (a / b - 1) * 100 if b else 0.0
+    if abs(pct) < 0.05:
+        return "the same as"
+    return f"{abs(pct):.1f}% {'above' if pct > 0 else 'below'}"
+
+
+def _gl(r: Dict[str, Any], g: Dict[str, Any]) -> str:
+    """A group's label as shown: towns in title case (the data holds them upper case)."""
+    return g["label"].title() if r["group_by"] == ["town"] else g["label"]
+
+
+def _stats_headline(r: Dict[str, Any]) -> str:
+    groups = [g for g in r.get("groups") or [] if g.get("median_price")]
+    if not groups:
+        return ""
+    near = NEAR_A.get(r.get("near") or "", "")
+    base = r.get("baseline") or {}
+    if r["group_by"] == ["distance_band"] and near:
+        first, last = groups[0], groups[-1]
+        if len(groups) >= 2 and last["label"].startswith(">") and first["label"].startswith("0-"):
+            far = last["label"][1:] + " away"
+            return (f"Flats {_within(first['label'])} of {near} sold at a median of {_m(first['median_price'])}, "
+                    f"{_gap(first['median_price'], last['median_price'])} flats more than {far} ({_m(last['median_price'])}).")
+        return f"Flats {_within(first['label'])} of {near} sold at a median of {_m(first['median_price'])}."
+    desc = r.get("order", "desc") == "desc"
+    if r["group_by"][0] in ("year", "storey_band", "lease_band") and len(groups) >= 2:
+        a, b = groups[0], groups[-1]
+        return f"The median was {_m(a['median_price'])} for {a['label']} and {_m(b['median_price'])} for {b['label']} ({_pct(b['median_price'] / a['median_price'] * 100 - 100)})."
+    top = groups[0]
+    word = {"count": "most sales", "median_psm": "highest price per sqm" if desc else "lowest price per sqm"}.get(
+        r.get("sort_by") or "", "highest median price" if desc else "lowest median price")
+    line = f"{_gl(r, top)} has the {word}"
+    if (r.get("sort_by") or "median_price") == "count":
+        line += f" ({top['count']:,} sales)"
+    else:
+        line += f" ({_m(top['median_price'])})"
+    if base.get("median_price"):
+        line += f", {_gap(top['median_price'], base['median_price'])} the {_m(base['median_price'])} median for {base['label']}"
+    return line + "."
+
+
+def _radius_note(r: Dict[str, Any]) -> str:
+    """The distance the answer used, always stated, with how to change it."""
+    near = NEAR_A.get(r.get("near") or "")
+    if not near:
+        return ""
+    lrt = " (LRT stations excluded)" if r.get("near") == "mrt" else ""
+    if r.get("bands") and "distance_band" in r["group_by"]:
+        labels = ", ".join(g["label"] for g in r["groups"]) if r.get("groups") else ""
+        return (f"Distance bands ({labels}) are straight-line metres to the nearest {near.split(' ', 1)[1]}{lrt}"
+                " - say a different distance to change this.")
+    if r.get("max_distance_m"):
+        return (f"Within {r['max_distance_m']:,} m straight-line of {near}{lrt} - say a different distance to change this.")
+    return ""
+
+
+def stats_lines(r: Dict[str, Any], c: Dict[str, Any]) -> List[str]:
+    """Any query_resale_statistics result as an answer: headline, table, trend, notes. All figures are the tool's."""
+    if r.get("status") == "invalid_request":
+        lines = [f"- That breakdown could not be run: {r.get('message')}"]
+        for key, vals in (r.get("allowed") or {}).items():
+            lines.append(f"  - {key}: {', '.join(vals[:15])}{' ...' if len(vals) > 15 else ''}")
+        return lines
+    p = r.get("period") or {}
+    if r.get("status") == "no_data":
+        return [f"- No group had at least {r.get('min_sales', 10)} sales between {p.get('start_month')} and {p.get('end_month')}; "
+                "try a wider distance, a longer period or fewer filters."]
+    lines: List[str] = []
+    if c.get("stats_listings"):
+        lines.append("_Live listings are not available in this app; these figures are past resale sales._")
+    head = _stats_headline(r)
+    flat = _flat_words(r.get("flat_types") or [])
+    scope = ", ".join(t.title() for t in r.get("towns") or []) or "Singapore"
+    title = f"**Resale statistics{' for ' + flat + ' flats' if flat else ''} in {scope}, {p.get('start_month')} to {p.get('end_month')}**"
+    lines.append(title)
+    if head:
+        lines.append(head)
+    groups = r["groups"]
+    show_psm = any(g.get("median_psm") for g in groups)
+    show_1y = any(g.get("change_1y_pct") is not None for g in groups)
+    show_pp = any(g.get("change_period_pct") is not None for g in groups)
+    header = " · ".join(DIM_HEADER[d] for d in r["group_by"])
+    cols = ["Sales", "Median price", "Middle 50%"] + (["Per sqm"] if show_psm else []) + (["Last 12 mths vs year before"] if show_1y else []) \
+        + (["Last 12 mths vs first 12"] if show_pp else [])
+    lines.append("| " + " | ".join([header] + cols) + " |")
+    lines.append("|" + "---|" * (len(cols) + 1))
+    for g in groups:
+        row = [_gl(r, g), f"{g['count']:,}", _m(g.get("median_price")), f"{_m(g.get('p25'))} - {_m(g.get('p75'))}"]
+        if show_psm:
+            row.append(f"${g['median_psm']:,.0f}" if g.get("median_psm") else "n/a")
+        if show_1y:
+            row.append(_pct(g.get("change_1y_pct")))
+        if show_pp:
+            row.append(_pct(g.get("change_period_pct")))
+        lines.append("| " + " | ".join(row) + " |")
+    base = r.get("baseline") or {}
+    if base.get("count"):
+        row = [f"_{base['label']}_", f"{base['count']:,}", _m(base.get("median_price")), ""]
+        if show_psm:
+            row.append(f"${base['median_psm']:,.0f}" if base.get("median_psm") else "")
+        row += [""] * (show_1y + show_pp)
+        lines.append("| " + " | ".join(row) + " |")
+    if r.get("truncated"):
+        lines.append(f"- ...and {r['total_groups'] - len(groups)} more group(s) not shown (ask for a different sort or a narrower filter).")
+    if r.get("include_trend"):
+        lines.append("**Median price by year** (first and last year may be part-years):")
+        for g in groups[:6]:
+            if g.get("trend"):
+                lines.append(f"- {_gl(r, g)}: " + " → ".join(f"{t['year']} {_m(t['median_price'])}" for t in g["trend"]))
+    note = _radius_note(r)
+    if note:
+        lines.append(f"_{note}_")
+    if p:
+        lines.append(f"_Period: {p['start_month']} to {p['end_month']} ({p['months']} months). Medians pool every sale in the group; "
+                     f"groups with fewer than {r.get('min_sales', 10)} sales are left out"
+                     + (f" ({r['excluded_small_groups']} left out)" if r.get("excluded_small_groups") else "") + "._")
+    for n in r.get("assumptions") or []:
+        lines.append(f"_Assumption: {n}_")
+    for n in r.get("notes") or []:
+        if not n.startswith("Historical transactions") or not c.get("stats_listings"):
+            lines.append(f"_{n}_")
+    return lines
+
+
+def _catalog_lines(d: Dict[str, Any]) -> List[str]:
+    p = d.get("period_covered") or {}
+    lines = [f"**What the resale data covers** ({p.get('first_month')} to {p.get('last_complete_month')}, past sales only):",
+             "- Break sales down by: " + "; ".join(f"{k.replace('_', ' ')} ({v})" for k, v in (d.get("dimensions") or {}).items()),
+             "- Distances can be measured to: " + "; ".join(f"{v}" for v in (d.get("near_options") or {}).values()),
+             f"- Towns: {', '.join(t.title() for t in d.get('towns') or [])}",
+             f"- Flat types: {', '.join(d.get('flat_types') or [])}",
+             f"- Figures: " + "; ".join((d.get("metrics") or {}).values())]
+    if d.get("mrt_stations"):
+        lines.append(f"- {len(d['mrt_stations'])} MRT and {len(d.get('lrt_stations') or [])} LRT stations are covered, e.g. "
+                     + ", ".join(d["mrt_stations"][:5]))
+    lines.extend(f"_{x}_" for x in d.get("definitions") or [])
+    return lines
+
+
+def _chip_period(c: Dict[str, Any]) -> str:
+    """The period words that put a chip's question back on the period the user asked for."""
+    if c.get("stats_since_year"):
+        return f" since {int(c['stats_since_year'])}"
+    if (c.get("stats_lookback_years") or 0) > 1:
+        return f" over the last {int(c['stats_lookback_years'])} years"
+    return ""
+
+
+def stats_drill_text(r: Dict[str, Any], g: Dict[str, Any], c: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """The complete question that goes one level below a town or station group (None for other groups)."""
+    flats = _flat_words(r.get("flat_types") or [])
+    fl = f"{flats} " if flats else ""
+    near = r.get("near")
+    words = NEAR_PLURAL.get(near or "", "")
+    period = _chip_period(c or {})
+    dist = f"within {r['max_distance_m']:,} m of " if r.get("max_distance_m") and r["max_distance_m"] != VAGUE_RADIUS_METERS else "near "
+    if r["group_by"] == ["town"]:
+        t = g["key"]["town"].title()
+        if near in ("mrt", "mrt_lrt", "lrt"):
+            text = f"{fl}resale prices by station {dist}{words} in {t}{period}"
+        elif near:
+            text = f"{fl}resale prices {dist}{words} in {t}{period}"
+        else:
+            text = f"{fl}resale prices by station near MRT stations in {t}{period}"
+    elif r["group_by"] == ["station"]:
+        radius = r.get("max_distance_m") or VAGUE_RADIUS_METERS
+        text = f"{fl}resale prices near {g['key']['station']}, within {radius}m"
+    else:
+        return None
+    return text[:1].upper() + text[1:]
+
+
+def drilldown_suggestions(state: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Follow-up chips, each a complete question (no state needed to answer it):
+    island/bands -> town -> station -> the area around a station -> a block's sales."""
+    sql = state.get("sql_market_results") or {}
+    c = state.get("user_constraints") or {}
+    chips: List[Dict[str, str]] = []
+    cap = lambda t: t[:1].upper() + t[1:]   # noqa: E731
+    r = sql.get("query_resale_statistics")
+    if isinstance(r, dict) and r.get("status") == "ok" and r.get("groups"):
+        flats = _flat_words(r.get("flat_types") or [])
+        fl = f"{flats} " if flats else ""
+        near = r.get("near")
+        words = NEAR_PLURAL.get(near or "", "")
+        since = c.get("stats_since_year")
+        period = _chip_period(c)
+        dist = f"within {r['max_distance_m']:,} m of " if r.get("max_distance_m") and r["max_distance_m"] != VAGUE_RADIUS_METERS else "near "
+        town_list = r.get("towns") or []
+        town_text = f" in {town_list[0].title()}" if len(town_list) == 1 else ""
+        gb = r["group_by"]
+        if gb == ["distance_band"] and near:
+            chips.append({"label": "By town", "text": cap(f"{fl}resale prices by town {dist}{words}{town_text}{period}")})
+            if near in ("mrt", "mrt_lrt", "lrt"):
+                chips.append({"label": "By station", "text": cap(f"{fl}resale prices by station {dist}{words}{town_text}{period}")})
+            if not r.get("include_trend") and not since:
+                chips.append({"label": "Trend since 2017", "text": cap(f"{fl}resale prices near {words}{town_text} since 2017")})
+            if not flats:
+                chips.append({"label": "4-room only", "text": cap(f"4-room resale prices near {words}{town_text}{period}")})
+        elif gb == ["town"]:
+            for g in r["groups"][:4]:
+                chips.append({"label": g["key"]["town"].title(), "text": stats_drill_text(r, g, c)})
+            if near:
+                chips.append({"label": "Back to distance bands", "text": cap(f"{fl}resale prices near {words}{period}")})
+            else:
+                chips.append({"label": "Near MRT vs far", "text": cap(f"{fl}resale prices near MRT stations vs far from MRT{period}")})
+        elif gb == ["station"]:
+            for g in r["groups"][:4]:
+                chips.append({"label": g["key"]["station"], "text": stats_drill_text(r, g, c)})
+            chips.append({"label": "Back to towns", "text": cap(f"{fl}resale prices by town {dist}{words}{period}")})
+    area = sql.get("find_resale_blocks_near")
+    if isinstance(area, dict) and area.get("status") == "ok" and area.get("blocks"):
+        loc = area.get("location") or {}
+        blocks = [b for b in area["blocks"] if b.get("transaction_count")]
+        flat = area.get("flat_type")
+        fl = f"{_flat_words([flat])} " if flat else ""
+        for b in sorted(blocks, key=lambda b: -b["transaction_count"])[:4]:
+            chips.append({"label": f"Blk {b['block']} {b['street'].title()}",
+                          "text": f"What did {fl}flats at Blk {b['block']} {b['street']} sell for recently?"})
+        if loc.get("kind") == "mrt" and blocks:
+            towns = {}
+            for b in blocks:
+                towns[b["town"]] = towns.get(b["town"], 0) + 1
+            town = max(towns, key=towns.get).title()
+            chips.append({"label": f"All stations in {town}",
+                          "text": cap(f"{fl}resale prices by station near MRT stations in {town}")})
+    return chips
+
 
 
 def _cheaper_town_lines(rows: List[Dict[str, Any]]) -> List[str]:
@@ -1011,6 +1272,21 @@ def research_map_payload(state: Dict[str, Any]) -> Dict[str, Any]:
         if centre["kind"] in ("mrt", "hawker", "supermarket", "school"):  # a pin or block is already on the map
             point(centre["lat"], centre["lng"], {"name": centre["name"], "category": centre["kind"],
                                                  "distance_meters": 0, "walking_mins": 0})
+    stats = sql.get("query_resale_statistics")
+    if isinstance(stats, dict) and stats.get("status") == "ok":
+        c_now = state.get("user_constraints") or {}
+        kind = "station" if stats["group_by"] == ["station"] else "town" if stats["group_by"] == ["town"] else "band"
+        for g in stats["groups"]:
+            if kind != "band" and g.get("lat") is not None:
+                places.append({"lat": g["lat"], "lng": g["lng"]})
+                point(g["lat"], g["lng"], {"name": g["label"], "category": "hdb_candidate", "kind": kind,
+                                           "median_resale_price": g["median_price"], "transaction_count": g["count"],
+                                           "drill_question": stats_drill_text(stats, g, c_now)})
+        for b in stats.get("map_blocks") or []:
+            places.append({"lat": b["lat"], "lng": b["lng"]})
+            point(b["lat"], b["lng"], {"name": b["block_key"].title(), "category": "hdb_candidate", "kind": "block",
+                                       "band": b["group"], "median_resale_price": b["median_price"],
+                                       "transaction_count": b["count"], "town": b["town"]})
     for r in _as_list(loc.get("get_nearby_amenities")):
         if r.get("status") == "ok":
             places.append(r["location"])

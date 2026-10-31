@@ -406,11 +406,11 @@ def query_resale_statistics(group_by: Optional[List[str]] = None, towns: Optiona
         notes.append(f"The period is only {span} month(s); changes need 12-month windows and may be missing.")
 
     if towns_f:
-        scope = ", ".join(t.title() for t in towns_f)
+        scope = "in " + ", ".join(t.title() for t in towns_f)
     else:
         scope = "island-wide"
     flat_text = ", ".join(flats_f) if flats_f else "flat"
-    baseline = {"label": f"all {flat_text} sales {scope}" + (" (without any distance filter)" if near_kind else ""),
+    baseline = {"label": f"all {flat_text} sales {scope}" + (", any distance" if near_kind else ""),
                 "count": int(b[0] or 0), "median_price": round(float(b[1])) if b[1] is not None else None,
                 "median_psm": round(float(b[2]), 1) if b[2] is not None else None}
     if not shown:
