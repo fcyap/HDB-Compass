@@ -569,7 +569,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
           'text-optional': true,
         },
         paint: {
-          'text-color': '#ffffff',
+          'text-color': '#073E40',
           'text-halo-color': '#FFFFFF',
           'text-halo-width': 2.8,
         },
