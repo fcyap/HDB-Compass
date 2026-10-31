@@ -99,7 +99,7 @@ def _start_tracing() -> None:
     # One credential check per server start: a refused LangSmith key turns tracing off with a single log line instead
     # of an upload error on every question (python -m agents.tracing --check explains it).
     status = configure_tracing()
-    print(f"LangSmith tracing: {'ON, project ' + status['project'] if status['enabled'] else 'off (' + str(status['reason']) + ')'}",
+    print(f"LangSmith tracing: {'ON, ' + str(status['destination']) if status['enabled'] else 'off (' + str(status['reason']) + ')'}",
           flush=True)
 
 
