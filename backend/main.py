@@ -486,11 +486,22 @@ async def websocket_endpoint(websocket: WebSocket):
                                     current_buffer = None
                                 else:
                                     step_desc = f"Intersected {len(inter)} blocks satisfying both market price and spatial requirements."
-                                    current_qualifying = [
-                                        (f"Blk {b.get('block', '')} {b.get('street', '')}".strip() if isinstance(b, dict)
-                                         else (str(b) if str(b).startswith("Blk ") else f"Blk {b}"))
-                                        for b in inter
-                                    ]
+                                    def _fmt_block_str(b: Any) -> str:
+                                        if isinstance(b, dict):
+                                            name = f"Blk {b.get('block', '')} {b.get('street', '')}".strip()
+                                            dists = b.get("distances") or {}
+                                            if isinstance(dists, dict) and dists:
+                                                vals = [v for v in dists.values() if isinstance(v, (int, float))]
+                                                if vals:
+                                                    return f"{name} ({min(vals):.0f}m)"
+                                            d = b.get("distance_meters") or b.get("distance_m") or b.get("distance")
+                                            if isinstance(d, (int, float)):
+                                                return f"{name} ({d:.0f}m)"
+                                            return name
+                                        s = str(b).strip()
+                                        return s if s.startswith("Blk ") else f"Blk {s}"
+
+                                    current_qualifying = [_fmt_block_str(b) for b in inter]
 
                             elif node_name == "synthesize":
                                 mp = node_output.get("map_ui_payload", {})
@@ -502,9 +513,34 @@ async def websocket_endpoint(websocket: WebSocket):
                                     current_viewport = mp["viewport"]
                                 current_summary = node_output.get("draft_response")
                                 if mp.get("candidate_blocks") and not current_qualifying:
+                                    # Try to preserve distances from markers if available
+                                    marker_dists = {}
+                                    for feat in (mp.get("markers", {}) or {}).get("features", []):
+                                        props = feat.get("properties") or {}
+                                        p_name = props.get("name")
+                                        if p_name:
+                                            d_vals = [v for k, v in props.items() if k.endswith("_dist_m") and isinstance(v, (int, float))]
+                                            if d_vals:
+                                                marker_dists[p_name.upper()] = min(d_vals)
+
+                                    def _fmt_synth_block(b: Any) -> str:
+                                        if isinstance(b, dict):
+                                            name = f"Blk {b.get('block', '')} {b.get('street', '')}".strip()
+                                            dists = b.get("distances") or {}
+                                            if isinstance(dists, dict) and dists:
+                                                vals = [v for v in dists.values() if isinstance(v, (int, float))]
+                                                if vals:
+                                                    return f"{name} ({min(vals):.0f}m)"
+                                        else:
+                                            s = str(b).strip()
+                                            name = s if s.startswith("Blk ") else f"Blk {s}"
+                                        m_dist = marker_dists.get(name.upper())
+                                        if m_dist is not None:
+                                            return f"{name} ({m_dist:.0f}m)"
+                                        return name
+
                                     current_qualifying = [
-                                        (f"Blk {b.get('block', '')} {b.get('street', '')}".strip() if isinstance(b, dict)
-                                         else (str(b) if str(b).startswith("Blk ") else f"Blk {b}"))
+                                        _fmt_synth_block(b)
                                         for b in mp["candidate_blocks"]
                                     ]
 

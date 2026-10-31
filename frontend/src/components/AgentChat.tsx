@@ -334,8 +334,27 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                       <div className="candidate-cards-grid">
                         {msg.structuredData.qualifying_blocks.slice(0, 6).map((blockStr, bIdx) => {
                           const distMatch = blockStr.match(/\((\d+(?:\.\d+)?)m\)/);
-                          const dist = distMatch ? `${distMatch[1]}m` : null;
-                          const cleanName = blockStr.replace(/\s*\(\d+(?:\.\d+)?m\)/, '');
+                          let dist = distMatch ? `${distMatch[1]}m` : null;
+                          const cleanName = blockStr.replace(/\s*\(\d+(?:\.\d+)?m\)/, '').trim();
+
+                          // If distance not in block string, cross-reference response text for block stats
+                          let priceInfo: string | null = null;
+                          let leaseInfo: string | null = null;
+                          if (msg.text) {
+                            const blockLine = msg.text.split('\n').find((l) =>
+                              l.toUpperCase().includes(cleanName.toUpperCase())
+                            );
+                            if (blockLine) {
+                              if (!dist) {
+                                const lineDist = blockLine.match(/(\d+(?:\.\d+)?)\s*m\b/);
+                                if (lineDist) dist = `${lineDist[1]}m`;
+                              }
+                              const linePrice = blockLine.match(/median\s+\$([0-9,]+)/i);
+                              if (linePrice) priceInfo = `$${linePrice[1]}`;
+                              const lineLease = blockLine.match(/(\d+)\s*(?:yrs?|years?)\s*lease/i);
+                              if (lineLease) leaseInfo = `${lineLease[1]} yrs`;
+                            }
+                          }
 
                           return (
                             <div
@@ -344,7 +363,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                               onClick={() => onSelectBlock && onSelectBlock(cleanName)}
                             >
                               <div className="block-pill-header">
-                                <span className="block-code">{cleanName}</span>
+                                <span className="block-code" title={cleanName}>{cleanName}</span>
                                 {dist && <span className="block-distance-badge">{dist}</span>}
                               </div>
                               <div className="block-meta">
@@ -354,8 +373,10 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                                     {/* straight-line metres at ~80 m a minute; not a routed walk */}
                                     <span>~{Math.max(1, Math.round(parseFloat(dist) / 80))} min walk (straight-line)</span>
                                   </>
+                                ) : priceInfo ? (
+                                  <span>{priceInfo}{leaseInfo ? ` • ${leaseInfo} lease` : ''}</span>
                                 ) : (
-                                  <span>Distance not calculated</span>
+                                  <span>HDB Resale Flat</span>
                                 )}
                               </div>
                             </div>
