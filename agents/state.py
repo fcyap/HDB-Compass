@@ -20,6 +20,7 @@ class UserConstraints(TypedDict, total=False):
     financial_inputs: Optional[Dict[str, Any]]
     comparable_resale: Optional[Dict[str, Any]]
     nearby_schools: Optional[Dict[str, Any]]
+    requested_tools: List[str]             # optional tools the user asked for (supervisor.OPTIONAL_TOOLS), read by code
 
 
 class HDBCompassState(TypedDict, total=False):
@@ -53,3 +54,11 @@ class HDBCompassState(TypedDict, total=False):
     errors: Annotated[List[str], operator.add]                     # non-fatal sub-agent errors surfaced to the UI/eval
     subagent_notes: Annotated[List[Dict[str, Any]], operator.add]  # {"agent", "text"}: each sub-agent's own final summary
     fast_path: bool                                                # app mode: answer recognised questions without model calls
+    # Follow-up flow for missing financial facts (Member 4). clarification: what this turn asks the user for;
+    # prior_constraints / pending_clarification: carried in from the previous turn by initial_state(previous=...).
+    clarification: Optional[Dict[str, Any]]          # {"needed": [calculator fields], "question": str}
+    prior_constraints: Optional[Dict[str, Any]]
+    pending_clarification: Optional[Dict[str, Any]]
+    # The model's own constraint reading before code fills gaps or overrides money facts (None without a model).
+    # Scored separately, so a result shows how much the model read and how much code supplied.
+    model_constraints: Optional[Dict[str, Any]]

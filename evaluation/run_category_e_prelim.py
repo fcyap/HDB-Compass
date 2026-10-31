@@ -1,16 +1,23 @@
 """
-Preliminary Experiment 1 runner — Category E only (evaluation/run_category_e_prelim.py).
+Preliminary Experiment 1 runner — Category E, and Category C policy questions (evaluation/run_category_e_prelim.py).
 Owned by Member 4. Member 5's run_architecture_eval.py supersedes this for the
 full 90-query benchmark; the per-item scoring is shared (architecture_metrics.py).
 
 Runs Variants A/B/C over evaluation/category_e_queries.json on whatever LLM
 profile is active (ollama laptop, vllm cluster, or none), checkpointing one
 JSON line per (variant, query) so a dropped VPN, a Slurm wall-time limit or a
-closed laptop lid loses at most one query. Re-running resumes.
+closed laptop lid loses at most one query. Re-running resumes. On a live profile each row starts with one quick
+GET <base_url>/models (LLM_PROBE_TIMEOUT_S, default 5 s); when the server fails to answer twice in a row the run stops
+at once with MODEL_UNREACHABLE and exit code 3, writing nothing for the rows it did not run.
 
     LLM_PROFILE=ollama .venv/bin/python evaluation/run_category_e_prelim.py            # all variants, all 15
     LLM_PROFILE=vllm   .venv/bin/python evaluation/run_category_e_prelim.py --variants C --ids E1-01,E2-01
     .venv/bin/python evaluation/run_category_e_prelim.py --summary-only                 # re-aggregate a results file
+    LLM_PROFILE=none   .venv/bin/python evaluation/run_category_e_prelim.py --dataset category_c --tag catc
+
+Category C (Member 3's evaluation/category_c_queries.json, read only) is scored on its key clauses: fully right when
+every clause appears in the answer, by Member 3's own matching rule (architecture_metrics.clause_in_answer). The
+summary breaks each variant down by category and reports tokens and latency as a cost proxy.
 
 Output: evaluation/results/prelim_<profile>_<model>.jsonl  (+ .summary.json)
 Each line: {run, variant, id, sub_use_case, profile, model, latency_s, scores, state_excerpt}
@@ -18,6 +25,7 @@ Each line: {run, variant, id, sub_use_case, profile, model, latency_s, scores, s
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -25,7 +33,7 @@ import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -35,6 +43,21 @@ from evaluation import architecture_metrics as M  # noqa: E402
 
 RESULTS_DIR = PROJECT_ROOT / "evaluation" / "results"
 QUERIES = PROJECT_ROOT / "evaluation" / "category_e_queries.json"
+VARIED = PROJECT_ROOT / "evaluation" / "category_e_varied.json"   # the same questions in four user styles (vary_category_e.py)
+CATEGORY_C = PROJECT_ROOT / "evaluation" / "category_c_queries.json"   # Member 3's 15 policy questions (read only)
+EXTRA = PROJECT_ROOT / "evaluation" / "category_e_extra.json"     # new towns, school, upfront cost (ground_category_e_extra.py)
+
+
+def dataset_path(name: str) -> Path:
+    if not name:
+        return QUERIES
+    if name == "varied":
+        return VARIED
+    if name == "category_c":
+        return CATEGORY_C
+    if name == "extra":
+        return EXTRA
+    return Path(name).resolve()
 
 
 def load_variant(name: str):
@@ -69,10 +92,10 @@ def state_excerpt(state: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-RESCORE_KEYS = ["variant", "user_constraints", "active_subagents", "tool_call_log", "sql_market_results",
+RESCORE_KEYS = ["variant", "messages", "clarification", "user_constraints", "active_subagents", "tool_call_log", "sql_market_results",
                 "spatial_block_candidates", "financial_breakdown", "rag_policy_passages",
                 "candidate_blocks_intersection", "relaxation", "map_ui_payload", "draft_response",
-                "auditor_verdict", "errors"]
+                "auditor_verdict", "errors", "model_constraints"]
 
 
 def rescore_state(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -108,6 +131,136 @@ def _token_totals(usage: Dict[str, Any]) -> Dict[str, int]:
     return tot
 
 
+# A model call that never got an answer: lost connection, timeout, server error or rate limit (the exception's type
+# name ends up in the node's error message). The nodes then fall back to their no-model plans, which score like a
+# perfect run, so such a row is not a model result and is rerun on resume.
+UNREACHABLE = ("ConnectionError", "Timeout", "TimedOut", "InternalServerError", "ServiceUnavailable",
+               "RateLimitError", "APIStatusError", "BadGateway", "GatewayTimeout",
+               # the server answered but refused: wrong model name, bad key, request too long
+               "NotFoundError", "AuthenticationError", "PermissionDenied", "BadRequestError", "UnprocessableEntity",
+               "APIError")
+# The harness standing in for the model by design (the model made no valid tool call, the writer failed, the
+# constraint reading failed in both modes). The answer is then partly a no-model answer: kept, but counted.
+FALLBACK_MARKS = ("deterministic plan used", "template used")   # both-modes reading failure is detected below
+
+
+RUN_SETTINGS: Dict[str, Any] = {}   # filled once per run in main() (run_settings)
+DATASET_NAME = "category_e_queries.json"
+DATASET_SHA = ""
+
+
+def same_settings(a: Optional[Dict[str, Any]], b: Dict[str, Any]) -> bool:
+    """Rows from the same code and switches (the recorded time-free settings all match)."""
+    return bool(a) and all(a.get(k) == v for k, v in b.items())
+
+
+def lost_model(state: Dict[str, Any]) -> bool:
+    """No usable answer from the model: an unanswered or refused call, or (whatever the error) an answer in which the
+    model did nothing at all: no constraint reading, no tool call it chose, and the writer fell back to the template."""
+    errors = [str(e) for e in state.get("errors") or []]
+    json_mode_failed = any("extract_constraints[json_mode] failed" in e for e in errors)
+    # a json_schema attempt that json_mode then recovered from (the reading exists) is not a lost model: some servers
+    # refuse the schema but accept JSON mode
+    recovered = bool(state.get("model_constraints"))
+    counted = [e for e in errors if not (recovered and e.startswith("extract_constraints[json_schema]"))]
+    if any(mark in e for e in counted for mark in UNREACHABLE):
+        return True
+    # whatever the error type: some model step failed outright, and the model contributed nothing at all
+    # (no constraint reading, no tool call it chose). Variant A has only its tool loop, so this covers it too.
+    model_failed = any("LLM loop failed" in e or "LLM failed" in e for e in errors) or json_mode_failed
+    wrote = not any(("monolith: LLM loop failed" if state.get("variant") == "A" else "template used") in e for e in errors)
+    contributed = (bool(state.get("model_constraints")) or wrote
+                   or any(r.get("source") == "model" for r in state.get("tool_call_log") or []))
+    return model_failed and not contributed
+
+
+def model_fallbacks(state: Dict[str, Any]) -> List[str]:
+    """Where code stood in for the model in this answer (empty when the model did every step)."""
+    errors = [str(e) for e in state.get("errors") or []]
+    out = [e for e in errors if any(mark in e for mark in FALLBACK_MARKS)]
+    if any("extract_constraints[json_schema] failed" in e for e in errors) and \
+            any("extract_constraints[json_mode] failed" in e for e in errors):
+        out.append("extract_constraints: both modes failed; code-only reading used")
+    return out
+
+
+# Before each row of a live run, one quick question to the model server: does it answer at all? A dropped VPN leaves
+# the tunnel's local port open, so without this every model call in the row waits out LLM_TIMEOUT_S (and its
+# retries) before the row is found lost: on 31 Oct that took about 4 hours for two rows.
+PROBE_TIMEOUT_S = float(os.getenv("LLM_PROBE_TIMEOUT_S", "5"))
+PROBE_PAUSE_S = 1.0   # between the two tries, so a single dropped packet does not stop the run
+
+
+def server_answers(profile: Dict[str, Any], timeout: Optional[float] = None) -> Tuple[bool, str]:
+    """One GET <base_url>/models, no retries. True when the server answers 2xx; otherwise False and why."""
+    import urllib.error
+    import urllib.request
+    url = (profile.get("base_url") or "").rstrip("/") + "/models"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {profile.get('api_key') or 'not-needed'}"})
+    # no proxy: the model server is always on localhost (the laptop's Ollama or the cluster tunnel)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(req, timeout=PROBE_TIMEOUT_S if timeout is None else timeout) as resp:
+            return 200 <= resp.status < 300, f"HTTP {resp.status}"
+    except urllib.error.HTTPError as e:   # the server answered, but refused (wrong key, no such path)
+        return False, f"HTTP {e.code}"
+    except Exception as e:  # noqa: BLE001 — refused connection, timeout, closed tunnel
+        return False, f"{type(e).__name__}: {e}"
+
+
+def server_down(profile: Dict[str, Any]) -> Optional[str]:
+    """Why the model server is gone (two failed tries in a row), or None when it answered. Never asked for "none"."""
+    ok, why = server_answers(profile)
+    if ok:
+        return None
+    time.sleep(PROBE_PAUSE_S)
+    ok, why = server_answers(profile)
+    return None if ok else why
+
+
+def run_settings(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """What produced a result row: the code version and the switches that change answers. Stored in every row so
+    results from different code or settings are never mixed up (the analysis used to read the config at analysis
+    time, not at run time)."""
+    import os
+    import subprocess
+    from agents import supervisor as sv
+
+    def git(*args: str) -> str:
+        try:
+            return subprocess.run(["git", *args], cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=10).stdout.strip()
+        except Exception:  # noqa: BLE001
+            return ""
+    cfg = sv.load_config()
+    arch = cfg.get("architecture", {})
+    # the exact code: commit plus a fingerprint of uncommitted edits and new Python files, so two different
+    # uncommitted versions of the same commit are told apart
+    new_files = sorted(f for f in git("ls-files", "--others", "--exclude-standard").splitlines()
+                       if f.endswith((".py", ".json", ".yaml", ".yml")))
+    edits = git("diff", "HEAD") + "".join(f"\n{f} {git('hash-object', f)}" for f in new_files)   # contents, not names
+    settings = {
+        "commit": git("rev-parse", "--short", "HEAD"),
+        "uncommitted_changes": bool(edits.strip()),
+        "code_fingerprint": hashlib.sha1(edits.encode()).hexdigest()[:12] if edits.strip() else "clean",
+        "dataset": DATASET_NAME,
+        "dataset_sha": DATASET_SHA,      # the file's contents: two files with the same name are not the same dataset
+        "profile": profile.get("name"), "model": profile.get("model"),
+        "code_written_facts": sv.code_written_facts_on(),   # the config, or HDB_CODE_WRITTEN_FACTS for this run
+        "addons": sv.addons.offer_mode(),                   # add-on tool packs: off unless HDB_ADDONS says otherwise
+        "extraction_reasoning": os.getenv("HDB_EXTRACTION_REASONING") == "1" or bool(arch.get("extraction_reasoning", False)),
+        "disclose_unbuilt_tools": bool(arch.get("disclose_unbuilt_tools", True)),
+        "mocked_tools": sorted(t for t, v in cfg.get("tools", {}).get("use_mock", {}).items() if v == "mock"),
+        "input_guardrail_installed": sv._INPUT_GUARDRAIL is not None,
+        "runtime_auditor_installed": sv._AUDITOR is not None,
+        "llm_timeout_s": os.getenv("LLM_TIMEOUT_S") or (cfg.get("llm", {}).get("profiles", {}).get(profile.get("name") or "", {}) or {}).get("timeout_s"),
+    }
+    if sv.HOOK_LOAD_PROBLEMS:
+        # Member 5's module exists but could not be loaded. Recorded only then, so rows from before this key existed
+        # still count as the same settings on resume.
+        settings["hook_load_problems"] = list(sv.HOOK_LOAD_PROBLEMS)
+    return settings
+
+
 def run_one(mod, item: Dict[str, Any], variant: str, profile: Dict[str, Any], run_id: str) -> Dict[str, Any]:
     from langchain_core.callbacks import get_usage_metadata_callback
     t0 = time.perf_counter()
@@ -115,21 +268,69 @@ def run_one(mod, item: Dict[str, Any], variant: str, profile: Dict[str, Any], ru
         with get_usage_metadata_callback() as cb:
             state = mod.run(item["query"], item.get("initial_map_state"))
         latency = time.perf_counter() - t0
-        return {"run": run_id, "variant": variant, "id": item["id"], "sub_use_case": item.get("sub_use_case"),
-                "profile": profile["name"], "model": profile.get("model"), "latency_s": round(latency, 2),
-                "tokens": _token_totals(cb.usage_metadata),
-                "status": "ok", "scores": M.score_item(item, state), "state_excerpt": state_excerpt(state),
-                "state": rescore_state(state)}
+        row = {"run": run_id, "variant": variant, "id": item["id"], "sub_use_case": item.get("sub_use_case"),
+               "profile": profile["name"], "model": profile.get("model"), "latency_s": round(latency, 2),
+               "tokens": _token_totals(cb.usage_metadata),
+               "status": "ok", "scores": M.score_item(item, state), "state_excerpt": state_excerpt(state),
+               "fallbacks": model_fallbacks(state), "settings": RUN_SETTINGS, "state": rescore_state(state)}
+        if item.get("follow_up"):
+            row["follow_up"] = run_follow_up(mod, item, state)
+        if lost_model(state) or (row.get("follow_up") or {}).get("status") == "model_unreachable":
+            row["status"] = "model_unreachable"  # not a result: resume runs it again
+        return row
     except Exception as e:  # noqa: BLE001 — a crash is a data point, not the end of the run
         return {"run": run_id, "variant": variant, "id": item["id"], "sub_use_case": item.get("sub_use_case"),
                 "profile": profile["name"], "model": profile.get("model"), "latency_s": round(time.perf_counter() - t0, 2),
-                "status": "error", "error": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc()[-2000:]}
+                "status": "error", "error": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc()[-2000:],
+                "settings": RUN_SETTINGS}
+
+
+def follow_up_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    return {"id": item["id"], "sub_use_case": "E1", "ground_truth_facts": item["follow_up"]["ground_truth_facts"]}
+
+
+def run_follow_up(mod, item: Dict[str, Any], first_state: Dict[str, Any]) -> Dict[str, Any]:
+    """Second turn: the user answers the follow-up question; scored against the complete-facts ground truth."""
+    from langchain_core.callbacks import get_usage_metadata_callback
+    t0 = time.perf_counter()
+    try:
+        with get_usage_metadata_callback() as cb:
+            state = mod.run(item["follow_up"]["answer"], previous=first_state)
+        return {"status": "model_unreachable" if lost_model(state) else "ok", "fallbacks": model_fallbacks(state),
+                "latency_s": round(time.perf_counter() - t0, 2), "tokens": _token_totals(cb.usage_metadata),
+                "scores": M.ground_truth_scores(follow_up_item(item), state),
+                "draft_response": (state.get("draft_response") or "")[:4000], "state": rescore_state(state)}
+    except Exception as e:  # noqa: BLE001
+        return {"status": "error", "error": f"{type(e).__name__}: {e}"}
+
+
+COST_PROXY_NOTE = ("proxy only: tokens and wall-clock seconds per question (first turn plus any follow-up turn); the "
+                   "models run on our own hardware or the course cluster, so no paid API is billed and GPU time is "
+                   "not charged per query")
+
+
+def cost_proxy(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Total and median tokens and latency per question over successful rows. Rows recorded before tokens were
+    stored count towards latency only."""
+    from statistics import median
+
+    def turns(r):
+        return [r] + ([r["follow_up"]] if (r.get("follow_up") or {}).get("status") == "ok" else [])
+    toks = [sum((t.get("tokens") or {}).get("total_tokens", 0) or 0 for t in turns(r)) for r in rows if r.get("tokens")]
+    secs = [sum(t.get("latency_s") or 0.0 for t in turns(r)) for r in rows]
+    return {"basis": COST_PROXY_NOTE, "questions": len(rows),
+            "total_tokens": sum(toks) if toks else None, "median_tokens": median(toks) if toks else None,
+            "total_latency_s": round(sum(secs), 1) if secs else None,
+            "median_latency_s": round(median(secs), 2) if secs else None}
 
 
 def summarise(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     ok = [r for r in rows if r.get("status") == "ok"]
     agg = M.aggregate([r["scores"] for r in ok])
+    by_category = M.aggregate_by_category([r["scores"] for r in ok])
     for v, a in agg.items():
+        a["by_category"] = by_category.get(v, {})
+        a["cost_proxy"] = cost_proxy([r for r in ok if r["variant"] == v])
         lat = sorted(r["latency_s"] for r in ok if r["variant"] == v)
         a["latency_p50_s"] = lat[len(lat) // 2] if lat else None
         a["latency_p95_s"] = lat[min(len(lat) - 1, int(round(0.95 * (len(lat) - 1))))] if lat else None
@@ -140,12 +341,24 @@ def summarise(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         a["mean_output_tokens"] = round(sum(outs) / len(outs)) if outs else None
         a["e1_with_candidates"] = sum(1 for r in ok if r["variant"] == v and r["sub_use_case"] == "E1" and r["state_excerpt"]["n_candidates"] > 0)
         a["e2_relaxation_attempted"] = sum(1 for r in ok if r["variant"] == v and r["sub_use_case"] == "E2" and r["scores"]["relaxation_attempted"])
+        a["answers_with_fallback"] = sum(1 for r in ok if r["variant"] == v and r.get("fallbacks"))
+        # n/a (None) when there is nothing to measure: a no-model run, or rows recorded before calls carried a source
+        model_f1 = [r["scores"]["tool_selection_model_chosen"]["f1"] for r in ok
+                    if r["variant"] == v and "tool_selection_model_chosen" in r["scores"]
+                    and (r.get("settings") or {}).get("profile", r.get("profile")) != "none"]
+        a["tool_selection_f1_model_chosen"] = sum(model_f1) / len(model_f1) if model_f1 else None
+        reads = [r["scores"].get("extraction_model_only") for r in ok if r["variant"] == v and r["scores"].get("extraction_model_only")]
+        a["model_reading_search_rate"] = (sum(x["search_correct"] for x in reads) / sum(x["search_total"] for x in reads)) if reads else None
+        facts = sum(x["facts_total"] for x in reads)
+        a["model_reading_facts_rate"] = (sum(x["facts_correct"] for x in reads) / facts) if facts else None
     return agg
 
 
 def print_table(agg: Dict[str, Any]) -> None:
-    cols = ["n", "tool_selection_f1", "parameter_em_rate", "csr", "routing_exact_rate", "mean_tool_calls",
-            "latency_p50_s", "latency_p95_s", "mean_total_tokens", "errors", "e1_with_candidates", "e2_relaxation_attempted"]
+    cols = ["n", "tool_selection_f1", "tool_selection_f1_model_chosen", "model_reading_search_rate",
+            "model_reading_facts_rate", "parameter_em_rate", "csr", "routing_exact_rate", "mean_tool_calls",
+            "latency_p50_s", "latency_p95_s", "mean_total_tokens", "errors", "answers_with_fallback",
+            "e1_with_candidates", "e2_relaxation_attempted"]
     print("\nvariant | " + " | ".join(cols))
     for v, a in agg.items():
         cells = []
@@ -153,9 +366,37 @@ def print_table(agg: Dict[str, Any]) -> None:
             x = a.get(c)
             cells.append("-" if x is None else (f"{x:.2f}" if isinstance(x, float) else str(x)))
         print(f"{v:7s} | " + " | ".join(cells))
+    num = lambda x, d=2: "-" if x is None else (f"{x:.{d}f}" if isinstance(x, float) else str(x))
+    print("\nvariant | category | n | task success (Wilson 95% CI) | tool_selection_f1 | parameter_em_rate | "
+          "routing_exact_rate | policy_clause_coverage")
+    for v, a in agg.items():
+        for cat, c in (a.get("by_category") or {}).items():
+            print(f"{v:7s} | {cat} | {c['n']} | {M.rate_with_ci(c['task_success'], c['n'])} | "
+                  f"{num(c['tool_selection_f1'])} | {num(c['parameter_em_rate'])} | {num(c['routing_exact_rate'])} | "
+                  f"{num(c['policy_clause_coverage'])}")
+    print(f"\ncost ({COST_PROXY_NOTE})")
+    print("variant | questions | total tokens | median tokens | total latency (s) | median latency (s)")
+    for v, a in agg.items():
+        cp = a.get("cost_proxy") or {}
+        print(f"{v:7s} | {cp.get('questions')} | {num(cp.get('total_tokens'), 0)} | {num(cp.get('median_tokens'), 0)} | "
+              f"{num(cp.get('total_latency_s'), 1)} | {num(cp.get('median_latency_s'))}")
 
 
 def main() -> None:
+    import os
+    # Category E measures the core tools: the add-on packs (research tools, school lookup) are off unless a run asks
+    # for them (HDB_ADDONS=app|all), so results stay comparable with runs made before the packs existed. Scoped to
+    # this run: a caller in the same process (the tests, a notebook) gets its environment back afterwards.
+    if "HDB_ADDONS" in os.environ:
+        return _main()
+    os.environ["HDB_ADDONS"] = "off"
+    try:
+        return _main()
+    finally:
+        os.environ.pop("HDB_ADDONS", None)
+
+
+def _main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--variants", default="A,B,C")
     ap.add_argument("--ids", default="", help="comma-separated query ids; default all")
@@ -164,11 +405,19 @@ def main() -> None:
     ap.add_argument("--rerun", action="store_true", help="ignore existing checkpoints")
     ap.add_argument("--summary-only", action="store_true")
     ap.add_argument("--rescore", action="store_true", help="recompute scores from stored state with the current metrics")
+    ap.add_argument("--dataset", default="", help="'varied' for evaluation/category_e_varied.json, 'extra' for "
+                                                   "evaluation/category_e_extra.json, 'category_c' for Member 3's policy "
+                                                   "questions (or a path); default the 15 grounded Category E questions")
     args = ap.parse_args()
 
     profile = active_profile()
+    queries = dataset_path(args.dataset)
+    global RUN_SETTINGS, DATASET_NAME, DATASET_SHA
+    DATASET_NAME = queries.name
+    DATASET_SHA = hashlib.sha1(queries.read_bytes()).hexdigest()[:12]
+    RUN_SETTINGS = run_settings(profile)
     path = results_path(profile, args.tag)
-    items = json.loads(QUERIES.read_text())
+    items = json.loads(queries.read_text())
     if args.ids:
         wanted = set(args.ids.split(","))
         items = [i for i in items if i["id"] in wanted]
@@ -178,11 +427,31 @@ def main() -> None:
 
     if args.rescore:
         rows = list(load_done(path).values())
-        items_by_id = {i["id"]: i for i in json.loads(QUERIES.read_text())}
-        n = 0
+        # each row is scored against the dataset it was run on (its settings name it); rows from before 30 Oct record
+        # none and are looked up in the known datasets by id
+        known = (QUERIES, VARIED, EXTRA, CATEGORY_C, queries)
+        sets = {q.name: {i["id"]: i for i in json.loads(q.read_text())} for q in known if q.exists()}
+        shas = {q.name: hashlib.sha1(q.read_bytes()).hexdigest()[:12] for q in known if q.exists()}
+        any_set = {k: i for by_id in sets.values() for k, i in by_id.items()}
+        n = unnamed = 0
         for r in rows:
             if r.get("status") == "ok" and r.get("state"):
-                r["scores"] = M.score_item(items_by_id[r["id"]], r["state"]); n += 1
+                named = (r.get("settings") or {}).get("dataset")
+                sha = (r.get("settings") or {}).get("dataset_sha")
+                if named and (named not in sets or (sha and sha != shas[named])):
+                    print(f"  skipped {r['id']}: it was run on {named}; pass --dataset with that file to rescore it")
+                    continue
+                item = (sets[named] if named else any_set).get(r["id"])
+                if item is None:
+                    print(f"  skipped {r['id']}: not in {named or 'the known datasets'}")
+                    continue
+                unnamed += not named
+                r["scores"] = M.score_item(item, r["state"]); n += 1
+                fu = r.get("follow_up") or {}
+                if fu.get("status") == "ok" and fu.get("state") and item.get("follow_up"):
+                    fu["scores"] = M.ground_truth_scores(follow_up_item(item), fu["state"])
+        if unnamed:
+            print(f"  {unnamed} rows record no dataset (run before 30 Oct): scored against the dataset with the same id")
         path.rename(path.with_suffix(f".{datetime.now().strftime('%Y%m%d-%H%M%S')}.prescore.bak"))
         path.write_text("".join(json.dumps(r, default=str) + "\n" for r in rows))
         print(f"rescored {n} rows in {path}")
@@ -196,7 +465,21 @@ def main() -> None:
         return
 
     # resume: only successful rows count as done; a crashed or timed-out row is run again
-    done = {} if args.rerun else {k: r for k, r in load_done(path).items() if r.get("status") == "ok"}
+    existing = {} if args.rerun else load_done(path)
+    # a crashed row from before 30 Oct records no settings; it is rerun, not taken as another dataset
+    other_sets = {(r.get("settings") or {}).get("dataset") for r in existing.values()
+                  if r.get("settings") or r.get("status") == "ok"} - {DATASET_NAME}
+    other_sets |= {f"another file named {DATASET_NAME}" for r in existing.values()
+                   if (r.get("settings") or {}).get("dataset") == DATASET_NAME
+                   and (r.get("settings") or {}).get("dataset_sha") not in (None, DATASET_SHA)}
+    if other_sets:
+        named = ", ".join(sorted(s or "an unknown dataset (rows from before 30 Oct)" for s in other_sets))
+        sys.exit(f"{path.name} already holds results for {named}; use another --tag for {DATASET_NAME}")
+    # only rows from this exact code and these settings count as done; others (or rows that recorded none) are rerun
+    done = {k: r for k, r in existing.items() if r.get("status") == "ok" and same_settings(r.get("settings"), RUN_SETTINGS)}
+    stale = sum(1 for r in existing.values() if r.get("status") == "ok") - len(done)
+    if stale:
+        print(f"{stale} earlier rows come from other code or settings (or recorded none): rerunning them")
     if args.rerun and path.exists():
         path.rename(path.with_suffix(f".{datetime.now().strftime('%Y%m%d-%H%M%S')}.bak.jsonl"))
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -204,8 +487,21 @@ def main() -> None:
     print(f"profile={profile['name']} model={profile.get('model')} results={path}")
     print(f"{len(done)} rows already done, {len(todo)} to run")
 
+    unreachable = 0
+    stopped = False
+    live = profile["name"] != "none"
     with path.open("a", encoding="utf-8") as f:
         for n, (v, it) in enumerate(todo, 1):
+            if unreachable >= 2:  # the server or tunnel is gone: every further row would fail the same way
+                print(f"MODEL_UNREACHABLE: stopped after {n - 1}/{len(todo)}; run the same command again to resume")
+                stopped = True
+                break
+            why = server_down(profile) if live else None
+            if why:  # nothing is written for this row: it never ran, so the resume runs it
+                print(f"MODEL_UNREACHABLE: {profile.get('base_url')} did not answer twice ({why}); stopped after "
+                      f"{n - 1}/{len(todo)}; run the same command again to resume", flush=True)
+                stopped = True
+                break
             mod = load_variant(v)
             print(f"[{n}/{len(todo)}] variant {v} {it['id']} ...", end="", flush=True)
             row = run_one(mod, it, v, profile, run_id)
@@ -214,16 +510,22 @@ def main() -> None:
             os.fsync(f.fileno())
             if row["status"] == "ok":
                 s = row["scores"]
+                gt = s.get("ground_truth") or {}
+                found = (f"clauses={gt['clauses_found']}/{gt['clauses_total']}" if gt.get("kind") == "policy"
+                         else f"cands={row['state_excerpt']['n_candidates']}")
                 print(f" {row['latency_s']}s f1={s['tool_selection']['f1']:.2f} em={s['parameter_em']['rate']} "
-                      f"cands={row['state_excerpt']['n_candidates']} errs={len(row['state_excerpt']['errors'] or [])}")
+                      f"{found} errs={len(row['state_excerpt']['errors'] or [])}")
             else:
-                print(f" ERROR {row['error']}")
+                print(f" {row['status'].upper()} {row.get('error', '')}")
+            unreachable = unreachable + 1 if row["status"] == "model_unreachable" else 0
 
     rows = list(load_done(path).values())
     agg = summarise(rows)
     path.with_suffix(".summary.json").write_text(json.dumps(agg, indent=2))
     print_table(agg)
     print(f"\nsummary -> {path.with_suffix('.summary.json')}")
+    if stopped:
+        sys.exit(3)   # run_live_eval.sh stops here instead of starting the next tag against a lost server
 
 
 if __name__ == "__main__":

@@ -598,24 +598,15 @@ class ToolCallRecord(BaseModel):
     ok: bool = True
     error: Optional[str] = None
     latency_ms: Optional[float] = None
+    # "model": the model chose this call in its tool loop; "code": a deterministic plan, the supervisor (relaxation,
+    # map sync) or a guard made it. Tool Selection F1 can then be split by who chose the call.
+    source: Literal["model", "code"] = "code"
 
 
 # ---------------------------------------------------------------------------
-# Tool inventory: original 11 tools plus comparable analytics, school lookup and
-# the research tools in agents/research_schemas.py.
+# Tool inventory: the 12 core tools. The add-on packs (agents/addons) register the research tools
+# (agents/research_schemas.py) and the address-centred school lookup at the end of this module.
 # ---------------------------------------------------------------------------
-from agents.research_schemas import (  # noqa: E402  (kept beside the inventory that uses them)
-    AssessResalePriceInput,
-    CompareResaleOptionsInput,
-    FindResaleBlocksNearInput,
-    GetAreaPriceTrendInput,
-    GetAreaResaleStatisticsInput,
-    GetBlockTransactionHistoryInput,
-    GetMarketSnapshotInput,
-    GetNearbyAmenitiesInput,
-    RankTownsByValueInput,
-    ResolveLocationInput,
-)
 
 TOOL_OWNER: Dict[str, str] = {
     # Agent 2 — Member 1
@@ -623,22 +614,11 @@ TOOL_OWNER: Dict[str, str] = {
     "compute_town_price_timeseries": "market_sql",
     "query_comparable_resale_transactions": "market_sql",
     "compare_bto_launch_vs_resale": "market_sql",
-    "get_block_transaction_history": "market_sql",
-    "get_market_snapshot": "market_sql",
-    "rank_towns_by_value": "market_sql",
-    "compare_resale_options": "market_sql",
-    "assess_resale_price": "market_sql",
-    "find_resale_blocks_near": "market_sql",
-    "get_area_resale_statistics": "market_sql",
-    "get_area_price_trend": "market_sql",
     # Agent 3 — Member 2
     "filter_blocks_by_amenity_proximity": "spatial",
     "verify_primary_school_distance": "spatial",
-    "find_primary_schools_near_address": "spatial",
     "compute_dual_transit_commute": "spatial",
     "sync_interactive_map_ui": "spatial",
-    "resolve_location": "spatial",
-    "get_nearby_amenities": "spatial",
     # Agent 4 — Member 1
     "calculate_cpf_housing_grants": "financial",
     "calculate_maximum_affordability": "financial",
@@ -646,10 +626,11 @@ TOOL_OWNER: Dict[str, str] = {
     # Agent 5 — Member 3
     "retrieve_hdb_policy_knowledge": "policy_rag",
 }
-# Variant A gets all 23. Variant B's combined agent gets the 22 non-RAG tools;
-# the policy agent gets 1. relax_unsatisfied_constraints is a deterministic supervisor
+CORE_TOOLS = tuple(TOOL_OWNER)
+# The 12 core tools. Add-on packs (agents/addons: research and school lookup) register theirs at the end of this
+# module; which runs are offered them is addons.offer_in. relax_unsatisfied_constraints is a deterministic supervisor
 # node, not an LLM-callable tool, so it is not counted.
-assert len(TOOL_OWNER) == 23
+assert len(CORE_TOOLS) == 12
 
 TOOL_INPUT_MODEL: Dict[str, type[BaseModel]] = {
     "query_resale_blocks_by_criteria": QueryResaleBlocksInput,
@@ -658,21 +639,16 @@ TOOL_INPUT_MODEL: Dict[str, type[BaseModel]] = {
     "compare_bto_launch_vs_resale": CompareBtoLaunchVsResaleInput,
     "filter_blocks_by_amenity_proximity": FilterBlocksByAmenityProximityInput,
     "verify_primary_school_distance": VerifyPrimarySchoolDistanceInput,
-    "find_primary_schools_near_address": FindSchoolsNearAddressInput,
     "compute_dual_transit_commute": ComputeDualTransitCommuteInput,
     "sync_interactive_map_ui": SyncInteractiveMapUiInput,
     "calculate_cpf_housing_grants": CalculateCpfHousingGrantsInput,
     "calculate_maximum_affordability": CalculateMaximumAffordabilityInput,
     "calculate_bsd_and_upfront_outlay": CalculateBsdAndUpfrontOutlayInput,
     "retrieve_hdb_policy_knowledge": RetrieveHdbPolicyKnowledgeInput,
-    "get_block_transaction_history": GetBlockTransactionHistoryInput,
-    "get_market_snapshot": GetMarketSnapshotInput,
-    "rank_towns_by_value": RankTownsByValueInput,
-    "compare_resale_options": CompareResaleOptionsInput,
-    "assess_resale_price": AssessResalePriceInput,
-    "find_resale_blocks_near": FindResaleBlocksNearInput,
-    "get_area_resale_statistics": GetAreaResaleStatisticsInput,
-    "get_area_price_trend": GetAreaPriceTrendInput,
-    "resolve_location": ResolveLocationInput,
-    "get_nearby_amenities": GetNearbyAmenitiesInput,
 }
+
+
+# Add-on packs: their tools' owners and input models (agents/addons). Kept last: the packs name models defined above.
+from agents import addons as _addons  # noqa: E402
+
+_addons.register_tools(TOOL_OWNER, TOOL_INPUT_MODEL)

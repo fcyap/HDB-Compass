@@ -619,7 +619,7 @@
     "id": "E1-05",
     "category": "E",
     "sub_use_case": "E1",
-    "query": "I am a single Singapore citizen aged 38, a first-timer, buying a resale flat. My HFE-assessed income is $5,500 a month and I have $110,000 in CPF OA I can use, plus $50,000 in cash savings. I have no other debts, have been continuously employed for the past 12 months, and my eligibility for the grants and an HDB loan is confirmed. No proximity grant applies. Find 3-room resale flats in Tampines under $500,000 with at least 60 years of lease left, within 400m of an MRT station. Use 60 years of remaining lease for the grant and loan calculation. Map the matches and tell me my grants and maximum budget.",
+    "query": "I am a single Singapore citizen aged 38, a first-timer with no children, buying a resale flat. My HFE-assessed income is $5,500 a month and I have $110,000 in CPF OA I can use, plus $50,000 in cash savings. I have no other debts, have been continuously employed for the past 12 months, and my eligibility for the grants and an HDB loan is confirmed. No proximity grant applies. Find 3-room resale flats in Tampines under $500,000 with at least 60 years of lease left, within 400m of an MRT station. Use 60 years of remaining lease for the grant and loan calculation. Map the matches and tell me my grants and maximum budget.",
     "initial_map_state": null,
     "stated_constraints": {
       "towns": [
@@ -1072,6 +1072,70 @@
       "missing_financial_inputs": [
         "cash_savings"
       ]
+    },
+    "follow_up": {
+      "answer": "We have $25,000 in cash savings.",
+      "financial_inputs": {
+        "grants": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_PR",
+          "first_timer_status": true,
+          "monthly_income": 7800.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 65.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 33,
+          "youngest_core_member_age": 33
+        },
+        "affordability": {
+          "monthly_income": 7800.0,
+          "cpf_oa_balance": 80000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 65.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "cash_savings": 25000.0,
+          "youngest_buyer_age": 33,
+          "oldest_buyer_age": 34,
+          "average_applicant_age": 33.5
+        }
+      },
+      "ground_truth_facts": {
+        "matching_block_keys": [
+          "62 LOR 4 TOA PAYOH"
+        ],
+        "affordability_cap": 688450.9,
+        "financial": {
+          "calculate_cpf_housing_grants": {
+            "status": "ok",
+            "missing_inputs": [],
+            "enhanced_housing_grant": 20000.0,
+            "family_grant": 70000.0,
+            "proximity_housing_grant": 0.0,
+            "total_grants": 90000.0,
+            "rule_version": "sg-hdb-resale-2026-10-25.v1"
+          },
+          "calculate_maximum_affordability": {
+            "status": "ok",
+            "missing_inputs": [],
+            "max_purchase_price": 688450.9,
+            "max_loan_amount": 493450.9,
+            "monthly_instalment": 2238.64,
+            "binding_constraint": "MSR",
+            "grants_included": true,
+            "rule_version": "sg-hdb-resale-2026-10-25.v1"
+          }
+        },
+        "data": {
+          "snapshot_id": "be71fe16c4e7e7548eb7",
+          "window": "2025-10..2026-09",
+          "lease_reference_month": "2026-09",
+          "financial_rule_version": "sg-hdb-resale-2026-10-25.v1"
+        }
+      },
+      "expected_behaviour": "Keep the earlier search, complete the grant and budget estimate with the answer, and recommend exactly the matching blocks within the new cap."
     }
   },
   {
@@ -1236,6 +1300,77 @@
         "youngest_buyer_age",
         "youngest_core_member_age"
       ]
+    },
+    "follow_up": {
+      "answer": "We are aged 32 and 30.",
+      "financial_inputs": {
+        "grants": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 9000.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 65.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 30,
+          "youngest_core_member_age": 30
+        },
+        "affordability": {
+          "monthly_income": 9000.0,
+          "cpf_oa_balance": 90000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 65.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "cash_savings": 40000.0,
+          "youngest_buyer_age": 30,
+          "oldest_buyer_age": 32,
+          "average_applicant_age": 31.0
+        }
+      },
+      "ground_truth_facts": {
+        "matching_block_keys": [
+          "288B JURONG EAST ST 21",
+          "266 TOH GUAN RD",
+          "286D TOH GUAN RD",
+          "268 TOH GUAN RD",
+          "288E JURONG EAST ST 21",
+          "267 TOH GUAN RD",
+          "286A TOH GUAN RD",
+          "288A JURONG EAST ST 21"
+        ],
+        "affordability_cap": 750000.0,
+        "financial": {
+          "calculate_cpf_housing_grants": {
+            "status": "ok",
+            "missing_inputs": [],
+            "enhanced_housing_grant": 5000.0,
+            "family_grant": 80000.0,
+            "proximity_housing_grant": 0.0,
+            "total_grants": 85000.0,
+            "rule_version": "sg-hdb-resale-2026-10-25.v1"
+          },
+          "calculate_maximum_affordability": {
+            "status": "ok",
+            "missing_inputs": [],
+            "max_purchase_price": 784366.42,
+            "max_loan_amount": 569366.42,
+            "monthly_instalment": 2583.04,
+            "binding_constraint": "MSR",
+            "grants_included": true,
+            "rule_version": "sg-hdb-resale-2026-10-25.v1"
+          }
+        },
+        "data": {
+          "snapshot_id": "be71fe16c4e7e7548eb7",
+          "window": "2025-10..2026-09",
+          "lease_reference_month": "2026-09",
+          "financial_rule_version": "sg-hdb-resale-2026-10-25.v1"
+        }
+      },
+      "expected_behaviour": "Keep the earlier search, complete the grant and budget estimate with the answer, and recommend exactly the matching blocks within the new cap."
     }
   },
   {

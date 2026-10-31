@@ -26,6 +26,7 @@ from langgraph.graph import END, START, StateGraph
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from agents import addons
 from agents import supervisor as sv
 from agents.schemas import TOOL_OWNER
 from agents.state import HDBCompassState
@@ -42,11 +43,14 @@ MONOLITH_SYSTEM = (
 
 
 def monolith_node(state: HDBCompassState) -> Dict[str, Any]:
-    query = sv.last_user_query(state)
-    # No extraction step by design; the regex pass only feeds the deterministic fallback plan.
-    c = sv.rule_based_extract(query).model_dump()
+    query = sv.conversation_text(state)  # the monolith sees the whole conversation, as a chat agent would
+    # No extraction step by design; the regex pass only feeds the deterministic fallback plan, and reads the
+    # user's own messages so numbers quoted in an earlier assistant reply are never taken as constraints.
+    users = " ".join(m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user")
+    c = sv.rule_based_extract(users).model_dump()
+    c["requested_tools"] = sv.requested_tools(users)   # the fallback plan runs upfront costs and comparables only when asked
     outputs, log, errors, final_text = sv.run_react(
-        "monolith", list(TOOL_OWNER), MONOLITH_SYSTEM, query, c,
+        "monolith", addons.visible_tools(list(TOOL_OWNER), VARIANT), MONOLITH_SYSTEM, query, c,
         max_iter=sv.load_config()["architecture"]["subagent_max_tool_iterations"] * 2,
         plan_agents=sv.SPECIALISTS)
     update = sv.slot_outputs(outputs, c.get("towns") or [])
@@ -77,8 +81,10 @@ def build_graph():
 graph = build_graph()
 
 
-def run(query: str, map_state: Optional[Dict[str, Any]] = None) -> HDBCompassState:
-    return graph.invoke(sv.initial_state(query, VARIANT, map_state))
+def run(query: str, map_state: Optional[Dict[str, Any]] = None,
+        previous: Optional[Dict[str, Any]] = None) -> HDBCompassState:
+    """Uniform entry point for the eval runner (docs/INTERFACES.md §6). previous: the last turn's final state."""
+    return graph.invoke(sv.initial_state(query, VARIANT, map_state, previous))
 
 
 if __name__ == "__main__":

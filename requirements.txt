@@ -16,3 +16,6 @@ langchain-openai>=0.2.0
 langsmith>=0.1.0
 pyyaml>=6.0
 pytest>=8.0
+# Member 3 policy RAG (mcp_server/policy_rag_tools.py): BM25 sparse retrieval. sentence-transformers is optional
+# (dense retrieval and the cross-encoder fall back to BM25 + reciprocal rank fusion without it).
+rank-bm25>=0.2.2

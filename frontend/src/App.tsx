@@ -3,25 +3,20 @@ import { SplitScreenLayout } from './components/SplitScreenLayout';
 import { AgentChat, ChatMessage, LogMessage, ModelInfo } from './components/AgentChat';
 import { InteractiveMap, MapViewport, FACILITY_RADIUS_METERS } from './components/InteractiveMap';
 
+// One id per page load: the backend keeps this page's conversation under it, so a dropped WebSocket that reconnects
+// does not lose a pending follow-up question. It is deliberately not stored: a reload (which empties the chat on
+// screen) or a duplicated tab starts a new conversation, so the backend never applies a request the user can no
+// longer see. Clear also starts a new conversation (the backend forgets it).
+const SESSION_ID = crypto.randomUUID();
+// Same origin as the page (the Vite dev/preview proxy forwards /ws to the backend), so it also works over HTTPS and
+// through a tunnel, not only on localhost.
 const websocketUrl = new URL('/ws', window.location.href);
 websocketUrl.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+websocketUrl.searchParams.set('session', SESSION_ID);
 const WS_URL = websocketUrl.toString();
 
-const INITIAL_MESSAGES: ChatMessage[] = [
-  {
-    id: 'welcome-1',
-    sender: 'agent',
-    text: `**Welcome to HDB-Compass**
-Your AI assistant for Singapore public housing decisions:
-- **Schools:** Find primary schools near a full HDB address or postal code. Distances are approximate, not official registration boundaries.
-- **Lifestyle & Proximity:** Explore straight-line distances to MRT stations, hawkers, and amenities.
-- **Resale Data:** Explore historical block statistics with synchronized map results; these are not active listings.
-
-Choose a suggestion above or type a query to begin.`,
-    timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    status: 'completed',
-  },
-];
+// The chat opens on the mascot welcome (AgentChat) with no message; Clear returns to it.
+const INITIAL_MESSAGES: ChatMessage[] = [];
 
 export function App() {
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
@@ -32,11 +27,12 @@ export function App() {
     lng: 103.8481,
     zoom: 13.5,
   });
-  const [theme, setTheme] = useState<string>('Night');
+  const [theme, setTheme] = useState<string>('Default');
   const [agentStatus, setAgentStatus] = useState<string>('READY');
   const [wsConnected, setWsConnected] = useState<boolean>(false);
   const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const pendingResetRef = useRef(false);
   const currentMsgIdRef = useRef<string | null>(null);
   // The user's last map click; sent with each question so "here" / "this block" resolve to it.
   const pinnedRef = useRef<{ lat: number; lng: number } | null>(null);
@@ -61,6 +57,11 @@ export function App() {
           .then((response) => response.ok ? response.json() : Promise.reject())
           .then(setModelInfo)
           .catch(() => setModelInfo({ status: 'unavailable', message: 'Could not read model configuration.' }));
+        if (pendingResetRef.current) {
+          // Clear was pressed while disconnected: tell the backend now, before the next question
+          ws.send(JSON.stringify({ reset: true }));
+          pendingResetRef.current = false;
+        }
       };
 
       ws.onmessage = (event) => {
@@ -263,6 +264,13 @@ export function App() {
   const [clearTrigger, setClearTrigger] = useState<number>(0);
 
   const handleClear = () => {
+    // start a fresh conversation: the backend forgets the previous request and any open follow-up question.
+    // While disconnected the reset waits for the reconnect (onopen), so it is never lost.
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ reset: true }));
+    } else {
+      pendingResetRef.current = true;
+    }
     setMessages(INITIAL_MESSAGES);
     setBufferGeoJSON(null);
     setPoisGeoJSON(null);

@@ -49,7 +49,8 @@ _PLACE = re.compile(r"\b(?:near|around|close to|beside|next to|from)\s+((?:[a-z]
                     r"primary school|school))\b", re.I)
 
 _RX = {
-    "history": r"\b(histor(?:y|ical)|past (?:sales|transactions|prices)|sold for|previous(?:ly)? sold|recent sales|"
+    "history": r"\b(histor(?:y|ical)|past (?:sales|transactions|prices)|sold for|sell for|go(?:ne)? for|"
+               r"previous(?:ly)? sold|recent sales|"
                r"transactions? (?:at|for|in)|transacted)\b",
     "assessment": r"\b(fair(?:ly)?(?: price)?|reasonable|over-?priced|under-?priced|good (?:price|deal)|worth|"
                   r"valuation|too (?:much|high|expensive)|asking|offer(?:ed)?|is \$\s?\d)",
@@ -58,7 +59,7 @@ _RX = {
               r"amenities|facilities|what is around|near it|around it)\b",
     "snapshot": r"\b(market (?:now|today|currently|like|status|update|conditions?|overview|snapshot)|current(?:ly)? market|"
                 r"state of the (?:resale )?market|where (?:is|are) (?:the )?(?:resale )?(?:market|prices)|"
-                r"latest (?:resale )?prices|how (?:is|are) (?:the )?(?:resale |hdb )?(?:market|prices)|"
+                r"latest (?:resale )?prices|how (?:is|are) (?:the )?(?:(?:resale|hdb|property)\s+){0,2}(?:market|prices)|"
                 r"prices? (?:now|today|currently))\b",
     "ranking": r"\b(which towns?|what towns?|best[- ]value|cheapest towns?|most affordable towns?|"
                r"rank(?:ing)? (?:the |all )?towns|towns? (?:to|should (?:i|we)) (?:buy|look|consider)|"
@@ -192,6 +193,131 @@ def apply_map_pin(c: Dict[str, Any], query: str, pin: Optional[Tuple[float, floa
         c.update(_place_intents(query, addresses, has_point=True))
 
 
+# ---------------------------------------------------------------------------
+# Which place a question is about: the map pin, a place named now, or one from earlier turns
+# ---------------------------------------------------------------------------
+# Constraints that belong to one question. A new question starts without them; a reply to an open question
+# (pending clarification) keeps them, since it completes that request. See supervisor._finalize_constraints.
+TURN_ONLY_KEYS = frozenset({
+    "addresses", "wants_block_history", "wants_market_snapshot", "wants_town_ranking", "wants_option_comparison",
+    "wants_price_assessment", "wants_nearby_amenities", "wants_area_statistics", "asking_price_sgd",
+    "bto_project_name", "area_radius_meters", "map_pin", "pin_radius_meters", "nearby_schools",
+})
+# Never carried from an earlier turn, not even into a reply: they are worked out afresh for every message.
+ALWAYS_FRESH_KEYS = frozenset({"clarifications", "assumptions", "extraction_source", "requested_tools", "place_options"})
+
+# Words pointing at the pin ("here", "this block") and words that could mean the pin or a place named earlier.
+_NEAR_REF = re.compile(r"\b(here|this (?:flat|block|unit|place|location|spot|area|address|one|point)|"
+                       r"(?:the |my )?pin(?:ned)?(?: location| spot| block)?|"
+                       r"(?:selected|marked|clicked) (?:block|location|place|point|spot)|around me)\b", re.I)
+_FAR_REF = re.compile(r"\bthat (?:flat|block|unit|place|location|spot|area|address)\b|"
+                      r"\bthe same (?:place|area|block|location|address)\b|"
+                      r"(?<!\bis )(?<!\bare )(?<!\bwas )(?<!\bwere )\bthere\b(?!\s*(?:is|are|was|were|'s|be|any|an?)\b)",
+                      re.I)
+_PICK_PIN = re.compile(r"\b(?:pin(?:ned)?|map|marker|marked|here|first|1st|option (?:1|one)|the first one)\b", re.I)
+_PICK_EARLIER = re.compile(r"\b(?:earlier|before|previous(?:ly)?|mentioned|second|2nd|option (?:2|two)|"
+                           r"the other one|the second one)\b", re.I)
+
+
+_POINTER_ONLY = re.compile(
+    r"(?:the |my |this |that |your )?(?:pin(?:ned)?(?: (?:location|spot|block|place|one))?|map(?: pin)?|marker|here|there|"
+    r"this (?:flat|block|unit|place|location|spot|area|address|one|point)|that (?:flat|block|unit|place|location|spot|area|address|one)|"
+    r"(?:the )?(?:earlier|previous|other|first|second) (?:one|place|block|address)|(?:the )?same (?:place|area|block|location|address)|"
+    r"(?:selected|marked|clicked) (?:block|location|place|point|spot))", re.I)
+
+
+def is_place_question(query: str) -> bool:
+    """A question that needs a place to answer (its history, a price check, what is near it, prices around it)."""
+    return any(_has(k, query) for k in ("history", "assessment", "nearby")) or (_has("area", query) and _has("stats", query))
+
+
+def _pin_option(pin: Tuple[float, float]) -> Dict[str, Any]:
+    from mcp_server.location_tools import nearest_block  # lazy: keeps agents importable without the index
+    lat, lng = float(pin[0]), float(pin[1])
+    block = nearest_block(lat, lng)
+    label = f"Blk {block['block']} {block['street']}" if block else f"your map pin ({lat:.5f}, {lng:.5f})"
+    return {"source": "pin", "label": label, "latitude": lat, "longitude": lng}
+
+
+def location_question(options: List[Dict[str, Any]]) -> str:
+    pin, earlier = options[0]["label"], options[1]["label"]
+    return (f"Do you mean the place you pinned on the map (**{pin}**) or **{earlier}**, which you mentioned earlier? "
+            "Reply 'the pin' or 'the earlier one'.")
+
+
+def _use_earlier(c: Dict[str, Any], query: str, place: str, named: List[str]) -> None:
+    addresses = named + [place] if place.upper() not in {a.upper() for a in named} else named
+    c.update(_place_intents(query, addresses))
+    c.setdefault("assumptions", []).append(f"Used {place}, which you mentioned earlier.")
+
+
+def _ask_which(c: Dict[str, Any], query: str, pin: Tuple[float, float], place: str) -> None:
+    # keep what the user wants to know (nearby amenities, past sales...): the reply only names the place, and these
+    # carry into it with the open question (TURN_ONLY_KEYS are kept for a reply). Nothing runs until then.
+    wanted = _place_intents(query, [place])
+    c.update({k: v for k, v in wanted.items() if k != "addresses" and v})
+    options = [_pin_option(pin), {"source": "conversation", "label": place}]
+    c["place_options"] = options
+    c["clarifications"] = list(dict.fromkeys((c.get("clarifications") or []) + [location_question(options)]))
+
+
+def resolve_place(c: Dict[str, Any], query: str, pin: Optional[Tuple[float, float]], earlier: List[str],
+                  pending: Optional[Dict[str, Any]] = None, radius_meters: Optional[float] = None) -> None:
+    """Decide which place this message is about and record it in c (addresses / map_pin / assumptions), or ask.
+
+    1. A reply to "the pin or the earlier place?" picks one; a newly named place answers it too.
+    2. "here", "this block", "the pin" with a pin: the pin (a place named alongside it is kept as well).
+    3. "there", "that block", "the same area": the pin and/or the earlier place; if both are possible, ask.
+    4. A place named in this message, with no pointing word: that place; the pin is ignored.
+    5. A place question naming no place: the pin if there is one, else the earlier place; if both exist and
+       differ, ask. Every choice not stated by the user is written to assumptions."""
+    # a model sometimes copies a pointing phrase ("the pin", "there", "the earlier one") into addresses: not a place
+    named = [a for a in c.get("addresses") or [] if not _POINTER_ONLY.fullmatch(a.strip(" .?!'\""))]
+    if named != list(c.get("addresses") or []):
+        c["addresses"] = named
+    earlier_place = next((a for a in earlier if a.upper() not in {n.upper() for n in named}), None)
+    if pending and pending.get("kind") == "location":
+        if named:
+            return
+        options = pending.get("options") or []
+        pin_opt = next((o for o in options if o.get("source") == "pin"), None)
+        earlier_opt = next((o for o in options if o.get("source") == "conversation"), None)
+        q = query.lower()
+        wants_earlier = earlier_opt and (earlier_opt["label"].lower() in q or
+                                         (_PICK_EARLIER.search(query) and not _PICK_PIN.search(query)))
+        if wants_earlier:
+            c.update(_place_intents(query, [earlier_opt["label"]]))
+        elif pin_opt:
+            # the pin is chosen, or the reply was unclear: asked once, the pin is then used and said so
+            if not _PICK_PIN.search(query):
+                c.setdefault("assumptions", []).append(f"Used your map pin ({pin_opt['label']}).")
+            apply_map_pin(c, "here " + query, (pin_opt["latitude"], pin_opt["longitude"]), radius_meters)
+        return
+    near, far = bool(_NEAR_REF.search(query)), bool(_FAR_REF.search(query))
+    if pin and near:
+        apply_map_pin(c, query, pin, radius_meters)
+        return
+    if far:
+        if pin and earlier_place:
+            if _pin_option(pin)["label"].upper() == earlier_place.upper():
+                apply_map_pin(c, "here " + query, pin, radius_meters)
+            else:
+                _ask_which(c, query, pin, earlier_place)
+        elif pin:
+            apply_map_pin(c, "here " + query, pin, radius_meters)
+        elif earlier_place:
+            _use_earlier(c, query, earlier_place, named)
+        return
+    if named or not is_place_question(query):
+        return
+    if pin and earlier_place and _pin_option(pin)["label"].upper() != earlier_place.upper():
+        _ask_which(c, query, pin, earlier_place)
+    elif pin:
+        apply_map_pin(c, query, pin, radius_meters)
+    elif earlier_place:
+        _use_earlier(c, query, earlier_place, named)
+
+
 def extract_research_fields(query: str, base: Dict[str, Any]) -> Dict[str, Any]:
     """Research fields for ExtractedConstraints, given the classic regex fields in `base`."""
     q = query
@@ -235,7 +361,8 @@ def is_block_search(c: Dict[str, Any], query: str) -> bool:
     """Whether the classic town block search should run alongside research tools."""
     other = any(c.get(k) for k in ("wants_price_trend", "wants_bto_comparison", "wants_block_history",
                                    "wants_price_assessment", "wants_option_comparison", "wants_nearby_amenities",
-                                   "wants_market_snapshot", "wants_town_ranking", "wants_area_statistics"))
+                                   "wants_market_snapshot", "wants_town_ranking", "wants_area_statistics",
+                                   "bto_project_name"))   # a named launch is its own question, not a town search
     stated = c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or \
         {k: v for k, v in (c.get("amenity_radii_meters") or {}).items() if k != "school"}
     return bool(stated) or _has("search", query) or not other
@@ -259,7 +386,9 @@ def _flat_type(c: Dict[str, Any], assumptions: List[str], purpose: str) -> str:
     types = c.get("flat_types") or []
     if types:
         return types[0]
-    assumptions.append(f"No flat type was given, so {purpose} uses {DEFAULT_FLAT_TYPE} flats.")
+    note = f"No flat type was given, so {purpose} uses {DEFAULT_FLAT_TYPE} flats."
+    if note not in assumptions:   # the plan is computed more than once per answer (gating, the run, the evidence gate)
+        assumptions.append(note)
     return DEFAULT_FLAT_TYPE
 
 
@@ -516,7 +645,7 @@ def research_lines(state: Dict[str, Any]) -> List[str]:
                              f"{nearest['distance_meters']:.0f} m away.")
         lines.append(f"- {result['message']}")
 
-    for note in c.get("assumptions") or []:
+    for note in dict.fromkeys(c.get("assumptions") or []):
         lines.append(f"_Assumption: {note}_")
     for question in c.get("clarifications") or []:
         lines.append(f"**Question:** {question}")

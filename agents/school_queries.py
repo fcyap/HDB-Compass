@@ -24,6 +24,32 @@ def school_location_request(query):
     return {"address": address, "radius_meters": radius}
 
 
+SCHOOL_NAME_QUESTION = (
+    "Which primary school would you like to check? Please include its name and the distance band, "
+    "for example: \u2018Show HDB blocks within 1km of Ai Tong School\u2019 or "
+    "\u2018Show HDB blocks within 1\u20132km of Catholic High School\u2019. "
+    "I can map approximate distance bands; official registration distances should be checked with MOE."
+)
+
+
+def guard_school_request(query, school_named):
+    """A reply that stops a school question the lookup cannot answer, or None to carry on.
+    school_named(query) says whether the message names a specific school (the supervisor's reading)."""
+    nearby = school_location_request(query)
+    if nearby is not None:
+        if not 0 < nearby["radius_meters"] <= 10000:
+            return "Please choose a school search radius greater than 0 and at most 10,000 metres."
+        if re.search(r"\bsecondary\b|\bjunior college\b|\bpreschools?\b", query, re.I):
+            return ("This school lookup currently covers primary schools only. "
+                    "Please resend the address if you want a primary-school search.")
+        return None
+    school_topic = re.search(r"\bschools?\b|\bmoe\b|\bprimary\s*1\b", query, re.I)
+    distance_topic = re.search(r"\b[12]\s*(?:[-\u2013]\s*2\s*)?km\b|\b[12]000\s*m\b|boundar|radius|distance", query, re.I)
+    if school_topic and distance_topic and not school_named(query):
+        return SCHOOL_NAME_QUESTION
+    return None
+
+
 def present_school_result(result):
     """Use the same structured evidence for the answer and map; never add resale cards."""
     payload = {"markers": {"type": "FeatureCollection", "features": []}}

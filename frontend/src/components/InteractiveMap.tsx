@@ -311,7 +311,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         type: 'fill',
         source: 'agent-buffer-source',
         paint: {
-          'fill-color': '#38bdf8',
+          'fill-color': '#008F8A',
           'fill-opacity': 0.18,
         },
       });
@@ -321,7 +321,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         type: 'line',
         source: 'agent-buffer-source',
         paint: {
-          'line-color': '#0ea5e9',
+          'line-color': '#006865',
           'line-width': 2.5,
           'line-dasharray': [3, 1.5],
         },
@@ -350,7 +350,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
             ['get', 'category'],
             'mrt', '#38bdf8',
             'school', '#f59e0b',
-            'hawker', '#f43f5e',
+            'hawker', '#7C3AED',
             'supermarket', '#10b981',
             '#a855f7',
           ],
@@ -371,7 +371,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
             ['get', 'category'],
             'mrt', '#0ea5e9',
             'school', '#f59e0b',
-            'hawker', '#f43f5e',
+            'hawker', '#7C3AED',
             'supermarket', '#10b981',
             '#a855f7',
           ],
@@ -393,8 +393,8 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
           'text-optional': true,
         },
         paint: {
-          'text-color': '#e2e8f0',
-          'text-halo-color': '#090d16',
+          'text-color': '#073E40',
+          'text-halo-color': '#FFFFFF',
           'text-halo-width': 2.2,
         },
       });
@@ -410,23 +410,23 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         let catLabel = 'AMENITY';
         if (props.category === 'mrt') { catColor = '#0ea5e9'; catLabel = 'TRANSIT'; }
         else if (props.category === 'school') { catColor = '#f59e0b'; catLabel = 'PRIMARY SCHOOL'; }
-        else if (props.category === 'hawker') { catColor = '#f43f5e'; catLabel = 'FOOD & DINING'; }
+        else if (props.category === 'hawker') { catColor = '#7C3AED'; catLabel = 'FOOD & DINING'; }
         else if (props.category === 'supermarket') { catColor = '#10b981'; catLabel = 'GROCERY'; }
 
         const html = `
-          <div style="font-family: sans-serif; padding: 6px; color: #0f172a; min-width: 190px;">
+          <div style="font-family: sans-serif; padding: 6px; color: #073E40; min-width: 190px;">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
               <span style="background: ${catColor}; color: #fff; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; text-transform: uppercase;">
                 ${catLabel}
               </span>
-              <span style="font-size: 11px; font-weight: 700; color: #0284c7;">
+              <span style="font-size: 11px; font-weight: 700; color: #006865;">
                 ${Math.round(props.distance_meters)}m
               </span>
             </div>
-            <strong style="font-size: 13px; color: #0f172a; display: block; margin-bottom: 4px;">
+            <strong style="font-size: 13px; color: #073E40; display: block; margin-bottom: 4px;">
               ${props.name}
             </strong>
-            <div style="font-size: 11px; color: #475569; display: flex; align-items: center; gap: 4px;">
+            <div style="font-size: 11px; color: #3F6B69; display: flex; align-items: center; gap: 4px;">
               🚶 ~${props.walking_mins} mins walk
             </div>
           </div>
@@ -464,7 +464,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         source: 'agent-pois-source',
         paint: {
           'circle-radius': 14,
-          'circle-color': '#10b981',
+          'circle-color': '#F36550',
           'circle-opacity': 0.45,
           'circle-blur': 0.6,
         },
@@ -477,7 +477,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         source: 'agent-pois-source',
         paint: {
           'circle-radius': 7,
-          'circle-color': '#10b981',
+          'circle-color': '#F36550',
           'circle-stroke-width': 2.5,
           'circle-stroke-color': '#ffffff',
         },
@@ -497,7 +497,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         },
         paint: {
           'text-color': '#ffffff',
-          'text-halo-color': '#090d16',
+          'text-halo-color': '#FFFFFF',
           'text-halo-width': 2.8,
         },
       });
@@ -531,22 +531,22 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         fetchFacilitiesForLocation(coordinates[1], coordinates[0]);
 
         const html = `
-          <div style="font-family: sans-serif; padding: 6px; color: #0f172a; min-width: 210px;">
+          <div style="font-family: sans-serif; padding: 6px; color: #073E40; min-width: 210px;">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
-              <span style="background: #10b981; color: #fff; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px;">
+              <span style="background: #F36550; color: #fff; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px;">
                 HDB RESALE
               </span>
-              <span style="font-size: 11px; font-weight: 700; color: #0284c7;">
+              <span style="font-size: 11px; font-weight: 700; color: #006865;">
                 ${priceStr}
               </span>
             </div>
-            <strong style="font-size: 13px; color: #0f172a; display: block; margin-bottom: 4px;">
+            <strong style="font-size: 13px; color: #073E40; display: block; margin-bottom: 4px;">
               ${blockName}
             </strong>
-            <div style="font-size: 11px; color: #64748b; margin-bottom: 6px;">
+            <div style="font-size: 11px; color: #6E8F8C; margin-bottom: 6px;">
               ${leaseStr}
             </div>
-            <div style="font-size: 11px; color: #0284c7; font-weight: 600; background: #e0f2fe; padding: 4px 6px; border-radius: 4px; display: flex; align-items: center; gap: 4px;">
+            <div style="font-size: 11px; color: #006865; font-weight: 600; background: #E3F3F1; padding: 4px 6px; border-radius: 4px; display: flex; align-items: center; gap: 4px;">
               📍 Facilities Panel Opened
             </div>
           </div>
@@ -575,7 +575,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
-    const styleUrl = ONEMAP_THEMES[theme] || ONEMAP_THEMES.Night;
+    const styleUrl = ONEMAP_THEMES[theme] || ONEMAP_THEMES.Default;
 
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
@@ -586,6 +586,17 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       maxZoom: 19,
       attributionControl: false,
     });
+
+    // The chat card floats over the left of the map. Camera padding makes centring, flyTo and fitting use the
+    // visible part of the map to the right of the card, so results never land underneath it.
+    const applyPanelPadding = () => {
+      const panel = document.querySelector('.left-panel');
+      const left = panel ? Math.round(panel.getBoundingClientRect().right) : 0;
+      map.setPadding({ left, top: 0, right: 0, bottom: 0 });
+    };
+    applyPanelPadding();
+    window.addEventListener('resize', applyPanelPadding);
+    map.once('remove', () => window.removeEventListener('resize', applyPanelPadding));
 
     map.on('load', () => {
       setMapLoaded(true);
@@ -636,9 +647,9 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         const el = document.createElement('div');
         el.className = 'target-center-marker';
         el.innerHTML = `
-          <div class="target-pin-pulse" style="border-color: #38bdf8; background: rgba(56, 189, 248, 0.25);"></div>
-          <div class="target-pin-core" style="background: #38bdf8; border-color: #ffffff; color: #0a0d14; font-size: 11px; font-weight: 800; box-shadow: 0 0 14px #38bdf8;">📍</div>
-          <div class="target-pin-label" style="background: rgba(15, 23, 42, 0.95); border: 1px solid #38bdf8; color: #38bdf8;">${locName}</div>
+          <div class="target-pin-pulse" style="border-color: #073E40; background: rgba(7, 62, 64, 0.2);"></div>
+          <div class="target-pin-core" style="background: #073E40; border-color: #ffffff; color: #F8EFDC; font-size: 11px; font-weight: 800; box-shadow: 0 0 14px #073E40;">📍</div>
+          <div class="target-pin-label" style="background: #F8EFDC; border: 1px solid #073E40; color: #073E40;">${locName}</div>
         `;
         clickMarkerRef.current = new maplibregl.Marker({ element: el })
           .setLngLat([targetLng, targetLat])
@@ -662,7 +673,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   useEffect(() => {
     if (!mapRef.current || !mapLoaded) return;
     const map = mapRef.current;
-    const styleUrl = ONEMAP_THEMES[theme] || ONEMAP_THEMES.Night;
+    const styleUrl = ONEMAP_THEMES[theme] || ONEMAP_THEMES.Default;
 
     map.setStyle(styleUrl);
     map.once('style.load', () => {
@@ -790,14 +801,14 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     const popup = new maplibregl.Popup({ offset: 12 })
       .setLngLat([facility.lng, facility.lat])
       .setHTML(`
-        <div style="font-family: sans-serif; padding: 4px; color: #0f172a;">
-          <div style="font-size: 10px; font-weight: 700; color: #0284c7; text-transform: uppercase; margin-bottom: 2px;">
+        <div style="font-family: sans-serif; padding: 4px; color: #073E40;">
+          <div style="font-size: 10px; font-weight: 700; color: #006865; text-transform: uppercase; margin-bottom: 2px;">
             ${facility.rawCategory || facility.category}
           </div>
-          <strong style="font-size: 13px; color: #0f172a; display: block; margin-bottom: 2px;">
+          <strong style="font-size: 13px; color: #073E40; display: block; margin-bottom: 2px;">
             ${facility.name}
           </strong>
-          <span style="font-size: 11px; color: #0284c7; font-weight: 600;">
+          <span style="font-size: 11px; color: #006865; font-weight: 600;">
             🚶 ${facility.walking_mins} mins walk (${Math.round(facility.distance_meters)}m)
           </span>
         </div>
@@ -979,7 +990,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       {/* Floating Basemap Theme Switcher */}
       <div className="map-floating-overlay">
         <div className="map-control-card">
-          <Layers size={15} color="#38bdf8" />
+          <Layers size={15} color="#008F8A" />
           <select
             className="theme-select"
             value={theme}
@@ -997,15 +1008,15 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       <div className="map-legend-card">
         <span className="legend-title">Map Legend</span>
         <div className="legend-item">
-          <span className="legend-dot" style={{ background: '#f59e0b', boxShadow: '0 0 6px #f59e0b' }} />
+          <span className="legend-dot" style={{ background: '#073E40', boxShadow: '0 0 6px #073E40' }} />
           <span>Target Location</span>
         </div>
         <div className="legend-item">
-          <span className="legend-line" style={{ borderBottom: '2px dashed #0ea5e9' }} />
+          <span className="legend-line" style={{ borderBottom: '2px dashed #006865' }} />
           <span>Search Radius</span>
         </div>
         <div className="legend-item">
-          <span className="legend-dot" style={{ background: '#10b981', boxShadow: '0 0 6px #10b981' }} />
+          <span className="legend-dot" style={{ background: '#F36550', boxShadow: '0 0 6px #F36550' }} />
           <span>Candidate Resale Blocks</span>
         </div>
         <div className="legend-item">
@@ -1017,11 +1028,11 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
           <span>Primary Schools</span>
         </div>
         <div className="legend-item">
-          <span className="legend-dot" style={{ background: '#f43f5e', boxShadow: '0 0 6px #f43f5e' }} />
+          <span className="legend-dot" style={{ background: '#7C3AED', boxShadow: '0 0 6px #7C3AED' }} />
           <span>Food & Dining</span>
         </div>
         <div className="legend-item">
-          <span className="legend-dot" style={{ background: '#34d399', boxShadow: '0 0 6px #34d399' }} />
+          <span className="legend-dot" style={{ background: '#10b981', boxShadow: '0 0 6px #10b981' }} />
           <span>Groceries</span>
         </div>
       </div>
@@ -1029,7 +1040,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       {/* Coordinate Telemetry Indicator */}
       {cursorCoords && (
         <div className="coords-readout">
-          <Compass size={12} color="#38bdf8" />
+          <Compass size={12} color="#008F8A" />
           <span>
             {cursorCoords.lat.toFixed(5)}° N, {cursorCoords.lng.toFixed(5)}° E
           </span>

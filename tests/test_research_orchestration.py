@@ -98,8 +98,8 @@ class FakeLLM:
     def __init__(self, extraction=None, script=()):
         self.extraction, self.script = extraction, list(script)
 
-    def with_structured_output(self, _schema, method=None):
-        return FakeStructured(self.extraction)
+    def with_structured_output(self, _schema, method=None, include_raw=False):
+        return FakeStructured({"parsed": self.extraction, "raw": None} if include_raw else self.extraction)
 
     def bind_tools(self, _tools):
         return self

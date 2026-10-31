@@ -29,10 +29,26 @@ class ModelConfigurationError(ValueError):
     """Configuration failure whose message contains no credentials."""
 
 
+HOSTED_PROFILES_PATH = PROJECT_ROOT / "config" / "hosted_models.yaml"
+
+
 @lru_cache(maxsize=1)
 def load_config() -> Dict[str, Any]:
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+@lru_cache(maxsize=1)
+def _hosted_profiles() -> Dict[str, Any]:
+    """Hosted profiles for the app (config/hosted_models.yaml); the experiment config names local models only."""
+    if not HOSTED_PROFILES_PATH.exists():
+        return {}
+    with open(HOSTED_PROFILES_PATH, "r", encoding="utf-8") as f:
+        return (yaml.safe_load(f) or {}).get("profiles") or {}
+
+
+def all_profiles() -> Dict[str, Any]:
+    return {**_hosted_profiles(), **load_config()["llm"]["profiles"]}
 
 
 def active_profile_name() -> str:
@@ -40,7 +56,7 @@ def active_profile_name() -> str:
 
 
 def _configured_profile(name: str) -> Dict[str, Any]:
-    profiles = load_config()["llm"]["profiles"]
+    profiles = all_profiles()
     if name not in profiles:
         raise ModelConfigurationError(
             "Unknown LLM_PROFILE. Choose ollama, vllm, groq, openai, compatible, auto or none."
@@ -219,8 +235,9 @@ def get_llm(**overrides: Any):
         base_url=p["base_url"],
         api_key=p["api_key"],
         max_tokens=p.get("max_tokens", 2048),
-        timeout=p.get("timeout_s", 120),
-        max_retries=2,
+        # LLM_TIMEOUT_S / LLM_MAX_RETRIES: the live demo lowers these so a stalled server fails over in seconds
+        timeout=float(os.getenv("LLM_TIMEOUT_S", p.get("timeout_s", 120))),
+        max_retries=int(os.getenv("LLM_MAX_RETRIES", 2)),
         stream_usage=False,
     )
     if p.get("supports_temperature", True):

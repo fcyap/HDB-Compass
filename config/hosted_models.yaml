@@ -1,0 +1,28 @@
+# Hosted LLM profiles for the app (Member 1). Kept out of experiment_config.yaml, which names local models only so
+# the architecture study is reproducible on open weights (proposal §6.2, tests/test_demo_scripts.py).
+# Select with LLM_PROFILE=groq|openai|compatible, or LLM_PROFILE=auto (llm.auto_profiles in experiment_config.yaml).
+# Keys come from .env (see .env.example); a profile here never overrides one of the same name in experiment_config.
+profiles:
+    groq:
+      base_url: "https://api.groq.com/openai/v1"
+      model: "openai/gpt-oss-20b"
+      model_env: "GROQ_MODEL"
+      api_key_env: "GROQ_API_KEY"
+      requires_api_key: true
+      timeout_s: 60
+      max_tokens: 2048
+    openai:
+      base_url: "https://api.openai.com/v1"
+      model: "gpt-4.1-mini"
+      model_env: "OPENAI_MODEL"
+      api_key_env: "OPENAI_API_KEY"
+      requires_api_key: true
+      timeout_s: 60
+      max_tokens: 2048
+    compatible:
+      base_url: null
+      model: null
+      api_key_env: "LLM_API_KEY"
+      requires_api_key: true
+      timeout_s: 60
+      max_tokens: 2048

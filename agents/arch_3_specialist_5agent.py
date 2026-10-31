@@ -70,9 +70,10 @@ def build_graph():
 graph = build_graph()
 
 
-def run(query: str, map_state: Optional[Dict[str, Any]] = None) -> HDBCompassState:
-    """Uniform entry point for the eval runner (docs/INTERFACES.md §6)."""
-    return graph.invoke(sv.initial_state(query, VARIANT, map_state))
+def run(query: str, map_state: Optional[Dict[str, Any]] = None,
+        previous: Optional[Dict[str, Any]] = None) -> HDBCompassState:
+    """Uniform entry point for the eval runner (docs/INTERFACES.md §6). previous: the last turn's final state."""
+    return graph.invoke(sv.initial_state(query, VARIANT, map_state, previous))
 
 
 # ---------------------------------------------------------------------------

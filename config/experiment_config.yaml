@@ -4,8 +4,7 @@
 global:
   seed: 42
   temperature: 0.0
-  embedding_model: "text-embedding-3-small"
-  llm_model: "gpt-4o-mini"
+  # No paid model: the chat model is set per profile under llm.profiles, the policy embeddings under policy_rag.
 
 # Member 2: Geospatial & Commute Engine Settings
 spatial:
@@ -30,7 +29,7 @@ spatial:
 # LLM_PROFILE env var; LLM_BASE_URL / LLM_MODEL env vars override a profile.
 # ---------------------------------------------------------------------------
 llm:
-  active: ollama        # ollama | vllm | groq | openai | compatible | auto | none
+  active: ollama        # ollama | vllm | none here; groq | openai | compatible (hosted_models.yaml) | auto
   auto_profiles: [ollama, groq, openai]
   profiles:
     ollama:                       # local dev on the laptop (M3 Pro, 18 GB)
@@ -54,30 +53,8 @@ llm:
       extra_body:
         chat_template_kwargs:
           enable_thinking: false    # Qwen3 template flag: no <think> block at all
-
-    groq:
-      base_url: "https://api.groq.com/openai/v1"
-      model: "openai/gpt-oss-20b"
-      model_env: "GROQ_MODEL"
-      api_key_env: "GROQ_API_KEY"
-      requires_api_key: true
-      timeout_s: 60
-      max_tokens: 2048
-    openai:
-      base_url: "https://api.openai.com/v1"
-      model: "gpt-4.1-mini"
-      model_env: "OPENAI_MODEL"
-      api_key_env: "OPENAI_API_KEY"
-      requires_api_key: true
-      timeout_s: 60
-      max_tokens: 2048
-    compatible:
-      base_url: null
-      model: null
-      api_key_env: "LLM_API_KEY"
-      requires_api_key: true
-      timeout_s: 60
-      max_tokens: 2048
+    # Hosted profiles (groq, openai, compatible) live in config/hosted_models.yaml: the experiments name local
+    # models only (proposal §6.2). The app may select them with LLM_PROFILE; agents/llm.py reads both files.
 
 tools:
   # Per tool: "mock" (mcp_server/mock_tools.py) or "real". Members 1 and 3 flip
@@ -95,7 +72,7 @@ tools:
     calculate_cpf_housing_grants: real
     calculate_maximum_affordability: real
     calculate_bsd_and_upfront_outlay: real
-    retrieve_hdb_policy_knowledge: mock
+    retrieve_hdb_policy_knowledge: real
     # Research tools (Member 1; location tools shared with Member 2). No mocks exist.
     get_block_transaction_history: real
     get_market_snapshot: real
@@ -108,6 +85,24 @@ tools:
     resolve_location: real
     get_nearby_amenities: real
 
+# Add-on tool packs (agents/addons: research tools, school lookup). Their tools are listed above as real.
+# offer_in: app = the app and Variant C (A and B keep the original tool lists, so their Tool F1 stays comparable);
+#           all = every variant; off = none, exactly as before the packs. HDB_ADDONS overrides it for one run.
+addons:
+  offer_in: app
+
+# Member 3: Advanced RAG & Regulatory Knowledge Base Settings
+policy_rag:
+  chunk_size_tokens: 512
+  chunk_overlap_tokens: 64
+  sparse_retriever: "BM25Okapi"
+  dense_retriever: "all-MiniLM-L6-v2"
+  cross_encoder_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  rrf_k: 60
+  candidate_top_k: 20
+  final_passages_top_k: 5
+  active_pipeline: "RAG-3"  # RAG-1 (dense) | RAG-2 (hybrid RRF) | RAG-3 (hybrid + rerank)
+
 architecture:
   auditor_max_retries: 2            # proposal §5 risk 2
   subagent_max_tool_iterations: 4   # ReAct loop cap per specialist
@@ -116,3 +111,12 @@ architecture:
     amenity_radius_meters: 150
     min_remaining_lease_years: 5
   variants: ["A", "B", "C"]
+  # While a tool is still mocked (tools.use_mock), say "cannot check this yet" instead of answering from its
+  # sample data (policy rules, BTO launch prices). See supervisor.UNBUILT_NOTES.
+  disclose_unbuilt_tools: true
+  # Variant C / the app: code writes the answer's facts section; the model writes the opening and trade-offs.
+  # HDB_CODE_WRITTEN_FACTS=0 or 1 overrides it for one run (the live ablation); the run settings record which.
+  code_written_facts: true
+  # Optional first pass that lists the stated facts in plain words before the structured constraint reading.
+  # Off by default: it adds a model call; switch on only if the varied-phrasing test shows it helps.
+  extraction_reasoning: false

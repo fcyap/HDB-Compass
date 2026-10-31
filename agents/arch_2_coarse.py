@@ -24,6 +24,7 @@ from langgraph.types import Send
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from agents import addons
 from agents import supervisor as sv
 from agents.schemas import TOOL_OWNER
 from agents.state import HDBCompassState
@@ -57,7 +58,8 @@ def dispatch_coarse(state: HDBCompassState) -> List[Send]:
 
 def data_agent_node(state: HDBCompassState) -> Dict[str, Any]:
     c = state.get("user_constraints", {})
-    outputs, log, errors, final = sv.run_react("data", DATA_TOOLS, DATA_SYSTEM, sv.last_user_query(state), c,
+    tools = addons.visible_tools(DATA_TOOLS, VARIANT)   # add-on tools only under addons.offer_in: all
+    outputs, log, errors, final = sv.run_react("data", tools, DATA_SYSTEM, sv.last_user_query(state), c,
                                                max_iter=sv.load_config()["architecture"]["subagent_max_tool_iterations"] * 2,
                                                plan_agents=["market_sql", "spatial", "financial"])
     update = sv.slot_outputs(outputs, c.get("towns") or [])
@@ -100,8 +102,10 @@ def build_graph():
 graph = build_graph()
 
 
-def run(query: str, map_state: Optional[Dict[str, Any]] = None) -> HDBCompassState:
-    return graph.invoke(sv.initial_state(query, VARIANT, map_state))
+def run(query: str, map_state: Optional[Dict[str, Any]] = None,
+        previous: Optional[Dict[str, Any]] = None) -> HDBCompassState:
+    """Uniform entry point for the eval runner (docs/INTERFACES.md §6). previous: the last turn's final state."""
+    return graph.invoke(sv.initial_state(query, VARIANT, map_state, previous))
 
 
 if __name__ == "__main__":

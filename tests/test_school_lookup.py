@@ -139,6 +139,7 @@ def test_websocket_transports_schools_without_resale_cards(school_index, monkeyp
     class Socket:
         sent = []
         received = False
+        query_params = {"session": "test-school-lookup"}   # one conversation per page load (backend SESSIONS)
 
         async def accept(self):
             pass
@@ -160,5 +161,6 @@ def test_websocket_transports_schools_without_resale_cards(school_index, monkeyp
     assert final["school_lookup"]["status"] == expected_status
     assert not any(m.get("qualifying_blocks") for m in updates)
     assert not any("zero hallucinations" in json.dumps(m) for m in updates)
-    assert "not installed" in main.audit_description({"passed": True})
+    # the trace never claims a check that did not run (backend.main.honest_step)
+    assert "Not installed yet" in main.honest_step("runtime_auditor", {"auditor_verdict": {"passed": True}}, "")
     assert socket.sent[-1]["type"] == "AGENT_FINISHED"

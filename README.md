@@ -433,6 +433,33 @@ To rebuild spatial data, configure OneMap credentials and run
 `python data/build_spatial_index.py`. Rebuild the market database afterwards to
 pick up coordinate changes.
 
+### Demo day (one command)
+
+`cluster/demo_start.sh` runs the web app on the presenting laptop with the model on
+the SMU cluster GPU (about 25 s per answer). A laptop CPU or the cluster CPU is far
+too slow for Variant C (minutes per answer).
+
+```bash
+# once, on the VPN, in your own terminal (asks for your password)
+ssh -M -S ~/.ssh/hdb-cluster.sock -o ControlPersist=8h -o ServerAliveInterval=30 -fN "$CLUSTER_LOGIN"
+bash cluster/demo_start.sh             # GPU job, tunnel, model check, backend, frontend
+bash cluster/demo_start.sh --offline   # fallback: no model, template answers, starts in seconds
+```
+
+Ctrl-C stops everything and cancels the GPU job (`--keep-job` leaves it running).
+If the terminal prints a model warning during the demo, press Ctrl-C and restart
+with `--offline`. Logs are in `data/local/demo_logs/`.
+
+Dry-run checklist (in the demo room, on its network, a day before):
+
+- [ ] VPN connects and the shared session opens; `squeue --me` works through it
+- [ ] `bash cluster/demo_start.sh` reaches "HDB-Compass is running" (job queue + model load ≈ 5–10 min)
+- [ ] One flat-search question and one follow-up answer correctly within ~30 s each
+- [ ] Ctrl-C, then `--offline` starts in under a minute and answers
+- [ ] Node 20.19+ or 22 installed (`node -v`); `frontend/node_modules` present
+- [ ] Laptop on power, sleep disabled; on the day, start 30–45 min before presenting
+- [ ] Demo questions chosen from flat search, grants and budget (policy search is still a stand-in)
+
 ### Troubleshooting
 
 | Problem | Action |
@@ -620,6 +647,44 @@ eligibility and funding facts described in the financial contracts.
 
 ---
 
+## Member 3 Ownership & Deliverables: Advanced RAG & Regulatory Knowledge Base (Category C)
+
+As specified in the **HDB-Compass Project Proposal** (Pages 5, 9, 11, 13, and 14):
+
+- **Workstream:** Member 3 — Advanced RAG & Regulatory Knowledge Base (Category C).
+- **Regulatory Corpus Curation:** Curated official policies covering the October 2024 Standard/Plus/Prime flat classification framework, Singles & Joint Singles Schemes, 15-month/30-month private property wait-out rules (including senior 55+ right-sizing exemptions), August 2024 Enhanced CPF Housing Grant (EHG) updates (up to $120k for families), Family/Proximity Housing Grants, financing ceilings (MSR 30%, LTV 75%, TDSR 55%, tiered BSD), and Ethnic Integration Policy (EIP) quotas & Buyback Scheme.
+- **Hierarchical Markdown Chunker:** Preserves complex Markdown tables intact, prepends breadcrumbs (`[Document > Section > Subsection]`), and embeds metadata tags (`policy_category`, `flat_classification`, `effective_date`, `source_url`).
+- **Hybrid Retrieval & RRF:** Combines `BM25Okapi` sparse keyword search (for exact acronyms like MOP, EIP, HFE, EHG) with `SentenceTransformer` dense vector search (`all-MiniLM-L6-v2`) via Reciprocal Rank Fusion (RRF, $k=60$) to retrieve top-20 candidates.
+- **Cross-Encoder Reranker:** Reranks top-20 candidate pairs using `cross-encoder/ms-marco-MiniLM-L-6-v2` with blended scoring to select the top-5 most relevant passages.
+- **FastMCP Tool & Agent 5:** Implements the official tool `retrieve_hdb_policy_knowledge(query, policy_domain)` on the FastMCP server, hooked into the 5-agent LangGraph workflow and standalone `PolicyRagAgent`.
+- **Experiment 2 Ablation Study:** Automated evaluation script (`evaluation/run_rag_ablation.py`) comparing RAG-1 (naive dense), RAG-2 (hybrid RRF), and RAG-3 (hybrid + cross-encoder) across the 15 Category C golden queries.
+- **Whiteboard Presentation Guide:** [`docs/member_3_whiteboard_guide.md`](docs/member_3_whiteboard_guide.md).
+
+| File | What it is |
+|---|---|
+| `data/policy_documents/` | Curated official Markdown regulatory documents (classification, schemes, grants, financing, EIP) |
+| `data/ingest_hdb_policy_rag.py` | Hierarchical chunker, BM25 indexing, dense vector embedding generation & store serialization |
+| `data/policy_store.pkl` | Precomputed dual index (chunks, BM25 model, dense embeddings matrix) |
+| `mcp_server/policy_rag_tools.py` | Official FastMCP tool `retrieve_hdb_policy_knowledge` (hybrid RRF + cross-encoder reranker) |
+| `agents/policy_agent.py` | Agent 5 (Regulatory Policy RAG Specialist) with strict citation and grounding prompts |
+| `evaluation/build_category_c.py` | Curates the 15 stratified Category C golden benchmark queries |
+| `evaluation/category_c_queries.json` | 15 Category C golden queries with ground truth facts and clauses |
+| `evaluation/run_rag_ablation.py` | Experiment 2 automated ablation runner (Context Recall, Context Precision, MRR, Latency) |
+| `evaluation/rag_ablation_results.json` | Empirical ablation metrics across RAG-1, RAG-2, and RAG-3 |
+| `tests/test_policy_rag.py` | Automated test suite for chunking, BM25, dense retrieval, RRF, cross-encoder & schemas |
+| `docs/member_3_whiteboard_guide.md` | Whiteboard diagram, RRF/cross-encoder formulas, and Lesson 12 presentation notes |
+
+### Quick Verification for Member 3
+```bash
+# 1. Run Member 3 RAG test suite
+.venv/bin/pytest tests/test_policy_rag.py -v
+
+# 2. Run Experiment 2 RAG Ablation Study
+.venv/bin/python evaluation/run_rag_ablation.py
+```
+
+---
+
 ## Member 4 — Multi-Agent Orchestration & Architecture Study (Category E)
 
 Owns the LangGraph state machine, Agent 1 (Supervisor & Constraint Negotiator, incl. zero-result
@@ -638,6 +703,7 @@ workstream: [`docs/INTERFACES.md`](docs/INTERFACES.md). Graph drawings: [`docs/a
 | `agents/arch_3_specialist_5agent.py` | Variant C: proposed 5-agent graph + auditor self-correction loop |
 | `mcp_server/mock_tools.py` | deterministic fixtures for Members 1 & 3's tools until the real ones land |
 | `evaluation/category_e_queries.json` | 15 Category E golden questions grounded on the real database, with ground truth (`python -m evaluation.ground_category_e`) |
+| Follow-up flow | when facts are missing the Supervisor asks for them; continue with `run(reply, previous=state)` (docs/INTERFACES.md §7) |
 | `evaluation/architecture_metrics.py` | Tool Selection F1, Parameter Exact-Match, CSR, routing accuracy, aggregation |
 | `cluster/` | vLLM Slurm job, SSH tunnel and smoke test for the SCIS GPU cluster |
 
