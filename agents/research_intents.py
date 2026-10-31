@@ -1023,7 +1023,7 @@ def stats_lines(r: Dict[str, Any], c: Dict[str, Any]) -> List[str]:
     title = f"**Resale statistics{' for ' + flat + ' flats' if flat else ''} in {scope}, {p.get('start_month')} to {p.get('end_month')}**"
     lines.append(title)
     if head:
-        lines.append(head)
+        lines.append(head)   # the direct answer, straight under the title (the facts carry it, so it is checked)
     groups = r["groups"]
     show_psm = any(g.get("median_psm") for g in groups)
     show_1y = any(g.get("change_1y_pct") is not None for g in groups)

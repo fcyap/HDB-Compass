@@ -3110,9 +3110,9 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
             sentences.append("Your estimate could not be worked out in full; what is missing is said below.")
         sql = state.get("sql_market_results") or {}
         stats = sql.get("query_resale_statistics")
-        if isinstance(stats, dict) and not sentences:
-            sentences.append("Here are the resale figures for your question, worked out from past sales."
-                             if stats.get("status") == "ok" else "That breakdown could not be worked out; the reason is below.")
+        if isinstance(stats, dict) and not sentences and stats.get("status") != "ok":
+            # a working breakdown needs no lead-in: its title and headline (the direct answer) open the facts
+            sentences.append("That breakdown could not be worked out; the reason is below.")
         # a lead promises a summary only when the tool found one; otherwise it points to the reason the facts give
         if not sentences and "compute_town_price_timeseries" in sql:
             trend = sql["compute_town_price_timeseries"] or {}
