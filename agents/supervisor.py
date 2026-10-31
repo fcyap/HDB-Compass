@@ -326,10 +326,20 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
               "SC_SC": {True: "SC_SC_FirstTimer", False: "SC_SC_SecondTimer"}.get(first)}.get(pair or "")
 
     work = [w.strip() for w in re.findall(r"work(?:s)?\s+(?:at|in)\s+([A-Za-z0-9 \-']+?)(?=[,.;]|\s+and\b|$)", q, re.I)]
+    if len(work) < 2 and re.search(r"\bcommute\b", q, re.I):
+        dest_matches = [w.strip() for w in re.findall(r"(?:commute\b.*?to|\bto)\s+([A-Z][A-Za-z0-9 \-']+?)(?=[,.;?!]|\s+(?:and\s+(?:under|within|less|max|to)|with|where)|\s+and\b|$)", q, re.I)]
+        for d in dest_matches:
+            if d and d not in work:
+                work.append(d)
+        if len(work) >= 2:
+            # If a town was only matched because it was a commute destination (e.g. "to Jurong East"), drop from search towns
+            work_uppers = {w.upper() for w in work}
+            towns = [t for t in towns if t not in work_uppers or f"in {t.lower()}" in q.lower()]
+
     max_commute = None
-    for m in re.finditer(r"(?:under|within|less than|max)\s*(\d{2})\s*min(?:s|utes)?\b(?!\s*(?:walk|walking|on foot|by foot))", q, re.I):
-        max_commute = int(m.group(1))                 # a commute, not "within 10 min walk to MRT"
-        break
+    commute_mins = [int(m.group(1)) for m in re.finditer(r"(?:under|within|less than|max)\s*(\d{2})\s*min(?:s|utes)?\b(?!\s*(?:walk|walking|on foot|by foot))", q, re.I)]
+    if commute_mins:
+        max_commute = max(commute_mins)
 
     policy = None
     # "plus" only in the Plus-classification sense: "plus $30,000 in cash" is not a policy question.
@@ -377,7 +387,9 @@ EXTRACT_SYSTEM = (
     "Never invent coordinates or substitute a town centre for a project."
     " School-distance and Primary 1 boundary searches belong to the spatial agent; "
     "they are not HDB housing-policy questions. Do not invent a school name."
-    " addresses: copy every HDB block address, postal code or named place (MRT station, hawker centre, school) "
+    " work_destinations: list of workplace or commute destinations (e.g. ['Raffles Place', 'one-north', 'Jurong East']). "
+    "max_commute_minutes: maximum travel/commute time in minutes (e.g. 30, 35). "
+    "addresses: copy every HDB block address, postal code or named place (MRT station, hawker centre, school) "
     "exactly as written. asking_price_sgd: only a specific flat's asking/offer price to check. "
     "wants_block_history: past sales of a named block. wants_price_assessment: is a price fair/reasonable. "
     "wants_option_comparison: comparing two or more named blocks. wants_nearby_amenities: what is near a place. "
