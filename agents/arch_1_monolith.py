@@ -30,6 +30,7 @@ from agents import addons
 from agents import supervisor as sv
 from agents.schemas import TOOL_OWNER
 from agents.state import HDBCompassState
+from agents.tracing import run_config
 
 VARIANT = "A"
 
@@ -82,9 +83,11 @@ graph = build_graph()
 
 
 def run(query: str, map_state: Optional[Dict[str, Any]] = None,
-        previous: Optional[Dict[str, Any]] = None) -> HDBCompassState:
-    """Uniform entry point for the eval runner (docs/INTERFACES.md §6). previous: the last turn's final state."""
-    return graph.invoke(sv.initial_state(query, VARIANT, map_state, previous))
+        previous: Optional[Dict[str, Any]] = None, question_id: Optional[str] = None) -> HDBCompassState:
+    """Uniform entry point for the eval runner (docs/INTERFACES.md §6). previous: the last turn's final state.
+    question_id names the benchmark question in the LangSmith trace (ignored when tracing is off)."""
+    return graph.invoke(sv.initial_state(query, VARIANT, map_state, previous),
+                        config=run_config(VARIANT, question_id=question_id))
 
 
 if __name__ == "__main__":
