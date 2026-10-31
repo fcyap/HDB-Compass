@@ -144,3 +144,33 @@ def test_format_check_has_fix(monkeypatch):
     fake_http(monkeypatch, {T.APAC_ENDPOINT: (200, b"[]")})
     out = T.format_check(T.preflight())
     assert "exact fix" in out and "FAILED" in out and "APAC" in out
+
+
+def test_run_config_contents(monkeypatch):
+    monkeypatch.setattr(T, "code_commit", lambda: "abc123")
+    cfg = T.run_config("C", session_id="s1", question_id="q7", tags=("x",), metadata={"extra": 1})
+    assert cfg["run_name"] == "hdb-compass-C:q7"
+    assert cfg["tags"] == ["variant:C", "eval", "x"]
+    m = cfg["metadata"]
+    assert m["variant"] == "C" and m["session_id"] == "s1" and m["thread_id"] == "s1"
+    assert m["question_id"] == "q7" and m["commit"] == "abc123" and m["extra"] == 1
+    app = T.run_config("A")
+    assert app["run_name"] == "hdb-compass-A" and "app" in app["tags"] and "thread_id" not in app["metadata"]
+
+
+def test_tool_span_only_when_enabled(monkeypatch):
+    seen = []
+
+    class Fake:
+        def __init__(self, **kw):
+            seen.append(kw)
+
+        def __call__(self, f):
+            return f
+    monkeypatch.setattr(T, "traceable", Fake)
+    monkeypatch.setattr(T, "tracing_enabled", lambda: False)
+    assert T.traced_tool_call("t", lambda x: x + 1, {"x": 1}) == 2
+    assert seen == []
+    monkeypatch.setattr(T, "tracing_enabled", lambda: True)
+    assert T.traced_tool_call("t", lambda x: x + 1, {"x": 1}) == 2
+    assert seen and seen[0]["run_type"] == "tool" and seen[0]["name"] == "t"
