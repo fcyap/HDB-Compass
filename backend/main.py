@@ -27,6 +27,7 @@ from mcp_server.spatial_onemap_tools import (
 )
 from agents.spatial_agent import geo_agent, GeoAgentState
 from agents.arch_3_specialist_5agent import graph as specialist_5agent_graph, sv
+from agents.llm import model_status
 
 app = FastAPI(
     title="HDB-Compass Geospatial & Multi-Agent API",
@@ -85,6 +86,17 @@ def health_check():
         "total_schools": len(idx["payload"]["schools"]),
         "total_amenities": len(idx["payload"]["amenities"])
     }
+
+
+@app.get("/api/model/status")
+def get_model_status(check: bool = False):
+    return model_status(check=check)
+
+
+def audit_description(verdict):
+    if sv._AUDITOR is None:
+        return "Runtime auditor not installed; this response has not been independently audited."
+    return "Runtime audit passed its configured checks." if verdict.get("passed") else "Audit refinement required."
 
 
 import re
@@ -272,24 +284,41 @@ async def websocket_endpoint(websocket: WebSocket):
                 # 1. Full Multi-Agent Mode (Variant C Specialist Graph)
                 # -------------------------------------------------------------
                 if query_text:
+                    model_info = await asyncio.to_thread(model_status)
+                    await websocket.send_json({"type": "MODEL_STATUS", **model_info})
+                    if model_info["status"] == "error":
+                        await websocket.send_json({"type": "ERROR", "error": model_info["message"]})
+                        continue
                     map_state = {}
                     if pinned_lat is not None and pinned_lng is not None:
                         map_state["center"] = [float(pinned_lat), float(pinned_lng)]
                         map_state["radius_meters"] = radius
 
-                    st = sv.initial_state(query=query_text, variant="C", map_state=map_state)
+                    st = sv.initial_state(query=query_text, variant="C", map_state=map_state, fast_path=True)
 
                     current_buffer = None
                     current_markers = None
                     current_viewport = None
                     current_summary = None
                     current_qualifying: List[str] = []
+                    current_school_lookup = None
                     active_agents: List[str] = []
 
                     async for chunk in specialist_5agent_graph.astream(st):
                         for node_name, node_output in chunk.items():
                             if not isinstance(node_output, dict):
                                 continue
+
+                            node_errors = node_output.get("errors") or []
+                            if any(
+                                any(marker in str(error) for marker in ("LLM", "rule-based fallback used", "deterministic plan used"))
+                                for error in node_errors
+                            ):
+                                await websocket.send_json({
+                                    "type": "MODEL_STATUS", **model_info,
+                                    "status": "fallback",
+                                    "message": "A model step failed or produced no valid tool call; rule-based processing was used for part of this answer.",
+                                })
 
                             step_title, step_desc = NODE_INFO.get(
                                 node_name, (node_name, f"Completed {node_name}")
@@ -306,10 +335,17 @@ async def websocket_endpoint(websocket: WebSocket):
                                 active_agents = node_output.get("active_subagents", [])
                                 step_desc = f"Supervisor dispatched parallel tasks to: {', '.join(active_agents)}"
 
+                            elif node_name == "spatial_agent" and "nearby_school_results" in node_output:
+                                current_school_lookup = node_output["nearby_school_results"]
+                                step_desc = f"Address-centred school lookup: {current_school_lookup.get('status', 'unavailable')}."
+
                             elif node_name == "intersect_candidates":
                                 has_spatial_or_market = any(a in active_agents for a in ("spatial", "market_sql"))
                                 inter = node_output.get("candidate_blocks_intersection", [])
-                                if not has_spatial_or_market:
+                                if current_school_lookup is not None:
+                                    step_desc = "Skipped block intersection; this request asks for nearby schools."
+                                    current_qualifying = []
+                                elif not has_spatial_or_market:
                                     step_desc = "Skipped (no spatial/market candidates requested; policy/financial query)."
                                     current_qualifying = None
                                 elif len(inter) == 0:
@@ -350,8 +386,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                             elif node_name == "runtime_auditor":
                                 verdict = node_output.get("auditor_verdict", {})
-                                passed = verdict.get("passed", True)
-                                step_desc = f"Runtime audit completed: {'Verified (zero hallucinations)' if passed else 'Audit refinement required.'}"
+                                step_desc = audit_description(verdict)
 
                             elif node_name == "finalize":
                                 msgs = node_output.get("messages", [])
@@ -372,6 +407,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 }],
                                 "summary": current_summary,
                                 "qualifying_blocks": current_qualifying if current_qualifying else None,
+                                "school_lookup": current_school_lookup,
                             })
                             await asyncio.sleep(0.04)
 

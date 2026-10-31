@@ -6,8 +6,6 @@ import {
   School,
   Building,
   CheckCircle2,
-  Clock,
-  Navigation,
   Send,
   Zap,
   RotateCcw,
@@ -34,6 +32,7 @@ export interface StructuredAgentData {
   market_summary?: any;
   financial_summary?: any;
   policy_notes?: string[];
+  school_lookup?: { status: string; schools: { name: string; distance_meters: number }[] };
 }
 
 export interface ChatMessage {
@@ -46,10 +45,19 @@ export interface ChatMessage {
   stepLogs?: LogMessage[];
 }
 
+export interface ModelInfo {
+  profile?: string;
+  model?: string;
+  mode?: string;
+  status?: string;
+  message?: string;
+}
+
 interface AgentChatProps {
   messages: ChatMessage[];
   agentStatus: string;
   wsConnected: boolean;
+  modelInfo?: ModelInfo;
   onSendQuery: (query: string) => void;
   onClear: () => void;
   onSelectBlock?: (blockSummary: string) => void;
@@ -59,6 +67,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
   messages,
   agentStatus,
   wsConnected,
+  modelInfo,
   onSendQuery,
   onClear,
   onSelectBlock,
@@ -78,7 +87,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputValue.trim() || !wsConnected) return;
+    if (!inputValue.trim() || !wsConnected || agentStatus === 'SEARCHING') return;
     onSendQuery(inputValue.trim());
     setInputValue('');
   };
@@ -119,6 +128,15 @@ export const AgentChat: React.FC<AgentChatProps> = ({
       </header>
 
       {/* Conversational Chat Thread */}
+      <div role="status" style={{ padding: '8px 20px', fontSize: 12, color: '#94a3b8', borderBottom: '1px solid rgba(148,163,184,0.15)' }}>
+        {!modelInfo ? 'Reading model configuration…' : modelInfo.status === 'fallback'
+          ? `Model fallback: ${modelInfo.message}`
+          : modelInfo.mode === 'deterministic'
+            ? 'Rule-based mode — no language model. Use explicit search criteria.'
+            : modelInfo.status === 'error' || modelInfo.status === 'unavailable'
+              ? `Model unavailable: ${modelInfo.message}`
+              : `Model configured: ${modelInfo.profile} / ${modelInfo.model}`}
+      </div>
       <div className="chat-container">
         {/* If only 1 message (welcome), show elegant prompt suggestion cards inside welcome */}
         {messages.length <= 1 && (
@@ -128,32 +146,32 @@ export const AgentChat: React.FC<AgentChatProps> = ({
               <span>Explore Singapore Public Housing</span>
             </div>
             <p className="welcome-desc">
-              Ask about MOE Primary 1 registration priority distances, walking commute to MRT stations, or amenity filters.
+              Find nearby primary schools, explore approximate straight-line distances, or search historical resale data.
             </p>
             <div className="welcome-prompts-grid">
               <button
                 className="welcome-prompt-card"
-                onClick={() => handleQuickPrompt('Ai Tong School 1km')}
+                onClick={() => handleQuickPrompt('Show HDB blocks within 1km of Ai Tong School.')}
               >
                 <div className="prompt-card-icon school">
                   <School size={14} />
                 </div>
                 <div className="prompt-card-text">
                   <span className="prompt-title">Ai Tong School</span>
-                  <span className="prompt-subtitle">1km MOE Priority Boundary</span>
+                  <span className="prompt-subtitle">Approximate 1km school radius</span>
                 </div>
               </button>
 
               <button
                 className="welcome-prompt-card"
-                onClick={() => handleQuickPrompt('Catholic High School 1km')}
+                onClick={() => handleQuickPrompt('Show HDB blocks within 1km of Catholic High School.')}
               >
                 <div className="prompt-card-icon school">
                   <School size={14} />
                 </div>
                 <div className="prompt-card-text">
                   <span className="prompt-title">Catholic High School</span>
-                  <span className="prompt-subtitle">Bishan Primary 1 Buffer</span>
+                  <span className="prompt-subtitle">Approximate 1km school radius</span>
                 </div>
               </button>
 
@@ -251,17 +269,16 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                       <div className="section-title-bar">
                         <span className="section-title">
                           <CheckCircle2 size={13} color="#10b981" />
-                          Matching HDB Resale Blocks ({msg.structuredData.total_blocks_found || msg.structuredData.qualifying_blocks.length}):
+                          Matching HDB Blocks ({msg.structuredData.total_blocks_found || msg.structuredData.qualifying_blocks.length}):
                         </span>
                         <span className="section-subtext">Click any pin on map</span>
                       </div>
 
                       <div className="candidate-cards-grid">
                         {msg.structuredData.qualifying_blocks.slice(0, 6).map((blockStr, bIdx) => {
-                          const distMatch = blockStr.match(/\((\d+)m\)/);
-                          const dist = distMatch ? `${distMatch[1]}m` : '< 1000m';
-                          const cleanName = blockStr.replace(/\s*\(\d+m\)/, '');
-                          const walkMins = distMatch ? Math.max(1, Math.round(parseInt(distMatch[1]) / 80)) : 10;
+                          const distMatch = blockStr.match(/\((\d+(?:\.\d+)?)m\)/);
+                          const dist = distMatch ? `${distMatch[1]}m` : null;
+                          const cleanName = blockStr.replace(/\s*\(\d+(?:\.\d+)?m\)/, '');
 
                           return (
                             <div
@@ -271,12 +288,10 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                             >
                               <div className="block-pill-header">
                                 <span className="block-code">{cleanName}</span>
-                                <span className="block-distance-badge">{dist}</span>
+                                {dist && <span className="block-distance-badge">{dist}</span>}
                               </div>
                               <div className="block-meta">
-                                <Clock size={10} color="#94a3b8" />
-                                <span>~{walkMins} min walk</span>
-                                <span className="block-tag">Inside 1km</span>
+                                <span>{dist ? 'Approximate straight-line distance' : 'Distance not calculated'}</span>
                               </div>
                             </div>
                           );
@@ -346,12 +361,12 @@ export const AgentChat: React.FC<AgentChatProps> = ({
             placeholder="Ask about schools, MRT distance, or click anywhere on the map..."
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
-            disabled={!wsConnected}
+            disabled={!wsConnected || agentStatus === 'SEARCHING'}
           />
           <button
             type="submit"
             className="send-btn"
-            disabled={!wsConnected || !inputValue.trim()}
+            disabled={!wsConnected || !inputValue.trim() || agentStatus === 'SEARCHING'}
           >
             <Send size={14} />
             <span>Send</span>

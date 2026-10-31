@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from typing import Annotated, Any, Dict, List
+from typing import Annotated, Any, Dict, List, Optional
 
 from fastmcp import FastMCP
 from pydantic import Field
@@ -47,6 +47,7 @@ WITH matching_transactions AS (
     WHERE month BETWEEN ?::DATE AND ?::DATE
       AND (len(?::VARCHAR[]) = 0 OR town IN (SELECT unnest(?::VARCHAR[])))
       AND (len(?::VARCHAR[]) = 0 OR flat_type IN (SELECT unnest(?::VARCHAR[])))
+      AND (?::VARCHAR[] IS NULL OR block_key IN (SELECT unnest(?::VARCHAR[])))
 ), aggregates AS (
     SELECT block_key, block, street, town, flat_type,
            median(resale_price) AS median_resale_price,
@@ -71,6 +72,7 @@ def query_resale_blocks_by_criteria(
     flat_types: List[str],
     max_price: Annotated[float, Field(ge=0, allow_inf_nan=False)],
     min_lease_years: Annotated[int, Field(ge=0, le=99)],
+    block_keys: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Find block/flat-type resale medians over the snapshot's last 12 calendar months.
 
@@ -78,13 +80,16 @@ def query_resale_blocks_by_criteria(
     Empty town/type lists mean all. Use exact HDB town names and flat types such as
     BISHAN and '4 ROOM'. Budget and lease limits apply after aggregation, not to
     individual sales. Lease is a month-resolution estimate at the window end.
-    Returns at most 100 groups, ordered by median price, with truncation metadata.
+    Optional block_keys ('123 BISHAN ST 13') restricts results to those blocks.
+    Returns at most 100 groups (1000 with block_keys), ordered by median price, with truncation metadata.
     Results are historical transaction summaries, not available-flat listings.
     Coordinates come from the existing index and may be unavailable. No API calls.
     """
     args = QueryResaleBlocksInput(
-        towns=towns, flat_types=flat_types, max_price=max_price, min_lease_years=min_lease_years
+        towns=towns, flat_types=flat_types, max_price=max_price, min_lease_years=min_lease_years,
+        block_keys=block_keys,
     )
+    limit = RESULT_LIMIT if args.block_keys is None else max(RESULT_LIMIT, 10 * len(args.block_keys))
     with open_market_database() as con:
         snapshot, dataset, url, first, latest, end = con.execute(
             "SELECT snapshot_id, dataset_id, source_url, first_month, latest_month, analysis_end_month FROM source_snapshot"
@@ -103,9 +108,11 @@ def query_resale_blocks_by_criteria(
                 args.towns,
                 args.flat_types,
                 args.flat_types,
+                args.block_keys,
+                args.block_keys,
                 Decimal(str(args.max_price)),
                 args.min_lease_years,
-                RESULT_LIMIT,
+                limit,
             ],
         )
         columns = [item[0] for item in cursor.description]
@@ -127,7 +134,7 @@ def query_resale_blocks_by_criteria(
                 "lease_reference_month": end.strftime("%Y-%m"),
                 "total_matching_blocks": total,
                 "returned_blocks": len(rows),
-                "result_limit": RESULT_LIMIT,
+                "result_limit": limit,
                 "truncated": total > len(rows),
                 "notes": [
                     "One result per block and flat type; historical transactions, not listings.",
@@ -180,7 +187,9 @@ def compute_town_price_timeseries(
     observations are omitted, never filled with zero. Summaries use each town's
     latest complete quarter within the returned window. YoY compares only the
     same complete quarter one year earlier, even when outside the display window;
-    missing/incomplete baselines return null with a reason. These are descriptive
+    missing/incomplete baselines return null with a reason. period_change_pct and
+    period_cagr_pct give the change across the whole window (use these for
+    "over the last N years" questions). These are descriptive
     transaction medians, not a mix-adjusted price index or a price forecast.
     """
     args = ComputeTownPriceTimeseriesInput(
@@ -251,8 +260,21 @@ def compute_town_price_timeseries(
             reason = "incomplete_prior_year_quarter"
         else:
             change = float((current["median_price"] / baseline["median_price"] - 1) * 100)
+        earliest = complete[0]
+        span_years = (
+            (current["quarter_start"].year - earliest["quarter_start"].year) * 12
+            + current["quarter_start"].month - earliest["quarter_start"].month
+        ) / 12
+        period_change = period_cagr = None
+        if span_years > 0:
+            ratio = float(current["median_price"] / earliest["median_price"])
+            period_change = (ratio - 1) * 100
+            period_cagr = (ratio ** (1 / span_years) - 1) * 100
         summaries.append(
             {
+                "period_start_quarter": _quarter_label(earliest["quarter_start"]) if span_years > 0 else None,
+                "period_change_pct": period_change,
+                "period_cagr_pct": period_cagr,
                 "town": town,
                 "latest_median_price": current["median_price"],
                 "median_price_per_sqm": current["median_price_per_sqm"],
@@ -287,6 +309,7 @@ def compute_town_price_timeseries(
                     "Quarter completeness describes snapshot date coverage, not transaction volume or reporting finality.",
                     "Summaries use the latest complete observed quarter in the display window for each town.",
                     "YoY is the percentage change in same-quarter median prices, not matched-flat appreciation.",
+                    "period_change_pct compares the latest and earliest complete quarters in the window; period_cagr_pct annualises it.",
                     "Prior-year evidence may precede the display window; unavailable comparisons return null.",
                 ],
             },

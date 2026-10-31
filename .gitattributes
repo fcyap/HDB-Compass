@@ -1,0 +1,9 @@
+# Keep LF in the repository regardless of the editor's OS (Windows editors were rewriting whole files as CRLF).
+* text=auto eol=lf
+*.sh text eol=lf
+*.png binary
+*.jpg binary
+*.glb binary
+*.pkl binary
+*.duckdb binary
+*.parquet binary

@@ -264,6 +264,38 @@ class SpatialIndex:
 mcp = FastMCP("HDB-Compass-Spatial-Server")
 
 
+def _match_school(school_name: str, schools: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Exact name/alias first, then a unique word-subset match covering at least half the name.
+    A substring test matched 'good school' to 'CHIJ Our Lady of Good Counsel'."""
+    from mcp_server.location_tools import tokens  # local import: location_tools imports this module
+
+    generic = {"PRIMARY", "SCHOOL"}
+    wanted = tokens(school_name) - generic
+    if not wanted:
+        return None
+    exact, partial = [], []
+    for school in schools:
+        for name in filter(None, (school.get("name"), school.get("alias"))):
+            have = tokens(name) - generic
+            if have == wanted:
+                exact.append(school)
+                break
+            if have and wanted <= have and len(wanted) / len(have) >= 0.5:
+                partial.append(school)
+                break
+    if exact:
+        return exact[0]
+    return partial[0] if len(partial) == 1 else None
+
+
+def _geocode_names_school(geo: Dict[str, Any], school_name: str) -> bool:
+    from mcp_server.location_tools import tokens
+
+    wanted = tokens(school_name) - {"PRIMARY", "SCHOOL"}
+    found = tokens(" ".join(str(geo.get(k) or "") for k in ("name", "building")))
+    return bool(wanted) and wanted <= found and bool(found & {"SCHOOL", "PRIMARY"})
+
+
 @mcp.tool()
 def verify_primary_school_distance(
     school_name: str,
@@ -278,18 +310,12 @@ def verify_primary_school_distance(
     blocks = index_data["payload"]["blocks"]
     block_kdtree = index_data["block_kdtree"]
 
-    target_school = None
-    query_clean = school_name.lower().replace("primary", "").replace("school", "").strip()
-
-    for s in schools:
-        s_name = s["name"].lower()
-        s_alias = s.get("alias", "").lower()
-        if query_clean in s_name or query_clean in s_alias:
-            target_school = s
-            break
+    target_school = _match_school(school_name, schools)
 
     if not target_school:
         geo = geocode_onemap(f"{school_name} PRIMARY SCHOOL") or geocode_onemap(school_name)
+        if geo and not _geocode_names_school(geo, school_name):
+            geo = None  # OneMap's first hit for a vague phrase is not that school
         if geo:
             school_x, school_y = geo["x"], geo["y"]
         else:
@@ -386,6 +412,10 @@ def compute_dual_transit_commute(
     """
     Filters candidate HDB blocks where public transit commute to BOTH destinations
     is strictly <= max_minutes.
+
+    ESTIMATE ONLY: times are a fixed per-town baseline plus the walk to the nearest
+    MRT/LRT station. The destinations are not routed, so different destinations give
+    the same times. Each result carries estimate_basis; disclose it to the user.
     """
     index_data = get_spatial_index()
     blocks = index_data["payload"]["blocks"]
@@ -425,7 +455,8 @@ def compute_dual_transit_commute(
                 "commute_to_dest_a_mins": transit_a,
                 "commute_to_dest_b_mins": transit_b,
                 "total_joint_commute_mins": transit_a + transit_b,
-                "first_mile_walk_mins": walk_to_mrt_mins
+                "first_mile_walk_mins": walk_to_mrt_mins,
+                "estimate_basis": "town baseline + walk to nearest MRT; destinations not routed"
             })
 
     results.sort(key=lambda x: x["total_joint_commute_mins"])

@@ -30,11 +30,14 @@ spatial:
 # LLM_PROFILE env var; LLM_BASE_URL / LLM_MODEL env vars override a profile.
 # ---------------------------------------------------------------------------
 llm:
-  active: ollama        # ollama | vllm | none (deterministic, no model)
+  active: ollama        # ollama | vllm | groq | openai | compatible | auto | none
+  auto_profiles: [ollama, groq, openai]
   profiles:
     ollama:                       # local dev on the laptop (M3 Pro, 18 GB)
       base_url: "http://localhost:11434/v1"
       model: "qwen3:14b"
+      model_env: "OLLAMA_MODEL"
+      reasoning_effort: "none"
       api_key_env: "OLLAMA_API_KEY"   # unused; any value works
       max_tokens: 2048
       timeout_s: 300
@@ -52,6 +55,30 @@ llm:
         chat_template_kwargs:
           enable_thinking: false    # Qwen3 template flag: no <think> block at all
 
+    groq:
+      base_url: "https://api.groq.com/openai/v1"
+      model: "openai/gpt-oss-20b"
+      model_env: "GROQ_MODEL"
+      api_key_env: "GROQ_API_KEY"
+      requires_api_key: true
+      timeout_s: 60
+      max_tokens: 2048
+    openai:
+      base_url: "https://api.openai.com/v1"
+      model: "gpt-4.1-mini"
+      model_env: "OPENAI_MODEL"
+      api_key_env: "OPENAI_API_KEY"
+      requires_api_key: true
+      timeout_s: 60
+      max_tokens: 2048
+    compatible:
+      base_url: null
+      model: null
+      api_key_env: "LLM_API_KEY"
+      requires_api_key: true
+      timeout_s: 60
+      max_tokens: 2048
+
 tools:
   # Per tool: "mock" (mcp_server/mock_tools.py) or "real". Members 1 and 3 flip
   # their tools to "real" when their modules land. Spatial tools are real already.
@@ -59,15 +86,27 @@ tools:
     query_resale_blocks_by_criteria: real
     compute_town_price_timeseries: real
     query_comparable_resale_transactions: real
-    compare_bto_launch_vs_resale: mock
+    compare_bto_launch_vs_resale: real   # data/bto/bto_launches.csv from HDB launch annexes
     filter_blocks_by_amenity_proximity: real
     verify_primary_school_distance: real
+    find_primary_schools_near_address: real
     compute_dual_transit_commute: real
     sync_interactive_map_ui: real
     calculate_cpf_housing_grants: real
     calculate_maximum_affordability: real
     calculate_bsd_and_upfront_outlay: real
     retrieve_hdb_policy_knowledge: mock
+    # Research tools (Member 1; location tools shared with Member 2). No mocks exist.
+    get_block_transaction_history: real
+    get_market_snapshot: real
+    rank_towns_by_value: real
+    compare_resale_options: real
+    assess_resale_price: real
+    find_resale_blocks_near: real
+    get_area_resale_statistics: real
+    get_area_price_trend: real
+    resolve_location: real
+    get_nearby_amenities: real
 
 architecture:
   auditor_max_retries: 2            # proposal §5 risk 2

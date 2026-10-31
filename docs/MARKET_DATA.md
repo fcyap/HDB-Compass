@@ -170,10 +170,79 @@ compute_town_price_timeseries(
 - `yoy_appreciation_pct` is null if the prior-year quarter is missing or
   incomplete, with a machine-readable `yoy_unavailable_reason`. The deterministic
   response template renders this as unavailable rather than zero.
+- `period_change_pct` compares the latest complete quarter with the earliest
+  complete quarter in the display window (`period_start_quarter`), and
+  `period_cagr_pct` annualises it. Use these for "over the last N years" questions;
+  YoY describes only the most recent year.
 - Metadata includes the snapshot, source, requested and available window,
   coverage limitations and interpretation notes. No schema rebuild is needed.
   These medians describe observed sales and are not a mix-adjusted price index,
   matched-flat appreciation measure or forecast.
+
+## Research tools
+
+`mcp_server/market_research_tools.py` answers questions about specific places and
+the market as a whole. Every tool that needs a location takes the user's address
+text and resolves it with `mcp_server/location_tools.py` (spatial index blocks by
+block + street or postal code, MRT/LRT stations, hawker centres, supermarkets and
+primary schools; OneMap only as a last resort when credentials are configured).
+Ambiguous or unknown addresses return `ambiguous`/`not_found` with candidates, so
+the agent asks the user rather than guessing. No tool accepts guessed coordinates;
+model tool calls with coordinates that no tool or map pin produced are rejected.
+
+| Tool | Question | Evidence |
+|---|---|---|
+| `get_block_transaction_history(address \| area \| block_keys, flat_type?, lookback_months=60)` | What has this block (or area) sold for? | Up to 50 latest sales (lease at sale, block and distance for sets) and per-year medians over all sales |
+| `get_market_snapshot(towns?, flat_types?)` | Where is the market now? | Latest complete quarter median, price/sqm and volume island-wide and per town, with prior-quarter, 1-, 3- and 5-year same-quarter changes |
+| `rank_towns_by_value(flat_type, max_budget?, min_lease_years?, rank_by)` | Which town is best value / cheapest? | Every town's median price, price/sqm, lease and share of sales within budget; low-sample towns listed separately |
+| `compare_resale_options(addresses[2-4], flat_type)` | How do these blocks compare? | Per block: sales, median price, price/sqm, area, lease, latest sale and nearest MRT, hawker, supermarket and primary school |
+| `assess_resale_price(address, flat_type, asking_price?)` | Is this asking price fair? | Same-block and nearby (radius) price distributions, the asking price's percentile, gap to the median and quartile position |
+
+### Area research: find the blocks, then run set statistics
+
+`mcp_server/area_resale_tools.py` answers "what do flats around X sell for?" by
+composition rather than one bespoke query. `find_resale_blocks_near` lists the
+blocks in a circle; the set tools then take the same circle or explicit keys.
+
+| Tool | Question | Evidence |
+|---|---|---|
+| `find_resale_blocks_near(address \| lat/lng, radius_meters=500, flat_type?, lookback_months=12)` | Which blocks are around X, and what does each sell for? | Every resale block within the radius, nearest first: distance, sales, median price, price/sqm, lease, last sale; the named block is flagged |
+| `get_area_resale_statistics(area \| block_keys, flat_type?, lookback_months=12)` | What is the price range around X? | Per flat type, pooled over every sale in the set: count, blocks, min/quartiles/max, price/sqm, area, lease; the named block's own figures alongside |
+| `get_area_price_trend(area \| block_keys, flat_type, lookback_years=3)` | How have prices around X moved? | Pooled quarterly medians and price/sqm; period change and CAGR between the first and last complete quarters with at least 5 sales |
+
+`area` is `{address | latitude+longitude, radius_meters}`; `block_keys` are
+`'BLOCK STREET'` keys, e.g. from `find_resale_blocks_near` or blocks picked on the
+map. Distances are great-circle from the resolved place to each block's geocode,
+identical to `query_comparable_resale_transactions`. Set statistics are computed
+in SQL over the pooled sales, never as a median of block medians, so a model never
+aggregates numbers itself. Small areas are noisy: thin quarters are shown but not
+used as trend endpoints, and price/sqm is reported beside price because the mix of
+flat sizes sold varies by quarter.
+
+Semantics shared with the queries above: windows end at the snapshot's last
+complete month; snapshot changes compare quarters only within source coverage
+(otherwise null); lease is estimated at the window end except in block history.
+Results are historical transactions, not listings, valuations or forecasts.
+`query_resale_blocks_by_criteria` also accepts optional `block_keys` so the
+supervisor can price blocks found by spatial tools (school, commute) before
+applying a budget; blocks without price evidence are never treated as within budget.
+
+## BTO launch data
+
+`data/bto/bto_launches.csv` is transcribed from HDB's official launch annexes
+(Table A(1)(a) supply and pricing, and HDB's "resale comparables nearby" tables),
+currently the February 2026 and June 2026 exercises. Each row keeps the annex URL.
+Prices are indicative ranges for 99-year leases before grants; for projects whose
+prices include floor finishes, the annex also quotes lower prices without them,
+which are not stored. Towns come from HDB's launch announcements.
+
+`compare_bto_launch_vs_resale(bto_project_name, flat_type="4 ROOM")` returns the
+official range, classification, units, waiting time, HDB's quoted nearby resale
+comparables and the town-wide resale median for the same flat type over the last
+12 months. `price_gap_pct` compares the range midpoint with that median; resale
+flats differ in age, lease and size, which the response states. Unknown projects
+return `not_found` with the covered list; unoffered flat types return
+`flat_type_not_offered`. To add a launch, append rows from its annex; never estimate.
 
 ## Validation
 

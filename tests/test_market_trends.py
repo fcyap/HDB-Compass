@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import re
 import json
 from datetime import datetime, timezone
 
@@ -211,7 +212,8 @@ def test_template_handles_unavailable_yoy_and_partial_only_results(trend_databas
     assert "YoY unavailable" in text and "2026Q2" in text
     assert "only incomplete quarters" in text and "BEDOK: no transactions" in text
     assert "No block satisfies" not in text
-    assert "0.0%" not in text
+    # An unavailable comparison must never be rendered as a zero change.
+    assert not re.search(r"YoY [+-]?0\.0%", text)
 
 
 def test_agent_calls_real_trend_tool(trend_database, monkeypatch):

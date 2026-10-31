@@ -160,7 +160,7 @@ LANGSMITH_TRACING=false
 |---|---|
 | `DATA_GOV_SG_API_KEY` | Optional; leave blank for public resale downloads |
 | `HDB_COMPASS_DB_PATH` | Database location, relative to the repository root unless absolute |
-| `LLM_PROFILE` | `none` for deterministic agents; `ollama` or `vllm` for model inference |
+| `LLM_PROFILE` | `none` for deterministic agents; `ollama`, `vllm`, `groq`, `openai`, `compatible` or opt-in `auto` for model inference |
 | `ONEMAP_EMAIL`, `ONEMAP_PASSWORD` | Live geocoding and spatial-data rebuilds |
 | `LANGSMITH_API_KEY` | Optional tracing when enabled |
 
@@ -206,9 +206,20 @@ After building the database, with `LLM_PROFILE=none` in `.env`:
 python -c 'from agents.arch_3_specialist_5agent import run; print(run("Find 4-room flats in Bishan under 850k with at least 60 years lease.")["draft_response"])'
 ```
 
-The graph uses real resale queries, comparable-sale analytics, town price trends and financial calculators
-through the Python tool registry. BTO comparisons and policy retrieval still
-use mocks; configuration is in `config/experiment_config.yaml`.
+The graph uses real resale queries, comparable-sale analytics, town price trends,
+research tools (block history, market snapshot, town ranking, option comparison,
+asking-price checks, nearby amenities), BTO launch comparisons from official HDB
+annexes and financial calculators through the Python tool registry. Only policy
+retrieval still uses a mock; configuration is in `config/experiment_config.yaml`.
+
+Research questions work the same way; for example:
+
+```bash
+python -c 'from agents.arch_3_specialist_5agent import run; print(run("Is $720k a fair price for a 4-room at Blk 312 Shunfu Rd?")["draft_response"])'
+```
+
+See [research tools](docs/MARKET_DATA.md#research-tools) and
+[BTO launch data](docs/MARKET_DATA.md#bto-launch-data).
 
 The financial tools need no API key or database. They return missing-input lists
 when household, eligibility or funding facts are unknown. See
@@ -241,31 +252,182 @@ python -m mcp_server.server
 ```
 
 An MCP client normally launches this stdio process and communicates over
-stdin/stdout. It exposes three market tools, three financial tools and four spatial tools. The
+stdin/stdout. It exposes nine market tools, three financial tools and seven spatial tools. The
 current agent registry executes Python directly and does not need this process.
 
 ### 6. Run the web application (optional)
 
-The web backend currently streams the standalone geospatial agent. It does not
-yet run the full specialist graph or market query.
+Chat streams the Variant C specialist graph, including resale and financial
+tools. Map exploration uses the local spatial index. Each chat request starts a
+new agent state; previous answers are not retained as financial facts.
 
 Start the backend in an activated Python environment:
 
 ```bash
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+LLM_PROFILE=none .venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-In another terminal, with Node.js and npm installed:
+This mode needs no model or model API key. Build the market database in step 3
+first. It supports deterministic resale searches and reports missing financial
+inputs; use the direct financial examples above for fully specified calculations.
+For live language-model testing, start the configured Ollama or vLLM service and
+select a model profile as described below.
+
+In another terminal, with Node.js 22.12+ and npm installed:
 
 ```bash
 cd frontend
-npm install
+npm ci
+npm run build
 npm run dev
 ```
 
 Open [localhost:3000](http://localhost:3000). Backend health is available at
 [localhost:8000/health](http://localhost:8000/health). Live geocoding needs OneMap
 credentials; querying the existing spatial index does not.
+
+The frontend proxies `/api`, `/health` and `/ws` to `127.0.0.1:8000`, so chat and
+map requests use the same browser origin. Keep both terminals running. To test
+the built frontend instead, stop the dev server and run `npm run preview`.
+
+For a local smoke test:
+
+1. Open `http://localhost:3000/health` and check that the spatial counts load.
+2. Ask: “Find 4-room resale flats in Jurong East under $650,000 with at least
+   60 years of lease left, within 400m of an MRT.” Check the answer and map markers.
+3. Click a block or map location and inspect the nearby amenity categories.
+4. Ask: “Our monthly income is $8,000. Calculate our housing grants.” Check
+   that the response requests missing facts rather than inventing an amount.
+5. Ask: “Schools near Blk 147 Bishan Street 11.” Expect primary schools and
+   approximate straight-line distances, with a disclosed default 2km radius.
+6. Ask: “Schools near blk 147 street in Kallang.” The current index has only a
+   placeholder street for this entry. Expect an address-verification request,
+   no resale cards and no school markers. “Schools near 147” must request a
+   full address when multiple indexed blocks match.
+
+School lookup resolves the address before searching. It accepts a full block
+and street, a unique block and town, or a six-digit postal code. It reports
+`needs_information` for ambiguous, unknown or placeholder addresses, and
+`unavailable` for missing index data. A successful lookup with no schools in
+the radius is a separate outcome. Resend the full request when clarifying;
+conversation memory is not implemented yet. The local primary-school snapshot
+does not establish official MOE registration boundaries or walking routes.
+
+Run the address-resolution, graph, MCP and WebSocket regression tests with:
+
+```bash
+.venv/bin/python -m pytest -q tests/test_school_lookup.py tests/test_school_requests.py
+```
+
+Before a broader demo, prioritize these application fixes:
+
+- Repair spatial address ingestion: it currently infers towns from postal
+  sectors and creates `STREET IN ...` placeholders when metadata joins fail.
+  Reconcile authoritative addresses, flag unresolved rows and rebuild the index.
+  The new school lookup rejects these placeholders; other spatial paths still
+  need the same data-quality checks.
+- Retain confirmed addresses and financial facts across turns, with explicit
+  clarification state rather than treating each message as a new search.
+- Separate property search, town trends and location inspection throughout the
+  graph and UI. Return structured trend series for charts; do not attach block
+  listings to trend-only answers.
+- Replace mock policy results before enabling that feature for users.
+  Implement evidence auditing; a pass-through hook is not verification.
+- Extend query-to-UI acceptance tests to cover ambiguous locations, missing
+  data, model failures and consistency between text, cards and map markers.
+
+Policy retrieval is still mocked; use resale, research, BTO and spatial queries
+for this local demonstration. Further questions to try: "What's near Blk 312
+Shunfu Rd?", "Compare Blk 288B Jurong East St 21 vs Blk 266 Toh Guan Rd for a
+4-room", "How is the resale market now?", "Which town is the cheapest for 5-room
+flats?" and "How does Berlayar Rise BTO compare with resale prices for a 4-room?".
+Browser map tiles require internet access.
+
+#### Connect a language model
+
+Choose a profile in the root `.env`, then restart the backend. Keep API keys in
+that ignored file or backend environment variables; the browser never needs them.
+All agent variants share the selected model and the same tools.
+
+| Profile | Required setup |
+|---|---|
+| `ollama` | Running Ollama server; pull `qwen3:14b`, or set `OLLAMA_MODEL` to an installed model supporting tools |
+| `vllm` | Running cluster endpoint/tunnel; existing `VLLM_API_KEY` setup |
+| `groq` | `GROQ_API_KEY`; optional `GROQ_MODEL` (default `openai/gpt-oss-20b`) |
+| `openai` | `OPENAI_API_KEY`; optional `OPENAI_MODEL` (default `gpt-4.1-mini`) |
+| `compatible` | `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` for an OpenAI-compatible Chat Completions service supporting tools |
+| `auto` | Try available Ollama, then configured Groq, then configured OpenAI; select once until restart |
+| `none` | Rule-based processing without a model or key |
+
+For example, to use Groq in the actual application:
+
+```dotenv
+LLM_PROFILE=groq
+GROQ_API_KEY=your-key-here
+GROQ_MODEL=openai/gpt-oss-20b
+```
+
+Check configuration/model discovery, then optionally make two small inference
+requests to verify the model can request a tool and consume its result:
+
+```bash
+.venv/bin/python -m agents.llm --check
+.venv/bin/python -m agents.llm --test-tools
+.venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Do not prefix this command with `LLM_PROFILE=none` when you want model inference.
+Shell variables override `.env`; unset a previously exported `LLM_PROFILE` if
+the wrong profile is selected. Restart the backend after editing `.env`.
+
+For local Ollama, start its service (for example,
+`OLLAMA_CONTEXT_LENGTH=16384 ollama serve` if it is not already running), then
+run `ollama pull qwen3:14b` in another terminal. On GPUs with limited memory,
+start with `ollama pull qwen3:4b` and set `OLLAMA_MODEL=qwen3:4b` in `.env`.
+Model weights and the context cache both consume memory; CPU offloading can
+make the multi-step agent flow slow. Check actual placement with `ollama ps`.
+Local models require no account or real API key. If an old Ollama version cannot
+load the selected model, update it using the official installer first.
+
+For the project's local-only service, run `bash scripts/start_ollama.sh`. It uses
+a project-local runtime under `data/local/ollama-runtime` when present, otherwise
+the installed `ollama` command. The launcher binds to loopback, disables cloud
+features, uses a 16k context, and limits concurrent model processing to one request
+to reduce memory pressure. Models are stored under ignored `data/local/ollama-models`.
+It selects the model's embedded chat template so Qwen tool schemas and thinking
+controls are handled by the native renderer.
+The profile requests `reasoning_effort: none`, but some Qwen/runtime combinations
+still generate reasoning internally; allow extra time for the tool-call diagnostic
+and multi-step agent answers, especially when the model is offloaded to CPU.
+Keep the service terminal open. If a project-local runtime is installed, use
+`data/local/ollama-runtime/bin/ollama pull qwen3:4b` in another terminal; otherwise
+use `ollama pull qwen3:4b`. Set `LLM_PROFILE=ollama` and `OLLAMA_MODEL=qwen3:4b`
+in `.env`, then run the diagnostic and restart the backend as shown above.
+
+`LLM_PROFILE=auto` explicitly permits hosted inference if a configured local model
+is unavailable. Set `LLM_AUTO_PROFILES=ollama` for local-only discovery, or change
+the comma-separated order. Auto checks `/models` with credentials but sends no
+chat data during discovery. Unavailable/invalid candidates are skipped; if none
+qualify, configuration fails rather than silently selecting rule-based mode.
+Unset global `LLM_MODEL`/`LLM_BASE_URL` in auto mode; use provider-specific model
+variables. For benchmarks, select an explicit profile and fixed model version.
+
+Discovery confirms only that a model is advertised, not tool support, quota or
+answer quality. Some compatible servers restrict `/models`; use an explicit
+profile and `--test-tools` in that case. Models may differ in tool calling and
+structured-output support; unsupported sampling parameters can be disabled with
+`supports_temperature: false` or `supports_seed: false` in that YAML profile.
+
+`GET /api/model/status` reports configuration without keys or endpoint URLs;
+`?check=true` also checks discovery. The UI shows the configured model, rule-based
+mode, or a fallback notice if a model step failed. Existing inference failures
+can still invoke deterministic processing; no provider switch occurs mid-answer.
+Live models do not add missing chart UI, persistent conversation state or a real
+policy implementation.
+
+Provider references: [Ollama compatibility](https://docs.ollama.com/api/openai-compatibility),
+[Groq compatibility](https://console.groq.com/docs/openai),
+[OpenAI tool-capable model](https://developers.openai.com/api/docs/models/gpt-4.1-mini).
 
 To rebuild spatial data, configure OneMap credentials and run
 `python data/build_spatial_index.py`. Rebuild the market database afterwards to
@@ -287,11 +449,12 @@ pick up coordinate changes.
 
 ## TODO: Member 1 — Market and financial tools (Categories A & D)
 
-Completed: resale ingestion, the local DuckDB schema, three resale analytics
-tools and three financial calculators, with Pydantic validation, agent-registry
-integration and FastMCP registration. Six of seven Member 1 tools are real;
-`compare_bto_launch_vs_resale` remains mocked. Financial scenario coverage and
-exclusions are documented in [Financial tools](docs/FINANCIAL_TOOLS.md).
+Completed: resale ingestion, the local DuckDB schema, resale analytics, research
+tools, BTO launch comparison and three financial calculators, with Pydantic
+validation, agent-registry integration and FastMCP registration. All Member 1
+tools are real. Financial scenario coverage and exclusions are documented in
+[Financial tools](docs/FINANCIAL_TOOLS.md); research and BTO semantics in
+[Market data](docs/MARKET_DATA.md).
 
 ### Tool checklist
 
@@ -308,9 +471,19 @@ exclusions are documented in [Financial tools](docs/FINANCIAL_TOOLS.md).
   from income, available funds, debts and the applicable loan assumptions.
 - [x] `calculate_bsd_and_upfront_outlay`: calculate stamp duty and upfront
   CPF/cash requirements using price, valuation, financing, grants and fees.
-- [ ] `compare_bto_launch_vs_resale`: retrieve validated BTO details on demand,
-  reuse comparable resale analytics and calculate price differences by flat type
-  across the published price range. No complete BTO database is required.
+- [x] `compare_bto_launch_vs_resale`: official indicative prices, classification,
+  waiting time and HDB's quoted nearby resale comparables for the Feb and Jun 2026
+  launches (`data/bto/bto_launches.csv`), against the town-wide resale median.
+- [x] Research tools: `get_block_transaction_history`, `get_market_snapshot`,
+  `rank_towns_by_value`, `compare_resale_options`, `assess_resale_price`, plus
+  `period_change_pct`/`period_cagr_pct` in town trends and `block_keys` pricing
+  for spatial results. Location tools `resolve_location` and
+  `get_nearby_amenities` are shared with Member 2.
+- [x] Area research: `find_resale_blocks_near`, `get_area_resale_statistics` and
+  `get_area_price_trend` answer "what do flats around X sell for?" over an area
+  (`{address | lat/lng, radius_meters}`) or a set of `block_keys`; block history
+  takes the same scopes. Questions about the map pin ("here", "this block") use it
+  as the place.
 
 ### Try comparable resale analytics
 
@@ -344,9 +517,10 @@ python -m pytest tests/test_comparable_resale.py -q
 
 ### Next steps for BTO comparison
 
-- [ ] Define a validated BTO project schema: prices before grants by flat type,
-  areas, application dates/status, classification, completion estimates, location
-  precision, source URLs and retrieval dates. Unpublished facts remain unknown.
+- [x] Validated BTO launch rows: prices before grants by flat type, areas, units,
+  classification, waiting time, HDB nearby resale comparables and source URLs.
+- [ ] Add launches beyond Feb/Jun 2026 (append rows from each annex) and record
+  application dates/status and completion estimates.
 - [ ] Connect official-source search/page/PDF reading to that schema for named,
   open, upcoming and closed launches, with a small evidence cache where useful.
 - [ ] Coordinate project location resolution with Member 2's spatial interface;
@@ -368,7 +542,7 @@ python -m pytest tests/test_comparable_resale.py -q
   or unsupported-scenario results explicitly.
 - [ ] Review the expanded financial contracts and specialist prompts with Member 4.
 - [ ] Review the additional comparable-sale tool, coordinate handoff and updated
-  12-tool inventory with Member 4; run live-model tool-selection checks as well
+  13-tool inventory with Member 4; run live-model tool-selection checks as well
   as deterministic graph/MCP tests.
 - [x] Record financial rule sources, known effective dates, assumptions and rounding
   rules. Define how documentation changes are checked and released as tested
@@ -434,8 +608,8 @@ Comparable analytics are implemented; the remaining items are follow-up capabili
 
 Extend existing tool outputs where practical. Agree any additional callable
 tools and contract changes with Member 4, updating schemas, prompts and
-evaluation expectations together. The inventory now contains 12 tools: the
-original 11 plus comparable resale analytics. Earlier 11-tool benchmark runs
+evaluation expectations together. The inventory now contains 13 tools: the
+original 11 plus comparable resale analytics and address-centred school lookup. Earlier benchmark runs
 must remain labelled with their original inventory and configuration.
 
 Next: the BTO project schema and on-demand retrieval, contract review and
@@ -455,12 +629,12 @@ workstream: [`docs/INTERFACES.md`](docs/INTERFACES.md). Graph drawings: [`docs/a
 | File | What it is |
 |---|---|
 | `agents/state.py` | `HDBCompassState` (proposal §4.2) + `tool_call_log`, `relaxation`, `variant`, `errors` |
-| `agents/schemas.py` | Pydantic I/O models for all 12 tools; shared tool inventory |
+| `agents/schemas.py` | Pydantic I/O models for all 13 tools; shared tool inventory |
 | `agents/tool_registry.py` | mock/real switch per tool (`config → tools.use_mock`), strict argument validation, tool-call logging |
-| `agents/llm.py` | one `get_llm()` for every node; profiles `ollama` / `vllm` / `none` |
+| `agents/llm.py` | Shared model factory, local/hosted profiles, auto discovery and tool-call diagnostic |
 | `agents/supervisor.py` | extraction → routing → parallel `Send` fan-out → specialist ReAct loops → SQL ∩ spatial intersection → relaxation (E2) → synthesis + map sync (E1) → auditor hook → finalize |
-| `agents/arch_1_monolith.py` | Variant A: one ReAct agent, 12 tools, no auditor |
-| `agents/arch_2_coarse.py` | Variant B: supervisor + combined data agent (11 tools) + policy agent (1 tool), no auditor |
+| `agents/arch_1_monolith.py` | Variant A: one ReAct agent, 13 tools, no auditor |
+| `agents/arch_2_coarse.py` | Variant B: supervisor + combined data agent (12 tools) + policy agent (1 tool), no auditor |
 | `agents/arch_3_specialist_5agent.py` | Variant C: proposed 5-agent graph + auditor self-correction loop |
 | `mcp_server/mock_tools.py` | deterministic fixtures for Members 1 & 3's tools until the real ones land |
 | `evaluation/category_e_queries.json` | 15 Category E golden questions grounded on the real database, with ground truth (`python -m evaluation.ground_category_e`) |
@@ -475,7 +649,7 @@ LLM_PROFILE=none .venv/bin/pytest tests/ -q
 .venv/bin/python agents/arch_3_specialist_5agent.py
 ```
 
-Local Ollama note: the default 4096-token context is too small for Variant A (12 tool schemas). Quit the Ollama
+Local Ollama note: the default 4096-token context is too small for Variant A (13 tool schemas). Quit the Ollama
 menu-bar app and start the server with a larger context before benchmarking locally:
 
 ```bash

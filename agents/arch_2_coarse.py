@@ -40,17 +40,19 @@ DATA_SYSTEM = (
 
 
 def route_coarse_node(state: HDBCompassState) -> Dict[str, Any]:
-    fine = sv.decide_routing(state.get("user_constraints", {}))
+    routed = sv.route_node(state)  # also adds a clarifying question when nothing can be routed
+    fine = routed["active_subagents"]
     active: List[str] = []
     if any(a in fine for a in ("market_sql", "spatial", "financial")):
         active.append("data")
     if "policy_rag" in fine:
         active.append("policy")
-    return {"active_subagents": active}
+    return {**routed, "active_subagents": active}
 
 
 def dispatch_coarse(state: HDBCompassState) -> List[Send]:
-    return [Send(f"{a}_agent", state) for a in state.get("active_subagents", [])]
+    active = state.get("active_subagents", [])
+    return [Send(f"{a}_agent", state) for a in active] if active else [Send("synthesize", state)]
 
 
 def data_agent_node(state: HDBCompassState) -> Dict[str, Any]:
@@ -87,7 +89,7 @@ def build_graph():
     g.add_node("finalize", sv.finalize_node)
     g.add_edge(START, "extract_constraints")
     g.add_edge("extract_constraints", "route_coarse")
-    g.add_conditional_edges("route_coarse", dispatch_coarse, ["data_agent", "policy_agent"])
+    g.add_conditional_edges("route_coarse", dispatch_coarse, ["data_agent", "policy_agent", "synthesize"])
     g.add_edge("data_agent", "synthesize")
     g.add_edge("policy_agent", "synthesize")
     g.add_edge("synthesize", "finalize")

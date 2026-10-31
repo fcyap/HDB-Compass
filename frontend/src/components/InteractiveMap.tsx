@@ -26,6 +26,9 @@ export interface MapViewport {
   zoom: number;
 }
 
+// Radius of the facility panel; chat questions about the pin use the same circle.
+export const FACILITY_RADIUS_METERS = 1500;
+
 interface InteractiveMapProps {
   bufferGeoJSON: GeoJSON.Feature | null;
   poisGeoJSON: GeoJSON.FeatureCollection | null;
@@ -177,13 +180,13 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   // Fetch all nearby facilities around a coordinate
   const fetchFacilitiesForLocation = useCallback((lat: number, lng: number) => {
     setLoadingFacilities(true);
-    fetch('http://127.0.0.1:8000/api/spatial/radius', {
+    fetch('/api/spatial/radius', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         lat,
         lng,
-        radius_meters: 1500.0,
+        radius_meters: FACILITY_RADIUS_METERS,
         include_buffer_polygon: false,
       }),
     })
@@ -611,7 +614,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
 
       // 2. Reverse inspect the clicked point (detects nearest HDB block or coordinates)
       try {
-        const res = await fetch(`http://127.0.0.1:8000/api/spatial/inspect_point?lat=${lat}&lng=${lng}`);
+        const res = await fetch(`/api/spatial/inspect_point?lat=${lat}&lng=${lng}`);
         const data = await res.json();
 
         const locName = data.name || `Pinned Location (${lat.toFixed(4)}° N, ${lng.toFixed(4)}° E)`;

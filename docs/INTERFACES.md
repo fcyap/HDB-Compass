@@ -12,7 +12,7 @@ and returns shared block records. `QueryResaleBlocksOutput` includes optional
 `metadata` with snapshot, window, lease reference and truncation information.
 Numeric inputs reject negative or nonfinite prices and lease limits outside
 0–99 years. See [setup](../README.md#setup) and
-[market semantics](MARKET_DATA.md). The BTO comparison remains mocked. The
+[market semantics](MARKET_DATA.md). The BTO comparison is real (official HDB launch annexes; see [BTO launch data](MARKET_DATA.md#bto-launch-data)). The
 unified MCP server registers the real query; the agent registry continues to
 execute Python directly.
 
@@ -50,7 +50,7 @@ Location resolution remains the spatial workstream's responsibility. Source
 coverage, missing geocodes, low samples and truncated examples are explicit.
 See [comparable semantics](MARKET_DATA.md#comparable-resale-transactions).
 
-## 1. The 12 tools and who owns them
+## 1. The 23 tools and who owns them
 
 | # | Tool | Owner | Agent | Input model | Output model |
 |---|---|---|---|---|---|
@@ -66,15 +66,52 @@ See [comparable semantics](MARKET_DATA.md#comparable-resale-transactions).
 | 10 | `calculate_bsd_and_upfront_outlay` | Member 1 | financial | `CalculateBsdAndUpfrontOutlayInput` | `CalculateBsdAndUpfrontOutlayOutput` |
 | 11 | `retrieve_hdb_policy_knowledge` | Member 3 | policy_rag | `RetrieveHdbPolicyKnowledgeInput` | `RetrieveHdbPolicyKnowledgeOutput` |
 | 12 | `query_comparable_resale_transactions` | Member 1 | market_sql | `QueryComparableResaleInput` | `QueryComparableResaleOutput` |
+| 13 | `find_primary_schools_near_address` | Member 2 | spatial | `FindSchoolsNearAddressInput` | `FindSchoolsNearAddressOutput` |
+| 14 | `get_block_transaction_history` | Member 1 | market_sql | `GetBlockTransactionHistoryInput` | `GetBlockTransactionHistoryOutput` |
+| 15 | `get_market_snapshot` | Member 1 | market_sql | `GetMarketSnapshotInput` | `GetMarketSnapshotOutput` |
+| 16 | `rank_towns_by_value` | Member 1 | market_sql | `RankTownsByValueInput` | `RankTownsByValueOutput` |
+| 17 | `compare_resale_options` | Member 1 | market_sql | `CompareResaleOptionsInput` | `CompareResaleOptionsOutput` |
+| 18 | `assess_resale_price` | Member 1 | market_sql | `AssessResalePriceInput` | `AssessResalePriceOutput` |
+| 19 | `resolve_location` | Members 1+2 | spatial | `ResolveLocationInput` | `ResolveLocationOutput` |
+| 20 | `get_nearby_amenities` | Members 1+2 | spatial | `GetNearbyAmenitiesInput` | `GetNearbyAmenitiesOutput` |
+| 21 | `find_resale_blocks_near` | Member 1 | market_sql | `FindResaleBlocksNearInput` | `FindResaleBlocksNearOutput` |
+| 22 | `get_area_resale_statistics` | Member 1 | market_sql | `GetAreaResaleStatisticsInput` | `GetAreaResaleStatisticsOutput` |
+| 23 | `get_area_price_trend` | Member 1 | market_sql | `GetAreaPriceTrendInput` | `GetAreaPriceTrendOutput` |
 
-All models live in `agents/schemas.py`. The original Phase 1 inventory had 11
-tools; comparable-sale analytics adds a twelfth. Variant A gets all 12;
-Variant B's combined agent gets the 11 non-policy tools and its Policy agent
-gets tool 11. The contract extension needs Member 4's integration review.
+Models for tools 1-13 live in `agents/schemas.py`; tools 14-23 live in
+`agents/research_schemas.py` and are registered in the same `TOOL_OWNER` /
+`TOOL_INPUT_MODEL`. The original Phase 1 inventory had 11 tools; comparable-sale
+analytics, address-centred school lookup and the ten research tools add twelve.
+Variant A gets all 23; Variant B's combined agent gets the 22 non-policy tools and
+its Policy agent gets tool 11. The contract extension needs Member 4's integration review.
 Earlier evaluation runs retain their original inventory and mock/real settings;
 new evaluations must record the expanded inventory.
 `relax_unsatisfied_constraints` is a deterministic supervisor **node**, not an
 LLM-callable tool, so it is not counted.
+
+Research tools take the user's address text and resolve it themselves; they never
+need model-supplied coordinates. `ExtractedConstraints` gains `addresses`,
+`asking_price_sgd`, `bto_project_name`, `trend_years`, six `wants_*` intent flags,
+`assumptions` (disclosed defaults, e.g. "near an MRT" = 500 m) and `clarifications`
+(questions to ask instead of guessing). The model is given `LLMExtractedConstraints`,
+whose typed `amenity_radii_meters` is accepted by strict JSON-schema providers; the
+supervisor converts it back and records `user_constraints.extraction_source`
+(`llm:<method>` or `regex`). `agents/research_intents.py` holds the deterministic
+plans, the coverage check (needed research tools the model skipped are run and
+logged as `supervisor`, so Tool F1 still measures only the model), coordinate
+provenance checks and answer/map rendering. Spatial `location_results` is a new
+state slot; `spatial_block_candidates` is set only by block-filtering tools.
+
+Address-centred school lookup uses `ExtractedConstraints.nearby_schools` and
+`HDBCompassState.nearby_school_results`, separate from candidate resale blocks.
+Explicit “schools near [address]” requests resolve through this tool before
+any market search. Status is `ok`, `needs_information` or `unavailable`;
+`schools=[]` means no matches only when status is `ok`. The tool rejects
+placeholder street names and ambiguous addresses, and discloses the default
+2km straight-line radius and unverified snapshot freshness. Distances are
+not official MOE registration boundaries or walking routes.
+The WebSocket carries the result as `school_lookup`; map markers and the
+answer use that same result, with no `qualifying_blocks` resale list.
 
 ### How to deliver a real tool (Members 1 and 3)
 
@@ -153,7 +190,12 @@ sub-agent slots. Member 2's `geo_agent` becomes the spatial sub-agent inside it
 
 Everyone calls `agents.llm.get_llm()`. Never instantiate a chat model directly.
 Profiles (`config → llm.profiles`): `ollama` for local dev, `vllm` for the SCIS
-GPU cluster, `none` for deterministic no-model runs. No paid provider. Select with `LLM_PROFILE` in `.env`.
+GPU cluster, `groq`/`openai` for hosted inference, `compatible` for another
+OpenAI-compatible endpoint, and `none` for deterministic no-model runs. Select
+with `LLM_PROFILE` in `.env`; credentials remain in the backend environment.
+Opt-in `auto` chooses the first available configured provider and retains it until
+restart. Select an explicit profile for benchmarks. Configuration and tool-call
+diagnostics are documented in the root README.
 The model is the same for A/B/C and for the auditor — that is a condition of
 Experiment 1.
 

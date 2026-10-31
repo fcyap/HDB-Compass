@@ -56,7 +56,7 @@ def build_graph():
     g.add_edge(START, "input_guardrail")
     g.add_conditional_edges("input_guardrail", sv.guardrail_gate, ["extract_constraints", "finalize"])
     g.add_edge("extract_constraints", "route")
-    g.add_conditional_edges("route", sv.dispatch, [f"{a}_agent" for a in sv.SPECIALISTS])
+    g.add_conditional_edges("route", sv.dispatch, [f"{a}_agent" for a in sv.SPECIALISTS] + ["synthesize"])
     for agent in sv.SPECIALISTS:
         g.add_edge(f"{agent}_agent", "intersect_candidates")
     g.add_conditional_edges("intersect_candidates", sv.should_relax, ["relax_constraints", "synthesize"])

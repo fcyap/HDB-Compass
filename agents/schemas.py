@@ -55,6 +55,9 @@ class ExtractedConstraints(BaseModel):
     cpf_oa_balance: Optional[float] = None
     cash_savings: Optional[float] = None
     school_name: Optional[str] = None
+    nearby_schools: Optional["FindSchoolsNearAddressInput"] = Field(
+        None, description="Primary schools near a residential address, not blocks near a named school. Preserve the user's address; never invent one."
+    )
     work_destinations: List[str] = Field(default_factory=list)
     max_commute_minutes: Optional[int] = None
     policy_question: Optional[str] = Field(None, description="Regulatory question, if any, for Agent 5")
@@ -66,6 +69,42 @@ class ExtractedConstraints(BaseModel):
     financial_inputs: Optional["FinancialScenario"] = Field(
         None, description="Explicit financial facts only. Never invent eligibility confirmations, citizenship, age, funds, fees or zero debts/grants."
     )
+    # --- research intents (Member 1; see agents/research_intents.py) ---
+    addresses: List[str] = Field(default_factory=list, description="Blocks, postal codes or named places exactly as the user wrote them")
+    asking_price_sgd: Optional[float] = Field(None, description="A specific flat's asking/offer price the user wants checked")
+    bto_project_name: Optional[str] = Field(None, description="A named BTO launch project, e.g. 'Berlayar Rise'")
+    trend_years: Optional[int] = Field(None, ge=1, le=30, description="Years for 'over the last N years' questions")
+    wants_block_history: bool = False
+    wants_market_snapshot: bool = False
+    wants_town_ranking: bool = False
+    wants_option_comparison: bool = False
+    wants_price_assessment: bool = False
+    wants_nearby_amenities: bool = False
+    wants_area_statistics: bool = False
+    area_radius_meters: Optional[int] = Field(None, ge=50, le=3000, description="Radius for an area question, e.g. 'within 300m of Blk 277'")
+    assumptions: List[str] = Field(default_factory=list, description="Defaults applied to vague requests; shown to the user")
+    clarifications: List[str] = Field(default_factory=list, description="Questions the user must answer; never guess these")
+
+
+class AmenityRadii(BaseModel):
+    """Typed radii for model extraction: strict JSON-schema providers reject open-ended dicts."""
+    mrt: Optional[int] = None
+    hawker: Optional[int] = None
+    supermarket: Optional[int] = None
+    school: Optional[int] = None
+    bus_stop: Optional[int] = None
+    park: Optional[int] = None
+
+
+class LLMExtractedConstraints(ExtractedConstraints):
+    """The schema given to the model; converted to ExtractedConstraints by the supervisor."""
+    amenity_radii_meters: AmenityRadii = Field(default_factory=AmenityRadii,
+                                               description="Distance limits in metres the user stated; null when not stated")
+
+    def to_constraints(self) -> "ExtractedConstraints":
+        data = self.model_dump(exclude={"amenity_radii_meters"})
+        data["amenity_radii_meters"] = {k: v for k, v in self.amenity_radii_meters.model_dump().items() if v}
+        return ExtractedConstraints(**data)
 
 
 class RoutingDecision(BaseModel):
@@ -97,10 +136,14 @@ class QueryResaleBlocksInput(BaseModel):
     flat_types: List[str]
     max_price: float = Field(..., ge=0, allow_inf_nan=False)
     min_lease_years: int = Field(..., ge=0, le=99)
+    block_keys: Optional[List[str]] = Field(
+        None, description="Restrict to these 'BLOCK STREET' keys (e.g. '123 BISHAN ST 13'); used to price blocks from spatial results")
 
-    @field_validator("towns", "flat_types")
+    @field_validator("towns", "flat_types", "block_keys")
     @classmethod
-    def normalise_filters(cls, values: List[str]) -> List[str]:
+    def normalise_filters(cls, values: Optional[List[str]]) -> Optional[List[str]]:
+        if values is None:
+            return None
         result = [" ".join(value.upper().split()) for value in values]
         if any(not value for value in result):
             raise ValueError("Filter values must not be blank")
@@ -182,6 +225,9 @@ class TownTrendSummary(BaseModel):
     yoy_unavailable_reason: Optional[
         Literal["missing_prior_year_quarter", "incomplete_prior_year_quarter"]
     ] = None
+    period_start_quarter: Optional[str] = Field(None, description="Earliest complete quarter in the display window")
+    period_change_pct: Optional[float] = Field(None, description="Latest vs earliest complete quarter median over the window")
+    period_cagr_pct: Optional[float] = Field(None, description="Compound annual growth rate over that span")
 
 
 class TownPriceTimeseriesMetadata(BaseModel):
@@ -313,15 +359,31 @@ class QueryComparableResaleOutput(BaseModel):
 
 class CompareBtoLaunchVsResaleInput(BaseModel):
     bto_project_name: str
-    radius_meters: int = 500
+    radius_meters: int = Field(500, description="Kept for compatibility; launch sites have no published coordinates")
+    flat_type: str = Field("4 ROOM", description="e.g. '4 ROOM', '3 ROOM', '2-ROOM FLEXI (TYPE 2)'")
 
 
 class CompareBtoLaunchVsResaleOutput(BaseModel):
+    """Real output adds status/provenance fields; the legacy mock fills only the original five."""
+    status: Literal["ok", "not_found", "flat_type_not_offered"] = "ok"
     bto_project_name: str
-    bto_indicative_price_range: Dict[str, float] = Field(..., examples=[{"min": 420000, "max": 560000}])
-    resale_median_nearby: float
-    resale_sample_size: int
-    price_gap_pct: float
+    bto_indicative_price_range: Optional[Dict[str, float]] = Field(None, examples=[{"min": 420000, "max": 560000}])
+    resale_median_nearby: Optional[float] = None
+    resale_sample_size: Optional[int] = None
+    price_gap_pct: Optional[float] = None
+    flat_type: Optional[str] = None
+    town: Optional[str] = None
+    launch_month: Optional[str] = None
+    classification: Optional[Literal["Standard", "Plus", "Prime"]] = None
+    floor_area_sqm: Optional[float] = None
+    units: Optional[int] = None
+    waiting_time_months: Optional[str] = None
+    hdb_resale_comparable_range: Optional[Dict[str, float]] = Field(None, description="HDB's own 'resale comparables nearby' from the launch annex")
+    resale_basis: Optional[str] = None
+    available_projects: List[str] = Field(default_factory=list)
+    available_flat_types: List[str] = Field(default_factory=list)
+    source_url: Optional[str] = None
+    notes: List[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +403,35 @@ class SpatialBlockRecord(BlockRef):
 
 class VerifyPrimarySchoolDistanceInput(BaseModel):
     school_name: str
-    bracket: Literal["1km", "2km"] = "1km"
+    bracket: Literal["1km", "2km", "1-2km"] = "1km"
+
+
+class FindSchoolsNearAddressInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    address: str = Field(..., min_length=1, max_length=300,
+                         description="User-supplied block and street, block and town, or six-digit postal code. No inferred addresses.")
+    radius_meters: float = Field(2000, gt=0, le=10000,
+                                description="Straight-line search radius; default 2000 m, disclosed to the user.")
+
+
+class NearbySchoolRecord(BaseModel):
+    name: str
+    address: str
+    lat: float
+    lng: float
+    distance_meters: float
+
+
+class FindSchoolsNearAddressOutput(BaseModel):
+    status: Literal["ok", "needs_information", "unavailable"]
+    message: str
+    radius_meters: float
+    location: Optional[BlockRef] = None
+    address_candidates: List[BlockRef] = Field(default_factory=list)
+    schools: List[NearbySchoolRecord] = Field(default_factory=list)
+    distance_method: Literal["straight_line_svy21"] = "straight_line_svy21"
+    source: str = "Local spatial index; primary schools only; freshness not verified"
 
 
 class ComputeDualTransitCommuteInput(BaseModel):
@@ -463,6 +553,7 @@ class FinancialScenario(BaseModel):
 
 
 ExtractedConstraints.model_rebuild()
+LLMExtractedConstraints.model_rebuild()
 
 
 # ---------------------------------------------------------------------------
@@ -510,19 +601,44 @@ class ToolCallRecord(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Tool inventory: original 11 tools plus comparable resale analytics.
+# Tool inventory: original 11 tools plus comparable analytics, school lookup and
+# the research tools in agents/research_schemas.py.
 # ---------------------------------------------------------------------------
+from agents.research_schemas import (  # noqa: E402  (kept beside the inventory that uses them)
+    AssessResalePriceInput,
+    CompareResaleOptionsInput,
+    FindResaleBlocksNearInput,
+    GetAreaPriceTrendInput,
+    GetAreaResaleStatisticsInput,
+    GetBlockTransactionHistoryInput,
+    GetMarketSnapshotInput,
+    GetNearbyAmenitiesInput,
+    RankTownsByValueInput,
+    ResolveLocationInput,
+)
+
 TOOL_OWNER: Dict[str, str] = {
     # Agent 2 — Member 1
     "query_resale_blocks_by_criteria": "market_sql",
     "compute_town_price_timeseries": "market_sql",
     "query_comparable_resale_transactions": "market_sql",
     "compare_bto_launch_vs_resale": "market_sql",
+    "get_block_transaction_history": "market_sql",
+    "get_market_snapshot": "market_sql",
+    "rank_towns_by_value": "market_sql",
+    "compare_resale_options": "market_sql",
+    "assess_resale_price": "market_sql",
+    "find_resale_blocks_near": "market_sql",
+    "get_area_resale_statistics": "market_sql",
+    "get_area_price_trend": "market_sql",
     # Agent 3 — Member 2
     "filter_blocks_by_amenity_proximity": "spatial",
     "verify_primary_school_distance": "spatial",
+    "find_primary_schools_near_address": "spatial",
     "compute_dual_transit_commute": "spatial",
     "sync_interactive_map_ui": "spatial",
+    "resolve_location": "spatial",
+    "get_nearby_amenities": "spatial",
     # Agent 4 — Member 1
     "calculate_cpf_housing_grants": "financial",
     "calculate_maximum_affordability": "financial",
@@ -530,10 +646,10 @@ TOOL_OWNER: Dict[str, str] = {
     # Agent 5 — Member 3
     "retrieve_hdb_policy_knowledge": "policy_rag",
 }
-# Variant A gets all 12. Variant B's combined agent gets the 11 non-RAG tools;
+# Variant A gets all 23. Variant B's combined agent gets the 22 non-RAG tools;
 # the policy agent gets 1. relax_unsatisfied_constraints is a deterministic supervisor
 # node, not an LLM-callable tool, so it is not counted.
-assert len(TOOL_OWNER) == 12
+assert len(TOOL_OWNER) == 23
 
 TOOL_INPUT_MODEL: Dict[str, type[BaseModel]] = {
     "query_resale_blocks_by_criteria": QueryResaleBlocksInput,
@@ -542,10 +658,21 @@ TOOL_INPUT_MODEL: Dict[str, type[BaseModel]] = {
     "compare_bto_launch_vs_resale": CompareBtoLaunchVsResaleInput,
     "filter_blocks_by_amenity_proximity": FilterBlocksByAmenityProximityInput,
     "verify_primary_school_distance": VerifyPrimarySchoolDistanceInput,
+    "find_primary_schools_near_address": FindSchoolsNearAddressInput,
     "compute_dual_transit_commute": ComputeDualTransitCommuteInput,
     "sync_interactive_map_ui": SyncInteractiveMapUiInput,
     "calculate_cpf_housing_grants": CalculateCpfHousingGrantsInput,
     "calculate_maximum_affordability": CalculateMaximumAffordabilityInput,
     "calculate_bsd_and_upfront_outlay": CalculateBsdAndUpfrontOutlayInput,
     "retrieve_hdb_policy_knowledge": RetrieveHdbPolicyKnowledgeInput,
+    "get_block_transaction_history": GetBlockTransactionHistoryInput,
+    "get_market_snapshot": GetMarketSnapshotInput,
+    "rank_towns_by_value": RankTownsByValueInput,
+    "compare_resale_options": CompareResaleOptionsInput,
+    "assess_resale_price": AssessResalePriceInput,
+    "find_resale_blocks_near": FindResaleBlocksNearInput,
+    "get_area_resale_statistics": GetAreaResaleStatisticsInput,
+    "get_area_price_trend": GetAreaPriceTrendInput,
+    "resolve_location": ResolveLocationInput,
+    "get_nearby_amenities": GetNearbyAmenitiesInput,
 }

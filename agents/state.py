@@ -19,6 +19,7 @@ class UserConstraints(TypedDict, total=False):
     citizenship_scheme: Optional[str]      # e.g. "SC_SC_FirstTimer", "SC_Single_35"
     financial_inputs: Optional[Dict[str, Any]]
     comparable_resale: Optional[Dict[str, Any]]
+    nearby_schools: Optional[Dict[str, Any]]
 
 
 class HDBCompassState(TypedDict, total=False):
@@ -36,6 +37,8 @@ class HDBCompassState(TypedDict, total=False):
     active_subagents: List[str]
     sql_market_results: Optional[Dict[str, Any]]
     spatial_block_candidates: Optional[List[Dict[str, Any]]]   # Owned by Member 2
+    nearby_school_results: Optional[Dict[str, Any]]
+    location_results: Optional[Dict[str, Any]]                 # resolve_location / get_nearby_amenities outputs (Member 1)
     financial_breakdown: Optional[Dict[str, Any]]
     rag_policy_passages: Optional[List[Dict[str, Any]]]
     candidate_blocks_intersection: List[Dict[str, Any]]
@@ -49,3 +52,4 @@ class HDBCompassState(TypedDict, total=False):
     variant: str                                                   # "A" | "B" | "C" — which architecture produced this run
     errors: Annotated[List[str], operator.add]                     # non-fatal sub-agent errors surfaced to the UI/eval
     subagent_notes: Annotated[List[Dict[str, Any]], operator.add]  # {"agent", "text"}: each sub-agent's own final summary
+    fast_path: bool                                                # app mode: answer recognised questions without model calls

@@ -1,9 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { SplitScreenLayout } from './components/SplitScreenLayout';
-import { AgentChat, ChatMessage, LogMessage } from './components/AgentChat';
-import { InteractiveMap, MapViewport } from './components/InteractiveMap';
+import { AgentChat, ChatMessage, LogMessage, ModelInfo } from './components/AgentChat';
+import { InteractiveMap, MapViewport, FACILITY_RADIUS_METERS } from './components/InteractiveMap';
 
-const WS_URL = 'ws://localhost:8000/ws';
+const websocketUrl = new URL('/ws', window.location.href);
+websocketUrl.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const WS_URL = websocketUrl.toString();
 
 const INITIAL_MESSAGES: ChatMessage[] = [
   {
@@ -11,9 +13,9 @@ const INITIAL_MESSAGES: ChatMessage[] = [
     sender: 'agent',
     text: `**Welcome to HDB-Compass**
 Your AI assistant for Singapore public housing decisions:
-- **School Priority:** Check 1km and 1–2km MOE Primary 1 registration boundaries.
-- **Lifestyle & Proximity:** Search within walking distance of MRT exits, hawkers, and amenities.
-- **Candidate Flats:** Inspect matching resale blocks with real-time map synchronization.
+- **Schools:** Find primary schools near a full HDB address or postal code. Distances are approximate, not official registration boundaries.
+- **Lifestyle & Proximity:** Explore straight-line distances to MRT stations, hawkers, and amenities.
+- **Resale Data:** Explore historical block statistics with synchronized map results; these are not active listings.
 
 Choose a suggestion above or type a query to begin.`,
     timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -33,8 +35,14 @@ export function App() {
   const [theme, setTheme] = useState<string>('Night');
   const [agentStatus, setAgentStatus] = useState<string>('READY');
   const [wsConnected, setWsConnected] = useState<boolean>(false);
+  const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const currentMsgIdRef = useRef<string | null>(null);
+  // The user's last map click; sent with each question so "here" / "this block" resolve to it.
+  const pinnedRef = useRef<{ lat: number; lng: number } | null>(null);
+  const handleMapClick = useCallback((lat: number, lng: number) => {
+    pinnedRef.current = { lat, lng };
+  }, []);
 
   // ---------------------------------------------------------------------------
   // WebSocket Lifecycle & Multi-Agent Streaming State Bridge
@@ -49,6 +57,10 @@ export function App() {
       ws.onopen = () => {
         setWsConnected(true);
         setAgentStatus('READY');
+        fetch('/api/model/status')
+          .then((response) => response.ok ? response.json() : Promise.reject())
+          .then(setModelInfo)
+          .catch(() => setModelInfo({ status: 'unavailable', message: 'Could not read model configuration.' }));
       };
 
       ws.onmessage = (event) => {
@@ -56,12 +68,18 @@ export function App() {
           const payload = JSON.parse(event.data);
 
           switch (payload.type) {
+            case 'MODEL_STATUS':
+              setModelInfo(payload);
+              break;
             case 'CONNECTION_ESTABLISHED':
               setAgentStatus('READY');
               break;
 
             case 'AGENT_STARTED':
               setAgentStatus('SEARCHING');
+              setBufferGeoJSON(null);
+              setPoisGeoJSON(null);
+              setSelectedBlockHighlight(null);
               break;
 
             case 'STEP_UPDATE':
@@ -115,7 +133,7 @@ export function App() {
                       ? {
                           ...m,
                           text: payload.summary,
-                          status: 'completed',
+                          status: 'running',
                           structuredData: {
                             target_name: payload.summary.split('\n')[0].replace(/\*\*/g, ''),
                             total_blocks_found: payload.qualifying_blocks?.length || 0,
@@ -125,6 +143,7 @@ export function App() {
                             market_summary: payload.market_summary,
                             financial_summary: payload.financial_summary,
                             policy_notes: payload.policy_notes,
+                            school_lookup: payload.school_lookup,
                           },
                         }
                       : m
@@ -197,12 +216,14 @@ export function App() {
   // User Actions: Send Query & Clear
   // ---------------------------------------------------------------------------
   const handleSendQuery = (queryText: string) => {
+    if (agentStatus === 'SEARCHING') return;
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       alert('Connecting to server. Please wait a moment...');
       return;
     }
 
     const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setAgentStatus('SEARCHING');
 
     // 1. User Message
     const userMsg: ChatMessage = {
@@ -232,7 +253,8 @@ export function App() {
       JSON.stringify({
         type: 'RUN_AGENT',
         query: queryText,
-        radius_meters: 1000.0,
+        radius_meters: FACILITY_RADIUS_METERS,
+        ...(pinnedRef.current ? { lat: pinnedRef.current.lat, lng: pinnedRef.current.lng } : {}),
       })
     );
   };
@@ -246,6 +268,7 @@ export function App() {
     setPoisGeoJSON(null);
     setSelectedBlockHighlight(null);
     setClearTrigger((prev) => prev + 1);
+    pinnedRef.current = null;
     currentMsgIdRef.current = null;
     setAgentStatus('READY');
   };
@@ -257,6 +280,7 @@ export function App() {
           messages={messages}
           agentStatus={agentStatus}
           wsConnected={wsConnected}
+          modelInfo={modelInfo}
           onSendQuery={handleSendQuery}
           onClear={handleClear}
           onSelectBlock={(blockName) => setSelectedBlockHighlight(blockName)}
@@ -267,6 +291,7 @@ export function App() {
           bufferGeoJSON={bufferGeoJSON}
           poisGeoJSON={poisGeoJSON}
           viewport={viewport}
+          onMapClick={handleMapClick}
           theme={theme}
           onThemeChange={setTheme}
           selectedBlockHighlight={selectedBlockHighlight}
