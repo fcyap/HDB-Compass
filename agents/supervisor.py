@@ -37,6 +37,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from agents.llm import active_profile, get_llm, load_config
 from agents import addons
+from agents import scope
 from agents import research_intents as ri
 from agents.schemas import (
     TOOL_OWNER,
@@ -3406,6 +3407,13 @@ def input_guardrail_node(state: HDBCompassState) -> Dict[str, Any]:
     else:
         note = hook_problem_note("input_guardrail")
         update = {"errors": note} if note else {}  # pass-through until Member 5 delivers
+        # stand-in for Member 5's check: greetings, off-topic asks, forecasts and prompt-injection get a fixed reply
+        # (agents/scope.py). An open question or earlier turns mean a short message is an answer, not a stray ask.
+        user_turns = [m for m in state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user"]
+        mid = bool(state.get("pending_clarification")) or len(user_turns) > 1 or bool(state.get("map_ui_payload"))
+        stray = scope.scope_reply(last_user_query(state), mid)
+        if stray:
+            return {**update, "draft_response": stray}
     # school questions the lookup cannot answer are stopped here, after Member 5's own check
     reply = guard_school_request(last_user_query(state), lambda q: bool(rule_based_extract(q).school_name))
     return {**update, "draft_response": reply} if reply else update

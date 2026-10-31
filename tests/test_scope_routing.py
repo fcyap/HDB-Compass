@@ -120,7 +120,7 @@ TABLE = [
 ]
 
 # rows for later steps stay xfail (strict, so a fix that lands is noticed) until their step is done
-PENDING_KINDS = {"scope": "step 2: scope check", "menu": "step 3: menu"}
+PENDING_KINDS = {"menu": "step 3: menu"}
 PENDING_QUERIES = {
     "What's the stamp duty on a $600k flat?": "step 6: price in '$600k flat' form",
     "How long is the commute from Tampines to Raffles Place?": "step 6: single commute",
