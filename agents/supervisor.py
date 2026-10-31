@@ -337,7 +337,7 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
                  # who may buy, which grants exist, income limits, how often one may apply (the stems above need endings)
                  r"|(?:can|may|could) (?:an? )?(?:pr|prs|permanent residents?|foreigners?|singles?|singaporeans?|divorcees?|widow(?:er)?s?)\s+(?:buy|apply|own|purchase|get)"
                  r"|(?:pr|prs|permanent residents?|foreigners?|singles?|divorcees?|widow(?:er)?s?)\s+(?:allowed|able|permitted|eligible)\s+to\s+(?:buy|apply|own|purchase)"
-                 r"|(?:what|which) (?:housing )?grants? (?:are|is|exist)|grants? (?:are )?(?:available|offered)|grants? for (?:first|second|singles?|young|large|married|couples?|families|seniors?|resale|bto)|income (?:ceiling|cap|limit)s?"
+                 r"|(?:what|which) (?:housing |cpf )?grants? (?:are|is|exist|can|could|do|does|would|will|am|might)|grants? (?:are )?(?:available|offered)|grants? for (?:first|second|singles?|young|large|married|couples?|families|seniors?|resale|bto)|income (?:ceiling|cap|limit)s?"
                  r"|how many times (?:can|may) (?:i|we) apply|second[- ]?timers?"
                  r"|(?:can|may) (?:i|we) (?:rent out|sublet)|rent out (?:my|our|the) (?:whole )?(?:flat|room|bedroom|unit)|buyback)\b", q, re.I):
         policy = q
@@ -1957,13 +1957,17 @@ def run_financial_sequence(runners, constraints, query):
     grant_name = "calculate_cpf_housing_grants"
     aff_name = "calculate_maximum_affordability"
     upfront_name = "calculate_bsd_and_upfront_outlay"
-    if grant_name in runners:
+    # A stamp-duty / upfront-cost question that states no grant or budget fact runs only the upfront calculator: the
+    # grant and affordability calculators would only answer with a long list of facts nobody asked about.
+    upfront_only = (upfront_name in runners and asked_for(upfront_name, constraints, query)
+                    and upfront_args.get("purchase_price") and not grant_args and not aff_args)
+    if grant_name in runners and not upfront_only:
         grants = outputs[grant_name] = runners[grant_name](**grant_args)
         if grants.get("status") == "ok":
             for target in (aff_args, upfront_args):
                 if target.get("total_grants") is None:
                     target["total_grants"] = grants["total_grants"]
-    if aff_name in runners:
+    if aff_name in runners and not upfront_only:
         aff = outputs[aff_name] = runners[aff_name](**aff_args)
         if aff.get("status") == "ok" and upfront_args.get("loan_type", "hdb") == aff_args.get("loan_type", "hdb"):
             upfront_args.setdefault("ltv_ratio", aff["ltv_ratio"])
@@ -2585,6 +2589,10 @@ def template_response(state: HDBCompassState) -> str:
                 detail = ", ".join(field.replace("_", " ") for field in value.get("missing_inputs", [])) or "; ".join(value.get("notes", []))
                 status = "more information needed" if value.get("status") == "needs_information" else "scenario unavailable"
                 lines.append(f"- {label}: {status} — {detail}")
+                if name == "calculate_bsd_and_upfront_outlay" and value.get("buyer_stamp_duty") is not None:
+                    # stamp duty needs only the price, so it is shown even when the full funding estimate cannot run
+                    lines.append(f"- Buyer's stamp duty: **${value['buyer_stamp_duty']:,.0f}** (on the purchase price; "
+                                 "charged on the valuation instead if that is higher)")
         fin = {name: value for name, value in fin.items() if value.get("status", "ok") == "ok" and "error" not in value}
         g = fin.get("calculate_cpf_housing_grants")
         if g:

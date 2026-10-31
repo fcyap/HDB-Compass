@@ -361,7 +361,16 @@ def calculate_bsd_and_upfront_outlay(
         ],
     )
     if needed:
-        return finish(status="needs_information", missing_inputs=needed)
+        # BSD needs only the price, so a stamp-duty question is answered even when the funding inputs are missing.
+        # It is charged on the higher of price and valuation; with the valuation unknown, it is the duty on the price.
+        return finish(
+            status="needs_information",
+            missing_inputs=needed,
+            buyer_stamp_duty=money(buyer_stamp_duty(D(x.purchase_price))),
+            notes=[
+                "Buyer's stamp duty is on the purchase price; if the valuation comes in higher, it is charged on the valuation instead."
+            ],
+        )
     price, value, loan = D(x.purchase_price), D(x.market_valuation), D(x.loan_amount)
     basis = min(price, value)
     ltv = D(x.ltv_ratio)

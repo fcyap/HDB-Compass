@@ -99,6 +99,8 @@ TABLE = [
     ("Can a PR buy a resale flat?", ("route", ["policy_rag"])),
     ("Can singles buy a BTO flat?", ("route", ["policy_rag"])),
     ("What grants are available for first-timers?", ("route", ["policy_rag"])),
+    ("What grants can a first-timer couple get for a resale flat?", ("route", ["policy_rag"])),
+    ("What grants can I get?", ("route", ["policy_rag"])),
     ("Am I eligible for the Enhanced CPF Housing Grant?", ("route", ["policy_rag"])),
     ("What schemes are available for young couples?", ("route", ["policy_rag"])),
     ("What is the income ceiling for a BTO?", ("route", ["policy_rag"])),
@@ -297,3 +299,13 @@ def test_block_list_claims_to_meet_limits_only_when_limits_were_set():
     assert plain.startswith("Blocks with recent 4-room sales in Tampines, cheapest first") and "every limit" not in plain
     limited = variant_c.run("Find 4-room flats in Tampines under $600k")["draft_response"]
     assert "meet every limit you set" in limited
+
+
+def test_stamp_duty_alone_gives_the_duty_and_runs_only_the_upfront_calculator():
+    # found in review: the duty was withheld until every funding input was known, and the grant and budget
+    # calculators ran too, so the answer was a list of ~30 missing facts instead of $12,600
+    from agents import arch_3_specialist_5agent as C
+    out = C.run("What's the stamp duty on a $600k flat?")
+    assert [r["tool"] for r in out["tool_call_log"]] == ["calculate_bsd_and_upfront_outlay"]
+    assert "Buyer's stamp duty: **$12,600**" in out["draft_response"]
+    assert not out.get("clarification")
