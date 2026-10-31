@@ -268,9 +268,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     res = run_experiment(client, args.dataset, args.variant, args.limit)
     print(f"experiment: {getattr(res, 'experiment_name', res)}")
     try:
-        df = res.to_pandas()
-        cols = [c for c in df.columns if c.startswith("feedback.")]
-        print(df[cols].mean(numeric_only=True).to_string())
+        totals: Dict[str, List[float]] = {}
+        for row in res:   # no pandas needed: average each feedback key over the rows
+            for r in (row.get("evaluation_results") or {}).get("results", []):
+                if isinstance(r.score, (int, float)):
+                    totals.setdefault(r.key, []).append(float(r.score))
+        for k, v in sorted(totals.items()):
+            print(f"  {k:<20} {sum(v) / len(v):.3f}  (n={len(v)})")
     except Exception as e:  # noqa: BLE001
         print(f"(scores table unavailable: {e})")
     try:
