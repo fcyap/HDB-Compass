@@ -147,3 +147,20 @@ def test_a_pointing_phrase_copied_into_addresses_is_not_a_place(research_env, ph
     c = {**sv.rule_based_extract("the pin").model_dump(), "addresses": [phrase]}
     ri.resolve_place(c, "the pin", None, EARLIER, pending)
     assert c["addresses"] == ["Blk 1 BISHAN ST 1"]
+
+
+# --- generic amenity words are not places ------------------------------------------------------------------------
+@pytest.mark.parametrize("query", [
+    "What are the historical statistics of HDBs sold near MRT stations?", "Flats near an MRT", "near the LRT",
+    "homes near MRTs", "near hawker centres", "near supermarkets", "near a primary school"])
+def test_generic_amenity_words_are_not_addresses(query):
+    from agents.research_intents import extract_addresses
+    assert extract_addresses(query) == []
+
+
+@pytest.mark.parametrize("query, place", [
+    ("Prices near Bishan MRT", "Bishan MRT"), ("flats near Toa Payoh hawker centre", "Toa Payoh hawker centre"),
+    ("near Ai Tong School", "Ai Tong School")])
+def test_named_amenities_are_still_places(query, place):
+    from agents.research_intents import extract_addresses
+    assert extract_addresses(query) == [place]

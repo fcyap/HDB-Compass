@@ -121,7 +121,8 @@ def extract_addresses(query: str) -> List[str]:
     for m in _POSTAL.finditer(query):
         add(m.start(), m.end(), m.group(1))
     for m in _PLACE.finditer(query):
-        add(m.start(1), m.end(1), m.group(1))
+        if not generic_amenity_phrase(m.group(1)):
+            add(m.start(1), m.end(1), m.group(1))
     return [text for _, text in sorted(found)]
 
 
@@ -134,6 +135,18 @@ def known_bto_project(query: str) -> Optional[str]:
     q = " ".join(query.upper().split())
     hits = [p for p in projects if p.upper() in q]
     return max(hits, key=len) if hits else None
+
+
+# "near an MRT", "near MRT stations", "near the hawker centre": a kind of place, not a place. Only a phrase that
+# adds a name ("Bishan MRT", "Toa Payoh hawker centre", "Ai Tong School") points at one.
+_KIND_ONLY = {"mrt", "lrt", "station", "stations", "interchange", "hawker", "food", "centre", "centres", "market",
+              "primary", "school", "schools", "supermarket", "supermarkets", "train", "bus"}
+_DETERMINERS = {"a", "an", "the", "any", "some", "each", "every", "nearby", "nearest", "closest", "local", "my", "our"}
+
+
+def generic_amenity_phrase(phrase: str) -> bool:
+    words = [w for w in re.findall(r"[a-z]+", (phrase or "").lower()) if w not in _DETERMINERS]
+    return all(w in _KIND_ONLY for w in words)
 
 
 def generic_school_phrase(name: Optional[str]) -> bool:
