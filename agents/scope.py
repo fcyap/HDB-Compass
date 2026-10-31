@@ -44,7 +44,7 @@ _FORECAST = re.compile(
     re.I)
 
 _HOUSING = re.compile(
-    r"\b(?:hdbs?|btos?|sbf|resale|flats?|rooms?|rm|executive|maisonettes?|studio|blocks?|blks?|storey|floor|unit|units|apartments?|"
+    r"\b(?:hdbs?|btos?|sbf|resale|sales?|sold|transactions?|comparables?|coordinates?|latitude|longitude|flats?|rooms?|rm|executive|maisonettes?|studio|blocks?|blks?|storey|floor|unit|units|apartments?|"
     r"houses?|housing|homes?|propert(?:y|ies)|estate|neighbou?rhoods?|towns?|region|"
     r"mrt|lrt|bus|train|station|school|schools|primary|hawker|amenit\w*|supermarket|clinic|park|mall|commute|"
     r"grants?|cpf|oa|loan|loans|mortgage|hfe|mop|lease|price|prices|priced|cost|costs|afford\w*|budget|income|salary|earn|cash|savings|"
