@@ -9,7 +9,7 @@ What each block gets (straight-line metres in SVY21, the spatial index's own pro
                                         people mean by "near the MRT"
   nearest LRT station and distance      kept apart so "MRT or LRT" and "LRT" questions can use them
   nearest rail (MRT or LRT) station     the nearer of the two
-  nearest hawker centre / supermarket   distance only
+  nearest hawker centre / supermarket / primary school   distance only
   primary schools within 1 km           a count
 
 Interchanges appear in the index more than once (one point per line or exit, slightly apart). Stations are merged by
@@ -74,7 +74,7 @@ class BlockFeatures:
         self.index = {k: i for i, k in enumerate(keys)}
         n = len(keys)
         self.columns: Dict[str, Any] = {name: [None] * n for name in ("mrt_station", "lrt_station", "rail_station")}
-        for name in ("mrt_m", "lrt_m", "rail_m", "hawker_m", "supermarket_m"):
+        for name in ("mrt_m", "lrt_m", "rail_m", "hawker_m", "supermarket_m", "school_m"):
             self.columns[name] = np.full(n, np.nan)
         self.columns["schools_1km"] = np.zeros(n, dtype=int)
         self.build_seconds = 0.0
@@ -99,10 +99,11 @@ class BlockFeatures:
             "unnest(?::VARCHAR[]) AS mrt_station, unnest(?::DOUBLE[]) AS mrt_m, "
             "unnest(?::VARCHAR[]) AS lrt_station, unnest(?::DOUBLE[]) AS lrt_m, "
             "unnest(?::VARCHAR[]) AS rail_station, unnest(?::DOUBLE[]) AS rail_m, "
-            "unnest(?::DOUBLE[]) AS hawker_m, unnest(?::DOUBLE[]) AS supermarket_m, unnest(?::INTEGER[]) AS schools_1km",
+            "unnest(?::DOUBLE[]) AS hawker_m, unnest(?::DOUBLE[]) AS supermarket_m, unnest(?::DOUBLE[]) AS school_m, "
+            "unnest(?::INTEGER[]) AS schools_1km",
             [self.keys, self.towns, c["mrt_station"], _nan_none(c["mrt_m"]), c["lrt_station"], _nan_none(c["lrt_m"]),
              c["rail_station"], _nan_none(c["rail_m"]), _nan_none(c["hawker_m"]), _nan_none(c["supermarket_m"]),
-             [int(v) for v in c["schools_1km"]]])
+             _nan_none(c["school_m"]), [int(v) for v in c["schools_1km"]]])
 
 
 def _nan_none(arr: np.ndarray) -> List[Optional[float]]:
@@ -177,7 +178,9 @@ def build_block_features(con, payload: Dict[str, Any], snapshot_id: str) -> Bloc
             c[column], _ = _nearest(cKDTree(_xy(pts)), xy)
     schools = payload.get("schools") or []
     if schools:
-        counts = cKDTree(_xy(schools)).query_ball_point(xy, r=SCHOOL_RADIUS_M, return_length=True)
+        school_tree = cKDTree(_xy(schools))
+        c["school_m"], _ = _nearest(school_tree, xy)
+        counts = school_tree.query_ball_point(xy, r=SCHOOL_RADIUS_M, return_length=True)
         c["schools_1km"] = np.asarray(counts, dtype=int)
     feats.build_seconds = time.perf_counter() - started
     return feats

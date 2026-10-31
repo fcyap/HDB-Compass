@@ -13,7 +13,7 @@ these models and registers them in TOOL_OWNER / TOOL_INPUT_MODEL.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -456,6 +456,136 @@ class GetAreaPriceTrendOutput(BaseModel):
     period_cagr_pct: Optional[float] = None
     min_quarter_sales: int = Field(..., description="Quarters with fewer sales are shown but not used as endpoints")
     metadata: Optional[ResearchMetadata] = None
+
+
+# ---------------------------------------------------------------------------
+# Grouped resale statistics: island-wide / town / station / distance bands (mcp_server/aggregate_resale_tools.py)
+# ---------------------------------------------------------------------------
+# The allowed values are listed here, in the tool's descriptions and in describe_resale_data. The inputs stay plain
+# strings on purpose: a wrong value comes back from the tool as a structured error that lists the allowed values, so a
+# model can correct itself, instead of a validation exception that ends the call.
+STATS_DIMENSIONS = ("distance_band", "town", "station", "street", "flat_type", "year", "storey_band", "lease_band")
+STATS_NEAR = ("mrt", "mrt_lrt", "lrt", "hawker", "supermarket", "school")
+STATS_METRICS = ("count", "median_price", "p25", "p75", "median_psm", "change_1y_pct", "change_period_pct")
+STATS_SORT = ("median_price", "count", "median_psm", "change")
+
+
+class QueryResaleStatisticsInput(StrictInput):
+    """Grouped resale statistics over every matching past sale (not listings)."""
+    group_by: List[str] = Field(default_factory=lambda: ["distance_band"], min_length=1, max_length=2,
+                                description="1-2 of: " + ", ".join(STATS_DIMENSIONS))
+    towns: List[str] = Field(default_factory=list, description="Only these towns, e.g. ['BISHAN']")
+    flat_types: List[str] = Field(default_factory=list, description="Only these flat types, e.g. ['4 ROOM']")
+    station: Optional[str] = Field(None, description="Only blocks whose nearest station is this one, e.g. 'Bishan MRT'")
+    near: Optional[str] = Field(None, description="Distance to measure: one of " + ", ".join(STATS_NEAR)
+                                + ". mrt leaves LRT out; mrt_lrt counts both")
+    max_distance_m: Optional[int] = Field(None, ge=50, le=3000, strict=True,
+                                          description="Keep only blocks within this many metres (straight line)")
+    bands: Optional[List[int]] = Field(None, min_length=1, max_length=6,
+                                       description="Upper edges in metres for distance_band, e.g. [200, 500, 1000]")
+    lookback_years: Optional[int] = Field(None, ge=1, le=10, strict=True, description="Default 1 year")
+    start_month: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}$", description="YYYY-MM; overrides lookback_years")
+    end_month: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}$", description="YYYY-MM; default the last complete month")
+    metrics: Optional[List[str]] = Field(None, description="Subset of: " + ", ".join(STATS_METRICS) + "; default all")
+    sort_by: Optional[str] = Field(None, description="One of " + ", ".join(STATS_SORT)
+                                   + "; default: by band/year order, else median_price")
+    order: Literal["desc", "asc"] = "desc"
+    top_n: int = Field(10, ge=1, le=50, strict=True)
+    include_trend: bool = Field(False, description="Add each group's median per calendar year")
+    min_sales: int = Field(10, ge=1, le=1000, strict=True, description="Groups with fewer sales are left out")
+
+
+class DescribeResaleDataInput(StrictInput):
+    include_stations: bool = Field(True, description="List the MRT and LRT station names")
+
+
+class StatPeriod(BaseModel):
+    start_month: str
+    end_month: str
+    months: int
+
+
+class StatTrendPoint(BaseModel):
+    year: int
+    count: int
+    median_price: float
+
+
+class StatGroup(BaseModel):
+    key: Dict[str, str]
+    label: str
+    count: int
+    median_price: Optional[float] = None
+    p25: Optional[float] = None
+    p75: Optional[float] = None
+    median_psm: Optional[float] = None
+    change_1y_pct: Optional[float] = Field(None, description="Median of the last 12 months vs the 12 months before")
+    change_period_pct: Optional[float] = Field(None, description="Last 12 months vs first 12 months of the period")
+    trend: Optional[List[StatTrendPoint]] = None
+    lat: Optional[float] = Field(None, description="Station or town centre, for the map")
+    lng: Optional[float] = None
+    drill: Optional[Dict[str, Any]] = Field(None, description="The next-level call: {tool, params}")
+
+
+class StatBaseline(BaseModel):
+    label: str
+    count: int
+    median_price: Optional[float] = None
+    median_psm: Optional[float] = None
+
+
+class StatMapBlock(BaseModel):
+    block_key: str
+    town: str
+    lat: float
+    lng: float
+    group: str
+    count: int
+    median_price: float
+
+
+class QueryResaleStatisticsOutput(BaseModel):
+    status: Literal["ok", "no_data", "invalid_request"]
+    message: str
+    allowed: Optional[Dict[str, List[str]]] = Field(None, description="Valid values, when the request was invalid")
+    group_by: List[str] = Field(default_factory=list)
+    near: Optional[str] = None
+    max_distance_m: Optional[int] = None
+    bands: List[int] = Field(default_factory=list)
+    station: Optional[str] = None
+    towns: List[str] = Field(default_factory=list)
+    flat_types: List[str] = Field(default_factory=list)
+    period: Optional[StatPeriod] = None
+    groups: List[StatGroup] = Field(default_factory=list)
+    baseline: Optional[StatBaseline] = None
+    total_groups: int = 0
+    truncated: bool = False
+    excluded_small_groups: int = 0
+    min_sales: int = 10
+    unlocated_sales_excluded: int = 0
+    distance_definition: Optional[str] = None
+    sort_by: Optional[str] = None
+    order: str = "desc"
+    include_trend: bool = False
+    map_blocks: List[StatMapBlock] = Field(default_factory=list)
+    assumptions: List[str] = Field(default_factory=list)
+    snapshot_id: Optional[str] = None
+    notes: List[str] = Field(default_factory=list)
+
+
+class DescribeResaleDataOutput(BaseModel):
+    status: Literal["ok"] = "ok"
+    snapshot_id: str
+    period_covered: Dict[str, str]
+    dimensions: Dict[str, str]
+    towns: List[str]
+    flat_types: List[str]
+    near_options: Dict[str, str]
+    mrt_stations: List[str] = Field(default_factory=list)
+    lrt_stations: List[str] = Field(default_factory=list)
+    metrics: Dict[str, str]
+    definitions: List[str]
+    example_calls: List[Dict[str, object]] = Field(default_factory=list)
 
 
 GetBlockTransactionHistoryInput.model_rebuild()
