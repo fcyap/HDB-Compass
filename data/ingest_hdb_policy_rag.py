@@ -260,8 +260,12 @@ def compute_dense_embeddings(chunks: List[Dict[str, Any]]) -> np.ndarray:
     # Try SentenceTransformer
     try:
         from sentence_transformers import SentenceTransformer
-        # Use compact, high-quality, fast embedding model
-        model = SentenceTransformer("all-MiniLM-L6-v2")
+        # Try local cache first (instant, offline-safe)
+        try:
+            model = SentenceTransformer("all-MiniLM-L6-v2", local_files_only=True)
+        except Exception:
+            # If not cached yet (e.g. teammate's first run), download once from Hugging Face Hub
+            model = SentenceTransformer("all-MiniLM-L6-v2")
         print(f"Generating dense embeddings using SentenceTransformer(all-MiniLM-L6-v2) for {len(texts)} chunks...")
         embeddings = model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
         return embeddings.astype(np.float32)

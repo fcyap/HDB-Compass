@@ -1,34 +1,36 @@
 """
 RAG Retrieval & Generation Pipeline Ablation Study Runner (evaluation/run_rag_ablation.py)
 Proposal Section 6.2 (Experiment 2, Page 11), Section 6.3 (Pages 11-12) & File Structure (Page 14).
-Owned by Member 3: Advanced RAG & Regulatory Knowledge Base (Category C).
+Owned by Member 3: Advanced RAG & Regulatory Knowledge Base (Categories C & E).
 
-Compares three retrieval + generation configurations across the 15 Category C golden queries:
+Compares three retrieval + generation configurations across the 30 Golden Benchmark queries
+(15 Category C Regulatory queries + 15 Category E Multi-Objective queries):
   1. RAG-1: Naive Dense Vector Search (top-5 cosine similarity over unexpanded body chunks)
   2. RAG-2: Hybrid Search (BM25 + Dense fused via Reciprocal Rank Fusion, top-5)
   3. RAG-3: Hybrid Search + Query Expansion + Cross-Encoder Reranking (top-20 RRF filtered to top-5)
 
-Evaluates BOTH Retrieval and Generation (Agent 5 End-to-End):
+Evaluates BOTH Retrieval and Generation (Agent 5 End-to-End) using formal RAGAS formulation:
   [Retrieval Metrics]
-  - Context Recall: % of ground-truth gold policy clauses retrieved in top-5 (Target > 0.88)
-  - Context Precision: Rank-weighted precision / RAGAS formulation (Target > 0.88)
+  - Context Recall (RAGAS): % of ground-truth gold policy clauses retrieved in top-5 (Target > 0.88)
+  - Context Precision (RAGAS): Rank-weighted Mean Average Precision (MAP@5) over retrieved chunks (Target > 0.88)
   - Mean Reciprocal Rank (MRR): 1 / rank of first relevant passage
   [Generation Metrics — PolicyRagAgent (Agent 5)]
-  - Answer Faithfulness: Fraction of generated claims supported directly by retrieved HDB policy context (Target > 0.96)
+  - Answer Faithfulness (RAGAS): Fraction of generated claims supported directly by retrieved HDB policy context (Target > 0.96)
   - Answer Fact Coverage (Accuracy): Fraction of gold policy facts/clauses accurately synthesized in the final answer
   - Citation Compliance Rate: % of answers containing verified official inline URLs
-  [Chunk Window Ablation]
+  [Chunk Window Ablation (Experiment 2B)]
   - Fixed 256-token vs Hierarchical 512-token (Table-Preserving) vs Fixed 1024-token chunks
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 import statistics
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -37,8 +39,224 @@ from agents.policy_agent import PolicyRagAgent
 from data.ingest_hdb_policy_rag import DOCS_DIR, chunk_section, extract_frontmatter, split_markdown_into_hierarchical_sections
 from mcp_server.policy_rag_tools import execute_rag_pipeline
 
-QUERIES_FILE = PROJECT_ROOT / "evaluation" / "category_c_queries.json"
+CATEGORY_C_FILE = PROJECT_ROOT / "evaluation" / "category_c_queries.json"
+CATEGORY_E_FILE = PROJECT_ROOT / "evaluation" / "category_e_queries.json"
 RESULTS_JSON = PROJECT_ROOT / "evaluation" / "rag_ablation_results.json"
+
+# Ground-truth statutory policy expectations for Category E queries (Proposal §6.2, Page 11)
+CATEGORY_E_POLICY_GROUND_TRUTH: Dict[str, Dict[str, Any]] = {
+    "E1-01": {
+        "target_sections": [
+            "Enhanced CPF Housing Grant (EHG)",
+            "CPF Housing Grant for Resale Flats (Family Grant)",
+            "The 95-Year Lease Coverage Rule & Pro-Rating Formula",
+            "HDB Housing Loan Regulations & Limits",
+        ],
+        "key_clauses": [
+            ["$9,000", "income ceiling"],
+            ["Family Grant", "$80,000"],
+            ["95", "years"],
+            ["30%", "MSR"],
+        ],
+    },
+    "E1-02": {
+        "target_sections": [
+            "CPF Housing Grant for Resale Flats (Family Grant)",
+            "Enhanced CPF Housing Grant (EHG)",
+            "The 95-Year Lease Coverage Rule & Pro-Rating Formula",
+            "HDB Housing Loan Regulations & Limits",
+        ],
+        "key_clauses": [
+            ["Family Grant", "$50,000"],
+            ["$9,000", "income ceiling"],
+            ["95", "years"],
+            ["30%", "MSR"],
+        ],
+    },
+    "E1-03": {
+        "target_sections": [
+            "Enhanced CPF Housing Grant (EHG)",
+            "CPF Housing Grant for Resale Flats (Family Grant)",
+            "The 95-Year Lease Coverage Rule & Pro-Rating Formula",
+            "HDB Housing Loan Regulations & Limits",
+        ],
+        "key_clauses": [
+            ["$9,000", "income ceiling"],
+            ["Family Grant", "$80,000"],
+            ["95", "years"],
+            ["30%", "MSR"],
+        ],
+    },
+    "E1-04": {
+        "target_sections": [
+            "Enhanced CPF Housing Grant (EHG)",
+            "CPF Housing Grant for Resale Flats (Family Grant)",
+            "The 95-Year Lease Coverage Rule & Pro-Rating Formula",
+            "HDB Housing Loan Regulations & Limits",
+        ],
+        "key_clauses": [
+            ["$9,000", "income ceiling"],
+            ["Family Grant", "$80,000"],
+            ["95", "years"],
+            ["30%", "MSR"],
+        ],
+    },
+    "E1-05": {
+        "target_sections": [
+            "Single Singapore Citizen (SSC) Scheme",
+            "CPF Housing Grant for Resale Flats (Family Grant)",
+            "Enhanced CPF Housing Grant (EHG)",
+            "HDB Housing Loan Regulations & Limits",
+        ],
+        "key_clauses": [
+            ["Single Singapore Citizen", "35"],
+            ["Singles Grant", "$40,000"],
+            ["$4,500"],
+            ["30%", "MSR"],
+        ],
+    },
+    "E1-06": {
+        "target_sections": [
+            "CPF Housing Grant for Resale Flats (Family Grant)",
+            "Enhanced CPF Housing Grant (EHG)",
+            "The 95-Year Lease Coverage Rule & Pro-Rating Formula",
+            "HDB Housing Loan Regulations & Limits",
+        ],
+        "key_clauses": [
+            ["Family Grant", "$50,000"],
+            ["$9,000", "income ceiling"],
+            ["95", "years"],
+            ["30%", "MSR"],
+        ],
+    },
+    "E1-07": {
+        "target_sections": [
+            "CPF Housing Grant for Resale Flats (Family Grant)",
+            "Enhanced CPF Housing Grant (EHG)",
+            "Citizen Top-Up",
+            "The 95-Year Lease Coverage Rule & Pro-Rating Formula",
+            "HDB Housing Loan Regulations & Limits",
+        ],
+        "key_clauses": [
+            ["$70,000"],
+            ["$9,000", "income ceiling"],
+            ["95", "years"],
+            ["30%", "MSR"],
+        ],
+    },
+    "E1-08": {
+        "target_sections": [
+            "Enhanced CPF Housing Grant (EHG)",
+            "CPF Housing Grant for Resale Flats (Family Grant)",
+            "The 95-Year Lease Coverage Rule & Pro-Rating Formula",
+            "HDB Housing Loan Regulations & Limits",
+        ],
+        "key_clauses": [
+            ["$9,000", "income ceiling"],
+            ["Family Grant", "$80,000"],
+            ["95", "years"],
+            ["30%", "MSR"],
+        ],
+    },
+    "E2-01": {
+        "target_sections": [
+            "Comprehensive Classification Comparison Matrix",
+            "Standard Flats Regulations",
+            "The 95-Year Lease Coverage Rule & Pro-Rating Formula",
+            "Resale Market Eligibility Guardrails",
+        ],
+        "key_clauses": [
+            ["standard"],
+            ["mop"],
+            ["resale"],
+            ["remaining lease"],
+        ],
+    },
+    "E2-02": {
+        "target_sections": [
+            "Comprehensive Classification Comparison Matrix",
+            "Standard Flats Regulations",
+            "The 95-Year Lease Coverage Rule & Pro-Rating Formula",
+            "Resale Market Eligibility Guardrails",
+        ],
+        "key_clauses": [
+            ["standard"],
+            ["mop"],
+            ["resale"],
+            ["remaining lease"],
+        ],
+    },
+    "E2-03": {
+        "target_sections": [
+            "Comprehensive Classification Comparison Matrix",
+            "Standard Flats Regulations",
+            "The 95-Year Lease Coverage Rule & Pro-Rating Formula",
+            "Resale Market Eligibility Guardrails",
+        ],
+        "key_clauses": [
+            ["standard"],
+            ["mop"],
+            ["resale"],
+            ["remaining lease"],
+        ],
+    },
+    "E2-04": {
+        "target_sections": [
+            "Comprehensive Classification Comparison Matrix",
+            "Standard Flats Regulations",
+            "The 95-Year Lease Coverage Rule & Pro-Rating Formula",
+            "Resale Market Eligibility Guardrails",
+        ],
+        "key_clauses": [
+            ["standard"],
+            ["mop"],
+            ["resale"],
+            ["remaining lease"],
+        ],
+    },
+    "E2-05": {
+        "target_sections": [
+            "Comprehensive Classification Comparison Matrix",
+            "Standard Flats Regulations",
+            "The 95-Year Lease Coverage Rule & Pro-Rating Formula",
+            "Resale Market Eligibility Guardrails",
+        ],
+        "key_clauses": [
+            ["standard"],
+            ["mop"],
+            ["resale"],
+            ["remaining lease"],
+        ],
+    },
+    "E2-06": {
+        "target_sections": [
+            "Comprehensive Classification Comparison Matrix",
+            "Standard Flats Regulations",
+            "The 95-Year Lease Coverage Rule & Pro-Rating Formula",
+            "Resale Market Eligibility Guardrails",
+        ],
+        "key_clauses": [
+            ["standard"],
+            ["mop"],
+            ["resale"],
+            ["remaining lease"],
+        ],
+    },
+    "E2-07": {
+        "target_sections": [
+            "Comprehensive Classification Comparison Matrix",
+            "Standard Flats Regulations",
+            "The 95-Year Lease Coverage Rule & Pro-Rating Formula",
+            "Resale Market Eligibility Guardrails",
+        ],
+        "key_clauses": [
+            ["standard"],
+            ["mop"],
+            ["resale"],
+            ["remaining lease"],
+        ],
+    },
+}
 
 
 def clean_text(text: str) -> str:
@@ -61,9 +279,9 @@ def is_clause_in_passage(clause: Any, p_text_clean: str, p_sec_clean: str = "") 
 
 def evaluate_answer_faithfulness(answer: str, passages_clean: List[Tuple[str, str]]) -> float:
     """
-    Proposal §6.3 (Page 12): Fraction of generated claims supported directly by
+    Proposal §6.3 (Page 12) & RAGAS formulation: Fraction of generated claims supported directly by
     retrieved HDB policy context.
-    Splits generated answer into factual claim statements (excluding header/disclaimer)
+    Splits generated answer into factual claim statements (excluding headers/disclaimers)
     and verifies lexical/numerical grounding against retrieved passages.
     """
     combined_context = " ".join(f"{sec} {txt}" for txt, sec in passages_clean)
@@ -119,14 +337,14 @@ def evaluate_query_end_to_end(
         for p in passages
     ]
 
-    # 1. Context Recall (Retrieval): fraction of gold clauses captured in top-5 retrieved passages
+    # 1. Context Recall (RAGAS formulation): fraction of gold clauses captured in top-5 retrieved passages
     matched_clauses = 0
     for clause in raw_clauses:
         if any(is_clause_in_passage(clause, p_txt, p_sec) for p_txt, p_sec in cleaned_passages):
             matched_clauses += 1
     context_recall = matched_clauses / max(1, len(raw_clauses))
 
-    # 2. Context Precision (Retrieval — RAGAS rank-weighted formula)
+    # 2. Context Precision (RAGAS rank-weighted MAP@5 formula)
     relevance_vector = []
     first_relevant_rank = None
 
@@ -154,7 +372,7 @@ def evaluate_query_end_to_end(
     # 3. MRR (Retrieval)
     mrr = (1.0 / first_relevant_rank) if first_relevant_rank else 0.0
 
-    # 4. Answer Faithfulness (Generation): fraction of generated claims grounded in retrieved passages
+    # 4. Answer Faithfulness (Generation — RAGAS formulation): fraction of generated claims grounded in retrieved context
     answer_faithfulness = evaluate_answer_faithfulness(answer, cleaned_passages)
 
     # 5. Answer Fact Coverage / Accuracy (Generation): fraction of gold clauses present in synthesized answer
@@ -167,7 +385,8 @@ def evaluate_query_end_to_end(
 
     return {
         "id": test_case["id"],
-        "sub_use_case": test_case["sub_use_case"],
+        "category": test_case.get("category", "C"),
+        "sub_use_case": test_case.get("sub_use_case", ""),
         "pipeline": pipeline,
         "latency_ms": round(latency_ms, 2),
         "context_recall": round(context_recall, 4),
@@ -238,8 +457,8 @@ def evaluate_chunk_window_ablation(cases: List[Dict[str, Any]]) -> Dict[str, Dic
             top_idx = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:5]
             top_passages = [(clean_text(chunk_list[i]["text"]), clean_text(chunk_list[i]["section"])) for i in top_idx]
 
-            raw_clauses = case["ground_truth_facts"].get("key_clauses", [])
-            target_secs = [clean_text(s) for s in case["ground_truth_facts"].get("target_sections", [])]
+            raw_clauses = case.get("ground_truth_facts", {}).get("key_clauses", [])
+            target_secs = [clean_text(s) for s in case.get("ground_truth_facts", {}).get("target_sections", [])]
 
             matched = sum(
                 1 for cl in raw_clauses
@@ -249,7 +468,7 @@ def evaluate_chunk_window_ablation(cases: List[Dict[str, Any]]) -> Dict[str, Dic
 
             rel_vec = []
             for p_t, p_s in top_passages:
-                # For coarse 1024-token chunks, require focused relevance (not diluted across >500 words without section header)
+                # For coarse 1024-token chunks, require focused relevance
                 has_clause = any(is_clause_in_passage(cl, p_t, p_s) for cl in raw_clauses)
                 has_sec = any(ts in p_s for ts in target_secs) if p_s else False
                 is_diluted = len(p_t.split()) > 500 and sum(1 for cl in raw_clauses if is_clause_in_passage(cl, p_t, p_s)) < len(raw_clauses)
@@ -276,66 +495,34 @@ def evaluate_chunk_window_ablation(cases: List[Dict[str, Any]]) -> Dict[str, Dic
     return window_summary
 
 
-def run_ablation():
-    print("=" * 96)
-    print(" HDB-Compass: Experiment 2 — End-to-End RAG Retrieval & Generation Ablation Study ")
-    print(" Owned by Member 3 (Advanced RAG & Regulatory Knowledge Base — Agent 5) ")
-    print("=" * 96)
+def compute_group_summary(results: List[Dict[str, Any]]) -> Dict[str, float]:
+    recalls = [r["context_recall"] for r in results]
+    precisions = [r["context_precision"] for r in results]
+    mrrs = [r["mrr"] for r in results]
+    faithfulness = [r["answer_faithfulness"] for r in results]
+    fact_cov = [r["answer_fact_coverage"] for r in results]
+    citations = [r["citation_compliance"] for r in results]
+    latencies = [r["latency_ms"] for r in results]
 
-    from evaluation.build_category_c import build
-    build()
+    latencies_sorted = sorted(latencies)
+    p50_idx = int(0.50 * len(latencies_sorted))
+    p95_idx = int(0.95 * len(latencies_sorted))
 
-    with open(QUERIES_FILE, "r", encoding="utf-8") as f:
-        cases = json.load(f)
+    return {
+        "mean_context_recall": round(statistics.mean(recalls), 4),
+        "mean_context_precision": round(statistics.mean(precisions), 4),
+        "mean_mrr": round(statistics.mean(mrrs), 4),
+        "mean_answer_faithfulness": round(statistics.mean(faithfulness), 4),
+        "mean_answer_fact_coverage": round(statistics.mean(fact_cov), 4),
+        "citation_compliance_rate": round(statistics.mean(citations), 4),
+        "p50_latency_ms": round(latencies_sorted[p50_idx], 2),
+        "p95_latency_ms": round(latencies_sorted[p95_idx], 2),
+    }
 
-    # Warm up models once before timing P50/P95
-    execute_rag_pipeline(query="Warmup query MOP Prime", pipeline="RAG-3", top_k=5)
-    execute_rag_pipeline(query="Warmup query MOP Prime", pipeline="RAG-1", top_k=5)
 
-    pipelines = ["RAG-1", "RAG-2", "RAG-3"]
-    all_results: Dict[str, List[Dict[str, Any]]] = {p: [] for p in pipelines}
-
-    print(f"\nBenchmarking {len(cases)} Category C queries across configurations: {pipelines}\n")
-
-    for p in pipelines:
-        print(f"--> Running Configuration: {p} (Retrieval + Agent 5 Synthesis) ...")
-        for case in cases:
-            res = evaluate_query_end_to_end(case, pipeline=p)
-            all_results[p].append(res)
-        print(f"    Completed {len(cases)} queries for {p}.")
-
-    # Summary Statistics Aggregation
-    summary: Dict[str, Dict[str, float]] = {}
-    for p in pipelines:
-        recalls = [r["context_recall"] for r in all_results[p]]
-        precisions = [r["context_precision"] for r in all_results[p]]
-        mrrs = [r["mrr"] for r in all_results[p]]
-        faithfulness = [r["answer_faithfulness"] for r in all_results[p]]
-        fact_cov = [r["answer_fact_coverage"] for r in all_results[p]]
-        citations = [r["citation_compliance"] for r in all_results[p]]
-        latencies = [r["latency_ms"] for r in all_results[p]]
-
-        latencies_sorted = sorted(latencies)
-        p50_idx = int(0.50 * len(latencies_sorted))
-        p95_idx = int(0.95 * len(latencies_sorted))
-
-        summary[p] = {
-            "mean_context_recall": round(statistics.mean(recalls), 4),
-            "mean_context_precision": round(statistics.mean(precisions), 4),
-            "mean_mrr": round(statistics.mean(mrrs), 4),
-            "mean_answer_faithfulness": round(statistics.mean(faithfulness), 4),
-            "mean_answer_fact_coverage": round(statistics.mean(fact_cov), 4),
-            "citation_compliance_rate": round(statistics.mean(citations), 4),
-            "p50_latency_ms": round(latencies_sorted[p50_idx], 2),
-            "p95_latency_ms": round(latencies_sorted[p95_idx], 2),
-        }
-
-    # Chunk Window Sensitivity Study
-    chunk_window_study = evaluate_chunk_window_ablation(cases)
-
-    # Print Retrieval + Generation Comparative Table
+def print_table(title: str, summary: Dict[str, Dict[str, float]]) -> None:
     print("\n" + "=" * 114)
-    print(" EXPERIMENT 2A: RETRIEVAL & GENERATION ABLATION SUMMARY (Category C Golden Dataset N=15)")
+    print(f" {title} ")
     print("=" * 114)
     header = (
         f"{'Pipeline Configuration':<32} | {'Ctx Recall':<10} | {'Ctx Prec':<9} | "
@@ -356,9 +543,78 @@ def run_ablation():
         )
     print("=" * 114)
 
+
+def run_ablation():
+    print("=" * 96)
+    print(" HDB-Compass: Experiment 2 — End-to-End RAG Retrieval & Generation Ablation Study ")
+    print(" Owned by Member 3 (Advanced RAG & Regulatory Knowledge Base — Categories C & E) ")
+    print(" Framework: Formal RAGAS Formulation (Context Recall, Context Precision MAP@5, Faithfulness) ")
+    print("=" * 96)
+
+    # 1. Build and load Category C golden queries (15 queries)
+    from evaluation.build_category_c import build
+    build()
+
+    with open(CATEGORY_C_FILE, "r", encoding="utf-8") as f:
+        cat_c_cases = json.load(f)
+
+    # 2. Load Category E golden queries (15 queries) and enrich with policy ground truth
+    with open(CATEGORY_E_FILE, "r", encoding="utf-8") as f:
+        cat_e_raw = json.load(f)
+
+    cat_e_cases = []
+    for raw in cat_e_raw:
+        case = dict(raw)
+        qid = case["id"]
+        # Attach statutory policy ground-truth expectation for Experiment 2
+        case["ground_truth_facts"] = CATEGORY_E_POLICY_GROUND_TRUTH.get(qid, {
+            "target_sections": ["Standard Flats Regulations", "The 95-Year Lease Coverage Rule & Pro-Rating Formula"],
+            "key_clauses": [["5-year MOP"], ["30%", "MSR"], ["75%", "LTV"]],
+        })
+        cat_e_cases.append(case)
+
+    all_cases = cat_c_cases + cat_e_cases
+
+    # Warm up models once before timing P50/P95
+    execute_rag_pipeline(query="Warmup query MOP Prime", pipeline="RAG-3", top_k=5)
+    execute_rag_pipeline(query="Warmup query MOP Prime", pipeline="RAG-1", top_k=5)
+
+    pipelines = ["RAG-1", "RAG-2", "RAG-3"]
+    all_results: Dict[str, List[Dict[str, Any]]] = {p: [] for p in pipelines}
+
+    print(f"\nBenchmarking {len(cat_c_cases)} Category C + {len(cat_e_cases)} Category E = {len(all_cases)} total queries across {pipelines}\n")
+
+    for p in pipelines:
+        print(f"--> Running Configuration: {p} (Retrieval + Agent 5 Synthesis) ...")
+        for case in all_cases:
+            res = evaluate_query_end_to_end(case, pipeline=p)
+            all_results[p].append(res)
+        print(f"    Completed {len(all_cases)} queries for {p}.")
+
+    # Summary Statistics Aggregation by Group
+    cat_c_summary: Dict[str, Dict[str, float]] = {}
+    cat_e_summary: Dict[str, Dict[str, float]] = {}
+    combined_summary: Dict[str, Dict[str, float]] = {}
+
+    for p in pipelines:
+        cat_c_res = [r for r in all_results[p] if r["category"] == "C"]
+        cat_e_res = [r for r in all_results[p] if r["category"] == "E"]
+
+        cat_c_summary[p] = compute_group_summary(cat_c_res)
+        cat_e_summary[p] = compute_group_summary(cat_e_res)
+        combined_summary[p] = compute_group_summary(all_results[p])
+
+    # Chunk Window Sensitivity Study over all 30 benchmark queries
+    chunk_window_study = evaluate_chunk_window_ablation(all_cases)
+
+    # Print Breakdown Tables
+    print_table("EXPERIMENT 2A: RETRIEVAL & GENERATION ABLATION — Category C: Regulatory Rules (N=15)", cat_c_summary)
+    print_table("EXPERIMENT 2A: RETRIEVAL & GENERATION ABLATION — Category E: Multi-Objective Rules (N=15)", cat_e_summary)
+    print_table("EXPERIMENT 2A: RETRIEVAL & GENERATION ABLATION — Combined Benchmark (Categories C + E, N=30)", combined_summary)
+
     # Print Chunk Window Sensitivity Table
     print("\n" + "=" * 96)
-    print(" EXPERIMENT 2B: CHUNK WINDOW & TABLE-PRESERVATION SENSITIVITY STUDY")
+    print(" EXPERIMENT 2B: CHUNK WINDOW & TABLE-PRESERVATION SENSITIVITY STUDY (N=30)")
     print("=" * 96)
     print(f"{'Chunking Strategy':<36} | {'Total Chunks':<12} | {'Broken Tables':<13} | {'Ctx Recall':<11} | {'Ctx Precision':<13}")
     print("-" * 96)
@@ -369,11 +625,14 @@ def run_ablation():
         )
     print("=" * 96)
 
-    # Save to JSON
+    # Save to JSON (backward-compatible summary key + group breakdowns)
     output_payload = {
-        "summary": summary,
+        "summary": combined_summary,
+        "category_c_summary": cat_c_summary,
+        "category_e_summary": cat_e_summary,
+        "combined_summary": combined_summary,
         "chunk_window_ablation": chunk_window_study,
-        "queries_evaluated": len(cases),
+        "queries_evaluated": len(all_cases),
         "detailed_results": all_results,
     }
     with open(RESULTS_JSON, "w", encoding="utf-8") as f:
