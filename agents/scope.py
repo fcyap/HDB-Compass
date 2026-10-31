@@ -258,3 +258,24 @@ def _towns_in(text: str) -> List[str]:
     up = text.upper()
     found = sorted((up.find(t), t) for t in sv.HDB_TOWNS if t in up)
     return [t for _, t in found]
+
+
+# ---------------------------------------------------------------------------
+# Asks the tools cannot do yet
+# ---------------------------------------------------------------------------
+_COMMUTE_TIME_ASK = re.compile(
+    r"\b(?:how long|how far|how much time|how many minutes|travel(?:l?ing)? time|journey time|commute time)\b[^.?!]*"
+    r"\b(?:commute|get to|getting to|travel|reach|journey|take|from\b[^.?!]*\bto|to work)\b"
+    r"|\bcommute (?:from|to)\b[^.?!]*\b(?:to|from)\b|\bhow (?:long|far) (?:is|does) (?:the |my )?commute\b", re.I)
+_SEARCH_WORD = re.compile(r"\b(?:find|show|list|search|recommend|suggest|under|within|below|at most|max(?:imum)?)\b", re.I)
+SINGLE_COMMUTE_REPLY = ("I can't estimate a single commute yet: the commute check uses town-level averages and does not "
+                        "route to your workplace. I can compare two workplaces' commutes for flats in a town, or find "
+                        "flats near an MRT station.")
+
+
+def unsupported_reply(text: str, destinations: int) -> Optional[str]:
+    """A fixed reply for an ask the tools cannot do, or None. destinations: how many workplaces the message names (the
+    commute check needs two). A search with limits ("find flats ... under 40 min") is left to the agents."""
+    if destinations < 2 and _COMMUTE_TIME_ASK.search(text) and not _SEARCH_WORD.search(text):
+        return SINGLE_COMMUTE_REPLY
+    return None

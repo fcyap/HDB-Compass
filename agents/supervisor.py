@@ -820,6 +820,10 @@ _AMOUNT = r"\$\s?(\d[\d,]*(?:\.\d+)?)\s*(k)?"
 # "buying a 4-room for $600k"; not a budget ("looking to buy in Tampines for $600k or less", "for $600k max")
 _PURCHASE_PRICE = (r"(?:buy(?:ing)?|purchas(?:e|ing))\b[^$.]{0,40}\bfor " + _AMOUNT
                    + r"(?!\d|[,.]\d|\s*k\b)(?!\s*(?:(?:or|and)\s+(?:less|lower|below|under|cheaper)|max\w*|at most|tops)\b)")
+# "a $600k flat", "a 4-room resale at..." is not here: only a price written next to the flat, and only read when the user is
+# asking for upfront costs (stated_financial_inputs), since "find a $600k flat in Tampines" is a budget
+_FLAT_PRICES = (r"\b(?:an?|the)\s+" + _AMOUNT + r"(?!\d)\s+(?:[\w-]+\s+){0,2}?(?:flat|unit|home|bto)\b",
+                r"\b(?:flat|unit|home)s?\s+(?:costing|priced at|worth|that costs?|valued at)\s+" + _AMOUNT + r"(?!\d)")
 # the lease the user wants the calculation to assume: "use 65 yrs remaining lease for the calc", "calc w 65 yrs lease",
 # "using a 65-year remaining lease", "assume 65 years of remaining lease"
 _CALC_LEASE = (r"(\d{2})\s*(?:years?|yrs?) of remaining lease for the .{0,30}calc"
@@ -903,6 +907,12 @@ def stated_financial_inputs(text: str, context: str = "") -> Dict[str, Dict[str,
     m = re.search(_PURCHASE_PRICE, s, re.I)
     if m:
         upfront["purchase_price"] = _amount(m)
+    elif re.search(_ASKS_UPFRONT, t):
+        for pattern in _FLAT_PRICES:   # read from the whole message: the price is in the question itself
+            m = re.search(pattern, t, re.I)
+            if m:
+                upfront["purchase_price"] = _amount(m)
+                break
     for field, pattern in (("market_valuation", r"valued at " + _AMOUNT), ("loan_amount", r"loan of " + _AMOUNT),
                            ("legal_and_valuation_fees", r"fees of " + _AMOUNT)):
         m = re.search(pattern, s, re.I)
@@ -2976,6 +2986,19 @@ ESTIMATE_SHORT = {"calculate_cpf_housing_grants": "grant", "calculate_maximum_af
                   "calculate_bsd_and_upfront_outlay": "upfront cost"}
 
 
+def stated_limits(c: Dict[str, Any]) -> bool:
+    """Whether the user set any limit the blocks were checked against (budget, lease, distance, school, commute)."""
+    return bool(c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or c.get("amenity_radii_meters")
+                or c.get("school_name") or c.get("max_commute_minutes") or len(c.get("work_destinations") or []) >= 2)
+
+
+def unlimited_search_phrase(c: Dict[str, Any]) -> str:
+    """What a block list is when the user set no limit: "Blocks with recent 4-room sales in Tampines, cheapest first"."""
+    flat = " or ".join(t.lower().replace(" room", "-room") for t in c.get("flat_types") or [])
+    towns = _join_words([t.title() for t in c.get("towns") or []], "and") if c.get("towns") else ""
+    return "Blocks with recent " + (f"{flat} " if flat else "") + "sales" + (f" in {towns}" if towns else "") + ", cheapest first"
+
+
 def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], str, List[str]]:
     """Code's opening in two parts: the sentences that answer the question, and the trade-off sentence between the
     listed blocks ("" when there is none). Built from the same state as the facts (template_response), so it never
@@ -3011,7 +3034,10 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
                         "asked for at the end")
         elif len(fin_ok) < len(fin):
             follows += f"; {'part of y' if done else 'y'}our estimate could not be worked out, as said below"
-        if len(blocks) == 1:
+        if c and not stated_limits(c):   # (a state with no constraints at all is test data, not a real run)
+            # nothing was asked of the blocks, so "they meet every limit you set" would promise a check that never happened
+            sentences.append(f"{unlimited_search_phrase(c)}{follows}.")
+        elif len(blocks) == 1:
             sentences.append(f"Only Blk {blocks[0]['block']} meets {limits}{follows}.")
         elif len(blocks) == 2:
             sentences.append(f"Both blocks below meet {limits}{follows}.")
@@ -3022,7 +3048,8 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
             trade = trade_off_sentence(listed, c, more_than_listed=len(blocks) > LISTED_BLOCKS)
     elif searched:
         sentences.append("No block meets all the limits that could be checked." if partial
-                         else "No block meets every limit you set at once.")
+                         else "No block meets every limit you set at once." if stated_limits(c) or not c
+                         else "I found no blocks with recent sales for that search.")
         rel = state.get("relaxation") or {}
         best = rel.get("best_single_change") or {}
         top = [s for s in rel.get("suggestions") or [] if best and s.get("unlocked_blocks") == best.get("unlocked_blocks")]
@@ -3452,6 +3479,10 @@ def input_guardrail_node(state: HDBCompassState) -> Dict[str, Any]:
     if state.get("menu_followup"):    # the user picked a menu option: ask its follow-up question, nothing to search yet
         ask = state["menu_followup"]
         return {**update, "draft_response": ask["question"], "clarification": ask}
+    query = last_user_query(state)
+    unsupported = scope.unsupported_reply(query, len(rule_based_extract(query).work_destinations))
+    if unsupported:
+        return {**update, "draft_response": unsupported}
     # school questions the lookup cannot answer are stopped here, after Member 5's own check
     reply = guard_school_request(last_user_query(state), lambda q: bool(rule_based_extract(q).school_name))
     return {**update, "draft_response": reply} if reply else update

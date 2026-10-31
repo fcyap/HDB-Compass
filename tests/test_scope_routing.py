@@ -121,10 +121,7 @@ TABLE = [
 
 # rows for later steps stay xfail (strict, so a fix that lands is noticed) until their step is done
 PENDING_KINDS = {}
-PENDING_QUERIES = {
-    "What's the stamp duty on a $600k flat?": "step 6: price in '$600k flat' form",
-    "How long is the commute from Tampines to Raffles Place?": "step 6: single commute",
-}
+PENDING_QUERIES = {}
 
 
 def outcome_ok(state, expected):
@@ -269,3 +266,34 @@ def test_two_town_snapshot_says_which_town_is_cheaper():
     assert ri._cheaper_town_lines(rows) == [
         "- Woodlands is cheaper than Yishun for 4 ROOM by $5,000 (0.9% below Yishun's median)."]
     assert ri._cheaper_town_lines(rows[:1] + rows[2:]) == []   # one town and the island row: nothing to compare
+
+
+# ---------------------------------------------------------------------------
+# unsupported asks and honest wording
+# ---------------------------------------------------------------------------
+def test_single_commute_questions_are_declined_and_two_workplaces_are_not():
+    from agents import scope
+    for q in ["How long is the commute from Tampines to Raffles Place?", "How long does it take to get to Raffles Place from Bedok?"]:
+        state = variant_c.run(q)
+        assert "can't estimate a single commute" in state["draft_response"] and not state["tool_call_log"]
+    assert scope.unsupported_reply("Find 4-room flats in Tampines with a commute under 40 min", 0) is None
+    assert scope.unsupported_reply("How long is the commute between my two workplaces?", 2) is None
+
+
+@pytest.mark.parametrize("query", ["What's the stamp duty on a $600k flat?", "stamp duty for a flat costing $600,000",
+                                   "BSD on a $600,000 4-room flat"])
+def test_a_price_written_next_to_the_flat_is_the_purchase_price_for_an_upfront_ask(query):
+    assert sv.stated_financial_inputs(query)["upfront"]["purchase_price"] in (600000.0,)
+    state = variant_c.run(query)
+    assert "calculate_bsd_and_upfront_outlay" in [r["tool"] for r in state["tool_call_log"]]
+
+
+def test_a_search_for_a_priced_flat_is_not_a_purchase_price():
+    assert sv.stated_financial_inputs("Find a $600k flat in Tampines") == {}
+
+
+def test_block_list_claims_to_meet_limits_only_when_limits_were_set():
+    plain = variant_c.run("Show me 4-room flats in Tampines")["draft_response"]
+    assert plain.startswith("Blocks with recent 4-room sales in Tampines, cheapest first") and "every limit" not in plain
+    limited = variant_c.run("Find 4-room flats in Tampines under $600k")["draft_response"]
+    assert "meet every limit you set" in limited
