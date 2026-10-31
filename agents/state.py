@@ -57,6 +57,7 @@ class HDBCompassState(TypedDict, total=False):
     # Follow-up flow for missing financial facts (Member 4). clarification: what this turn asks the user for;
     # prior_constraints / pending_clarification: carried in from the previous turn by initial_state(previous=...).
     clarification: Optional[Dict[str, Any]]          # {"needed": [calculator fields], "question": str}
+    policy_no_match: Optional[bool]                  # the policy search found no passage that really matches (supervisor.POLICY_SCORE_FLOOR)
     menu_followup: Optional[Dict[str, Any]]          # the answer to a menu choice, set by initial_state (agents/scope.py)
     prior_constraints: Optional[Dict[str, Any]]
     pending_clarification: Optional[Dict[str, Any]]

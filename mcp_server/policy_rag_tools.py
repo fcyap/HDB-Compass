@@ -335,7 +335,10 @@ def execute_rag_pipeline(
             rerank_score=round(float(score), 4),
         ))
 
-    return RetrieveHdbPolicyKnowledgeOutput(passages=passages, pipeline=pipeline)
+    # raw keyword score of the best passage, so a caller can tell "nothing in the knowledge base matches" from a weak match
+    best = retrieve_bm25(query, store, top_k=1)
+    return RetrieveHdbPolicyKnowledgeOutput(passages=passages, pipeline=pipeline,
+                                            best_keyword_score=round(best[0][1], 3) if best else None)
 
 
 # ---------------------------------------------------------------------------

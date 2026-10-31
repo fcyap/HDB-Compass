@@ -577,6 +577,9 @@ class PolicyPassage(BaseModel):
 class RetrieveHdbPolicyKnowledgeOutput(BaseModel):
     passages: List[PolicyPassage]
     pipeline: Literal["RAG-1", "RAG-2", "RAG-3"] = "RAG-3"
+    # The raw (unnormalised) BM25 score of the best-matching passage. rerank_score is scaled so the top passage is
+    # always 1.0, so it cannot say whether anything in the knowledge base really matches; this can. None = unknown.
+    best_keyword_score: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------

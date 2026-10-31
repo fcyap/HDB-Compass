@@ -1976,6 +1976,19 @@ def _normalise_school_blocks(items: List[str], towns: List[str]) -> List[Dict[st
     return out
 
 
+# Lowest raw BM25 score at which the best policy passage is shown. Every Category C question scores 15.99 or more
+# (tests/test_scope_routing.py checks it); questions with no policy in them score 0 to 4.8 ("How do I buy a condo?"
+# 4.6, "best durian in Singapore" 4.8), so 5.0 sits between the two.
+POLICY_SCORE_FLOOR = 5.0
+NO_POLICY_ANSWER = ("I couldn't find an HDB rule in my knowledge base that answers this. Please check hdb.gov.sg or ask "
+                    "HDB for an HFE letter.")
+
+
+def policy_below_floor(out: Any) -> bool:
+    score = out.get("best_keyword_score") if isinstance(out, dict) else None
+    return score is not None and score < POLICY_SCORE_FLOOR
+
+
 def slot_outputs(outputs: Dict[str, Any], towns: List[str]) -> Dict[str, Any]:
     """Map raw tool outputs into the HDBCompassState slots, by tool owner."""
     update: Dict[str, Any] = {}
@@ -1997,6 +2010,9 @@ def slot_outputs(outputs: Dict[str, Any], towns: List[str]) -> Dict[str, Any]:
             fin[name] = out
         elif owner == "policy_rag":
             update["rag_policy_passages"] = out.get("passages", []) if isinstance(out, dict) else out
+            if policy_below_floor(out):   # nothing in the knowledge base really matches: show no passages at all
+                update["rag_policy_passages"] = []
+                update["policy_no_match"] = True
         elif name == "filter_blocks_by_amenity_proximity":
             spatial = out if not spatial else [b for b in spatial if block_key(b["block"], b["street"]) in
                                                {block_key(x["block"], x["street"]) for x in out}]
@@ -2581,6 +2597,8 @@ def template_response(state: HDBCompassState) -> str:
     elif passages:
         lines.append("**Policy:**")
         lines.extend(policy_fact_lines(passages, user_request(state)))
+    elif state.get("policy_no_match"):
+        lines.append(NO_POLICY_ANSWER)
     if not lines:
         lines.append("I could not find data for that request.")
     if state.get("financial_breakdown") or passages:

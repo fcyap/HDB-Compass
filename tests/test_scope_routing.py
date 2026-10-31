@@ -206,3 +206,32 @@ def test_first_timer_status_alone_does_not_run_the_calculators():
                                  {"messages": [{"role": "user", "content": "I'm a first time buyer, where do I start?"}]}, [],
                                  from_model=False)
     assert sv.decide_routing(c) == []
+
+
+# ---------------------------------------------------------------------------
+# policy relevance floor
+# ---------------------------------------------------------------------------
+def test_policy_floor_sits_below_every_category_c_question():
+    from mcp_server import policy_rag_tools as rag
+    store = rag._load_store()
+    best = {i["id"]: rag.retrieve_bm25(i["query"], store, top_k=1)[0][1] for i in _queries("category_c_queries.json")}
+    assert min(best.values()) > sv.POLICY_SCORE_FLOOR + 5, best
+    assert rag.retrieve_bm25("Which schemes exist for my pet dog?", store, top_k=1)[0][1] < sv.POLICY_SCORE_FLOOR
+
+
+def test_policy_search_reports_its_raw_keyword_score():
+    from mcp_server.policy_rag_tools import execute_rag_pipeline
+    out = execute_rag_pipeline("What is the MOP for a Prime flat?")
+    assert out.best_keyword_score and out.best_keyword_score > sv.POLICY_SCORE_FLOOR
+
+
+def test_policy_question_with_no_matching_rule_says_so_and_shows_no_passages():
+    state = variant_c.run("Which schemes exist for my pet dog?")
+    assert state["active_subagents"] == ["policy_rag"] and not state["rag_policy_passages"]
+    assert "couldn't find an HDB rule" in state["draft_response"] and "hdb.gov.sg" in state["draft_response"]
+
+
+def test_unknown_score_still_shows_passages():
+    assert not sv.policy_below_floor({"passages": [], "best_keyword_score": None})
+    assert not sv.policy_below_floor({"passages": []})
+    assert sv.policy_below_floor({"passages": [], "best_keyword_score": 1.0})
