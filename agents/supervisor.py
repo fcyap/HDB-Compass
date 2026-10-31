@@ -1525,7 +1525,19 @@ def _verify_extraction(c: Dict[str, Any], query: str, errors: List[str], from_mo
 # ---------------------------------------------------------------------------
 # Node: route  +  fan-out dispatch
 # ---------------------------------------------------------------------------
-def decide_routing(c: Dict[str, Any]) -> List[str]:
+# first-timer status, citizenship and flat type alone are not something the calculators can work from
+_WEAK_FINANCIAL_FACTS = frozenset({"first_timer_status", "citizenship_pair", "flat_type"})
+
+
+def calculator_facts(c: Dict[str, Any]) -> bool:
+    """Whether the user gave the calculators anything to work with beyond who they are ("I'm a first-time buyer")."""
+    return any(v for vals in (c.get("financial_inputs") or {}).values() if vals for k, v in vals.items()
+               if k not in _WEAK_FINANCIAL_FACTS)
+
+
+def decide_routing(c: Dict[str, Any], pending: Optional[Dict[str, Any]] = None) -> List[str]:
+    """pending: the open follow-up question, if any. While the user is answering a financial question, the weak facts
+    they give (citizenship, first-timer status) still go to the calculators, which ask for the rest."""
     if c.get("place_options"):
         return []   # the user must first say which place they mean (research_intents.resolve_place)
     if c.get("nearby_schools"):
@@ -1540,7 +1552,8 @@ def decide_routing(c: Dict[str, Any]) -> List[str]:
         active.append("market_sql")
     if ri.needs_spatial_agent(c) and "spatial" not in active:
         active.append("spatial")
-    if has_financial_facts(c) or c.get("household_income") or c.get("cpf_oa_balance") or (c.get("citizenship_scheme") and c.get("max_budget_sgd")):
+    financial_facts = has_financial_facts(c) if (pending or {}).get("kind") == "financial" else calculator_facts(c)
+    if financial_facts or c.get("household_income") or c.get("cpf_oa_balance") or (c.get("citizenship_scheme") and c.get("max_budget_sgd")):
         active.append("financial")
     if c.get("policy_question"):
         active.append("policy_rag")
@@ -1548,18 +1561,20 @@ def decide_routing(c: Dict[str, Any]) -> List[str]:
         pass  # a place with no recognised question: route_node asks instead of guessing a search or policy query
     elif not active and c.get("towns"):
         active.append("market_sql")
-    elif not active:
-        active.append("policy_rag")
-    if c.get("clarifications") and active == ["policy_rag"] and not c.get("policy_question"):
-        active = []  # only a clarifying question to ask; nothing to retrieve
+    # Nothing recognised and no towns: no specialist runs. route_node answers with a menu of what the app can do, rather
+    # than searching the policy text for a message that is not a policy question.
     return active
 
 
 def route_node(state: HDBCompassState) -> Dict[str, Any]:
     c = state.get("user_constraints", {})
-    active = decide_routing(c)
+    active = decide_routing(c, state.get("pending_clarification"))
     if not active and not c.get("clarifications") and (c.get("addresses") or c.get("map_pin")):
         return {"active_subagents": active, "user_constraints": {**c, "clarifications": [ri.place_clarification(c)]}}
+    if not active and not c.get("clarifications"):
+        menu = scope.menu_for(last_user_query(state))
+        return {"active_subagents": active,
+                "user_constraints": {**c, "clarifications": [menu["question"]], "menu_options": menu["options"]}}
     return {"active_subagents": active}
 
 
@@ -3233,6 +3248,8 @@ def place_clarification(state: HDBCompassState) -> Optional[Dict[str, Any]]:
         return None
     if c.get("place_options"):
         return {"kind": "location", "needed": [], "question": questions[0], "options": c["place_options"]}
+    if c.get("menu_options"):
+        return {"kind": "menu", "needed": [], "question": questions[0], "options": c["menu_options"]}
     kind = "school" if questions[0] == ri.SCHOOL_CLARIFICATION else "place"
     return {"kind": kind, "needed": [], "question": questions[0]}
 
@@ -3414,6 +3431,9 @@ def input_guardrail_node(state: HDBCompassState) -> Dict[str, Any]:
         stray = scope.scope_reply(last_user_query(state), mid)
         if stray:
             return {**update, "draft_response": stray}
+    if state.get("menu_followup"):    # the user picked a menu option: ask its follow-up question, nothing to search yet
+        ask = state["menu_followup"]
+        return {**update, "draft_response": ask["question"], "clarification": ask}
     # school questions the lookup cannot answer are stopped here, after Member 5's own check
     reply = guard_school_request(last_user_query(state), lambda q: bool(rule_based_extract(q).school_name))
     return {**update, "draft_response": reply} if reply else update
@@ -3456,7 +3476,12 @@ def initial_state(query: str, variant: str, map_state: Optional[Dict[str, Any]] 
     fast_path=True (the app) answers fully recognised self-contained questions without model calls; experiments leave
     it off so every variant is measured on its model's own choices."""
     history = list((previous or {}).get("messages") or [])
-    return {"messages": history + [{"role": "user", "content": query}], "variant": variant, "active_subagents": [],
+    # a reply to a menu (or to the question one of its options asked) is completed by code: an option's own follow-up
+    # question is answered at once, and a bare launch name becomes the full question about it (agents/scope.py)
+    menu_reply = scope.resolve_menu_reply((previous or {}).get("clarification"), query) if previous else None
+    followup = (menu_reply or {}).get("ask")
+    query = (menu_reply or {}).get("query") or query
+    return {"menu_followup": followup, "messages": history + [{"role": "user", "content": query}], "variant": variant, "active_subagents": [],
             "candidate_blocks_intersection": [], "map_ui_payload": map_state or {}, "draft_response": "",
             "auditor_verdict": {}, "tool_call_log": [], "errors": [], "subagent_notes": [],
             "prior_constraints": (previous or {}).get("user_constraints"),

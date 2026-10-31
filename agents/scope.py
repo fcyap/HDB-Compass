@@ -49,7 +49,7 @@ _HOUSING = re.compile(
     r"mrt|lrt|bus|train|station|school|schools|primary|hawker|amenit\w*|supermarket|clinic|park|mall|commute|"
     r"grants?|cpf|oa|loan|loans|mortgage|hfe|mop|lease|price|prices|priced|cost|costs|afford\w*|budget|income|salary|earn|cash|savings|"
     r"down ?payment|upfront|stamp duty|bsd|absd|valuation|cov|"
-    r"pr|citizens?|singaporeans?|permanent residents?|foreigners?|singles?|couples?|married|divorce\w*|widow\w*|fianc\w*|first[- ]?timers?|"
+    r"buyers?|first[- ]?times?|pr|citizens?|singaporeans?|permanent residents?|foreigners?|singles?|couples?|married|divorce\w*|widow\w*|fianc\w*|first[- ]?timers?|"
     r"second[- ]?timers?|eligib\w*|scheme\w*|quota\w*|ethnic\w*|prime|plus|standard|rent|renting|rental|sublet|landlord|tenant|"
     r"sers|upgrading|resettlement|sell(?:ing)?|buy(?:ing)?|purchase|apply(?:ing)?|launch(?:es)?|ballot|queue|postal)\b"
     r"|\b\d[- ]?(?:room|rm)\b|\b\d{6}\b", re.I)
@@ -122,3 +122,139 @@ REPLIES: Dict[str, str] = {
 def scope_reply(text: str, mid_conversation: bool = False) -> Optional[str]:
     """The fixed reply for a message that is not an HDB request, or None when the message goes on to the agents."""
     return REPLIES.get(classify(text, mid_conversation))
+
+
+# ---------------------------------------------------------------------------
+# Menu: an in-scope message that names nothing the tools can act on ("what flat should I buy?")
+# ---------------------------------------------------------------------------
+_OPTIONS = {
+    "launch": "Compare a BTO launch with nearby resale prices",
+    "budget": "Estimate your grants and budget",
+    "rules": "Explain BTO rules (MOP, Prime/Plus, eligibility)",
+    "towns": "Compare towns by resale price",
+    "find": "Find resale flats by budget, town and distance",
+    "resale_rules": "Explain HDB rules (MOP, eligibility, Prime/Plus)",
+}
+_MENUS = {
+    "bto": ["launch", "budget", "rules", "towns"],
+    "resale": ["find", "towns", "budget", "resale_rules"],
+    "general": ["find", "launch", "budget", "resale_rules"],
+}
+# words that pick an option when the reply is short; the option number and the exact label always work
+_OPTION_WORDS = {
+    "launch": r"\blaunch\w*|\bcompar\w*|\bnearby\b|\bproject\b",
+    "budget": r"\bgrants?\b|\bbudget\b|\bafford\w*|\bestimate\b|\bloan\b|\bcpf\b",
+    "rules": r"\brules?\b|\bmop\b|\bprime\b|\bplus\b|\beligib\w*|\bexplain\b",
+    "resale_rules": r"\brules?\b|\bmop\b|\bprime\b|\bplus\b|\beligib\w*|\bexplain\b",
+    "towns": r"\btowns?\b|\bcompar\w*|\bcheaper\b|\bresale prices?\b",
+    "find": r"\bfind\b|\bsearch\b|\bflats?\b|\bresale\b",
+}
+
+
+def menu_variant(query: str) -> str:
+    bto = bool(re.search(r"\bbtos?\b", query, re.I))
+    resale = bool(re.search(r"\bresale\b", query, re.I))
+    return "bto" if bto and not resale else "resale" if resale and not bto else "general"
+
+
+def menu_for(query: str) -> Dict[str, object]:
+    """The numbered menu for a message with nothing to act on: {"question", "options": [{"key", "label", "text"}]}.
+    "text" is what a clickable option sends back, and it is the label itself, so it reads as the choice."""
+    variant = menu_variant(query)
+    options = [{"key": k, "label": _OPTIONS[k], "text": _OPTIONS[k]} for k in _MENUS[variant]]
+    intro = {"bto": "Happy to help with a BTO. What would you like to do?",
+             "resale": "Happy to help with a resale flat. What would you like to do?",
+             "general": "Happy to help you look at HDB flats. What would you like to do?"}[variant]
+    question = intro + "\n\n" + "\n".join(f"{i}. {o['label']}" for i, o in enumerate(options, 1)) + \
+        "\n\nReply with a number, or ask your own question."
+    return {"question": question, "options": options}
+
+
+def bto_projects() -> List[str]:
+    try:
+        from mcp_server.bto_tools import load_launches
+        return list(dict.fromkeys(r["project"] for r in load_launches()))
+    except Exception:  # noqa: BLE001 — the launch data is optional
+        return []
+
+
+def match_launch(text: str) -> Optional[str]:
+    """The BTO launch a reply names: the full name anywhere in it, or a unique part of a name ("Portico")."""
+    projects = bto_projects()
+    t = " ".join(text.upper().split())
+    full = [p for p in projects if p.upper() in t]
+    if full:
+        return max(full, key=len)
+    part = re.sub(r"[^A-Z0-9 ]", "", t).strip()
+    hits = [p for p in projects if len(part) >= 4 and part in p.upper()]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _followup(key: str) -> Dict[str, object]:
+    if key == "launch":
+        names = bto_projects()
+        listed = ", ".join(names) if names else "none loaded"
+        return {"kind": "bto_launch", "needed": [], "question": f"Which launch? I have data for: {listed}."}
+    if key == "budget":
+        return {"kind": "financial",
+                "needed": ["citizenship_pair", "first_timer_status", "monthly_income", "youngest_buyer_age", "oldest_buyer_age"],
+                "question": "To estimate your grants and budget, please tell me each buyer's citizenship, whether you are "
+                            "first-timers, your HFE-assessed monthly household income and the age of each buyer."}
+    if key in ("rules", "resale_rules"):
+        return {"kind": "rules", "needed": [],
+                "question": "Which rule? For example: the MOP for a Prime flat, who can apply for a BTO, how much grant a "
+                            "first-timer gets, or how many times you can apply."}
+    if key == "towns":
+        return {"kind": "towns", "needed": [],
+                "question": "Which towns and flat type? For example: 'Is Woodlands cheaper than Yishun for 4-room flats?'"}
+    return {"kind": "search", "needed": [],
+            "question": "Tell me the town, flat type and budget, for example: '4-room flats in Tampines under $600k "
+                        "within 500m of an MRT'."}
+
+
+def _picked_option(options: List[Dict[str, str]], text: str) -> Optional[str]:
+    t = text.strip()
+    m = re.fullmatch(r"(?:option\s*|no\.?\s*|number\s*|#)?(\d)[.)]?", t, re.I)
+    if m and 1 <= int(m.group(1)) <= len(options):
+        return options[int(m.group(1)) - 1]["key"]
+    norm = " ".join(t.lower().rstrip(".!").split())
+    for o in options:
+        if norm == o["label"].lower():
+            return o["key"]
+    words = t.split()
+    if len(words) <= 4 and not t.endswith("?") and not re.match(r"(?:what|which|how|can|is|are|do|does|will|who|where)\b", t, re.I):
+        for o in options:
+            if re.search(_OPTION_WORDS[o["key"]], t, re.I):
+                return o["key"]
+    return None
+
+
+def resolve_menu_reply(pending: Optional[Dict[str, object]], text: str) -> Optional[Dict[str, object]]:
+    """What a reply to a menu (or to a question a menu option asked) means, or None when it is just a new question.
+    {"ask": clarification}: the option's own follow-up question, answered at once without searching.
+    {"query": text}: the reply completed into a full question the normal pipeline can answer."""
+    kind = (pending or {}).get("kind")
+    if kind == "menu":
+        key = _picked_option(list((pending or {}).get("options") or []), text)
+        return {"ask": _followup(key)} if key else None
+    if kind == "bto_launch":
+        project = match_launch(text)
+        return {"query": f"How does {project} compare with nearby resale prices?"} if project else None
+    if kind == "rules" and len(text.split()) <= 8:
+        return {"query": f"HDB rules: {text.strip()}"}
+    if kind == "towns":
+        towns = _towns_in(text)
+        ft = re.search(r"\b([2-5])[- ]?(?:room|rm)\b", text, re.I)
+        flat = f"{ft.group(1)}-room" if ft else None
+        if len(towns) >= 2:
+            return {"query": f"Is {towns[0].title()} cheaper than {towns[1].title()} for {flat or '4-room'} flats?"}
+        if len(towns) == 1:
+            return {"query": f"How much is a {flat or '4-room'} flat in {towns[0].title()}?"}
+    return None
+
+
+def _towns_in(text: str) -> List[str]:
+    from agents import supervisor as sv
+    up = text.upper()
+    found = sorted((up.find(t), t) for t in sv.HDB_TOWNS if t in up)
+    return [t for _, t in found]

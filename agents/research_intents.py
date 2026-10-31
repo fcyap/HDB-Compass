@@ -648,7 +648,8 @@ def research_lines(state: Dict[str, Any]) -> List[str]:
     for note in dict.fromkeys(c.get("assumptions") or []):
         lines.append(f"_Assumption: {note}_")
     for question in c.get("clarifications") or []:
-        lines.append(f"**Question:** {question}")
+        # a menu is a numbered list of its own and reads better without a "Question:" label
+        lines.append(question if c.get("menu_options") else f"**Question:** {question}")
     return lines
 
 

@@ -120,7 +120,7 @@ TABLE = [
 ]
 
 # rows for later steps stay xfail (strict, so a fix that lands is noticed) until their step is done
-PENDING_KINDS = {"menu": "step 3: menu"}
+PENDING_KINDS = {}
 PENDING_QUERIES = {
     "What's the stamp duty on a $600k flat?": "step 6: price in '$600k flat' form",
     "How long is the commute from Tampines to Raffles Place?": "step 6: single commute",
@@ -149,3 +149,60 @@ def test_behaviour_table(query, expected, request):
     state = variant_c.run(query)
     assert outcome_ok(state, expected), (state.get("active_subagents"), state.get("clarification"),
                                          (state.get("draft_response") or "")[:200])
+
+
+# ---------------------------------------------------------------------------
+# menu follow-ups
+# ---------------------------------------------------------------------------
+def _turns(*messages):
+    state = None
+    for text in messages:
+        state = variant_c.run(text, previous=state)
+    return state
+
+
+def test_menu_lists_four_options_for_a_bto_question():
+    clar = variant_c.run("I want to buy a bto but im not sure what to buy")["clarification"]
+    assert clar["kind"] == "menu" and len(clar["options"]) == 4
+    assert clar["options"][0]["label"].startswith("Compare a BTO launch")
+    assert all(o["text"] for o in clar["options"])
+
+
+@pytest.mark.parametrize("reply", ["1", "option 1", "Compare a BTO launch with nearby resale prices", "bto launch"])
+def test_menu_choice_launch_asks_which_launch(reply):
+    state = _turns("I want to buy a bto but im not sure what to buy", reply)
+    assert state["clarification"]["kind"] == "bto_launch"
+    assert "Sembawang Portico" in state["draft_response"] and not state["active_subagents"]
+
+
+def test_launch_name_after_the_menu_runs_the_launch_comparison():
+    state = _turns("I want to buy a bto but im not sure what to buy", "1", "Sembawang Portico")
+    assert state["active_subagents"] == ["market_sql"]
+    assert state["user_constraints"]["bto_project_name"] == "Sembawang Portico"
+
+
+def test_menu_choice_budget_asks_for_the_calculator_facts_then_the_financial_flow_runs():
+    state = _turns("I'm a first time buyer, where do I start?", "3")
+    assert state["clarification"]["kind"] == "financial" and "income" in state["draft_response"]
+    state = _turns("I'm a first time buyer, where do I start?", "3", "We are SC citizens aged 32 and 30, earning $8,000 a month")
+    assert state["active_subagents"] == ["financial"]
+
+
+def test_menu_choice_rules_and_a_rule_question():
+    state = _turns("Should I buy BTO or resale?", "4")
+    assert state["clarification"]["kind"] == "rules"
+    state = _turns("Should I buy BTO or resale?", "4", "MOP for prime")
+    assert state["active_subagents"] == ["policy_rag"]
+
+
+def test_a_full_new_question_after_the_menu_is_handled_normally():
+    state = _turns("What flat should I buy?", "What is the MOP for a Prime flat?")
+    assert state["active_subagents"] == ["policy_rag"]
+
+
+def test_first_timer_status_alone_does_not_run_the_calculators():
+    c = sv.rule_based_extract("I'm a first time buyer, where do I start?").model_dump()
+    c = sv._finalize_constraints(c, "I'm a first time buyer, where do I start?",
+                                 {"messages": [{"role": "user", "content": "I'm a first time buyer, where do I start?"}]}, [],
+                                 from_model=False)
+    assert sv.decide_routing(c) == []
