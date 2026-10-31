@@ -72,7 +72,9 @@ def test_plain_search_the_model_did_not_flag_gets_no_policy_route(monkeypatch, q
     out = run_extract(monkeypatch, query, **reading)
     c = out["user_constraints"]
     assert not c["policy_question"]
-    assert sv.decide_routing(c) == ["market_sql"]
+    # a search, so the market agent runs; main's affordability flow may add the financial agent, never policy
+    routing = sv.decide_routing(c)
+    assert "market_sql" in routing and "policy_rag" not in routing
 
 
 def test_rule_question_the_model_flagged_still_reaches_policy(monkeypatch):
