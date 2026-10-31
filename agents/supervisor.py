@@ -326,13 +326,18 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
 
     policy = None
     # "plus" only in the Plus-classification sense: "plus $30,000 in cash" is not a policy question.
-    if re.search(r"\b(mop|minimum occupation|prime|plus (?:flats?|models?|bto|resale|classification)|standard flat|clawback|subsidy recovery|eip|ethnic|quota|wait[- ]out|eligib|scheme|rental restriction|exempt"
+    if re.search(r"\b(mop|minimum occupation|prime|plus (?:flats?|models?|bto|resale|classification)|standard flat|clawback|subsidy recovery|eip|ethnic\w*|quota\w*|wait[- ]out|eligible|eligibility (?:criteria|requirements?|rules?|conditions?|to )|scheme\w*|rental restriction|exempt\w*"
                  r"|not married|unmarried|fianc[eé]e?s?|apply(?:ing)? for (?:an? )?(?:[2-5][- ]room )?(?:flexi )?btos?|can (?:we|i) (?:buy|apply)"
                  # rules asked about in other words: "grant rules", "2-room Flexi", "how long must I wait", "can I rent out",
                  # "after selling my private property"
                  r"|(?:grant|housing|hdb|resale|bto) rules?"
                  r"|how long (?:must|do|should|will|would) (?:i|we) (?:have to )?wait (?:before|until|to) (?:i |we )?(?:can )?(?:buy|apply|purchase)"
                  r"|(?:sold|selling|disposed of|disposal of) (?:my |our |the |a )?private (?:residential )?propert(?:y|ies)"
+                 # who may buy, which grants exist, income limits, how often one may apply (the stems above need endings)
+                 r"|(?:can|may|could) (?:an? )?(?:pr|prs|permanent residents?|foreigners?|singles?|singaporeans?|divorcees?|widow(?:er)?s?)\s+(?:buy|apply|own|purchase|get)"
+                 r"|(?:pr|prs|permanent residents?|foreigners?|singles?|divorcees?|widow(?:er)?s?)\s+(?:allowed|able|permitted|eligible)\s+to\s+(?:buy|apply|own|purchase)"
+                 r"|(?:what|which) (?:housing )?grants? (?:are|is|exist)|grants? (?:are )?(?:available|offered)|grants? for (?:first|second|singles?|young|large|married|couples?|families|seniors?|resale|bto)|income (?:ceiling|cap|limit)s?"
+                 r"|how many times (?:can|may) (?:i|we) apply|second[- ]?timers?"
                  r"|(?:can|may) (?:i|we) (?:rent out|sublet)|rent out (?:my|our|the) (?:whole )?(?:flat|room|bedroom|unit)|buyback)\b", q, re.I):
         policy = q
 

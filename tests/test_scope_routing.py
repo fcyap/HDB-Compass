@@ -27,9 +27,7 @@ def _queries(name):
 # (a) benchmark lock
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("item", _queries("category_c_queries.json"), ids=lambda i: i["id"])
-def test_category_c_routes_to_policy_through_the_regex(item, request):
-    if item["id"] == "C2-04":
-        request.applymarker(pytest.mark.xfail(strict=True, reason="step 1: 'schemes' ending"))
+def test_category_c_routes_to_policy_through_the_regex(item):
     c = sv.rule_based_extract(item["query"]).model_dump()
     assert c["policy_question"], "the policy keyword regex must catch every Category C question"
     assert sv.decide_routing(c) == ["policy_rag"]
