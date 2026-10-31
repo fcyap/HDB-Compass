@@ -228,6 +228,32 @@ def test_live_eval_without_a_session_prints_the_scancel_for_a_job_left_running(t
     assert [c for c in calls(tmp_path, "ssh") if "-O check" not in c] == []
 
 
+def test_a_session_that_passes_the_check_but_cannot_reach_the_cluster_prints_the_scancel(tmp_path):
+    # Right after the VPN drops the shared login still answers  -O check , but every command through it fails
+    env = live_sandbox(tmp_path)
+    _stub(tmp_path / "fakebin" / "ssh", f"""echo "$@" >> "{tmp_path}/ssh.calls"
+case "$*" in *"-O check"*) exit 0 ;; esac
+echo "Connection to cluster closed by remote host." >&2
+exit 255""")
+    (tmp_path / JOB_FILE).parent.mkdir(parents=True)
+    (tmp_path / JOB_FILE).write_text("344978\n")
+    out = run(tmp_path, env, "run_live_eval.sh", "t1", "C")
+    assert out.returncode == 1 and "STEP_FAILED could not list the GPU jobs" in out.stdout
+    assert "after logging in, run  scancel 344978" in out.stdout
+    assert recorded_job(tmp_path) == "344978"                            # still known to the next run
+    ssh = calls(tmp_path, "ssh")
+    assert not any("sbatch" in c or "scancel" in c for c in ssh) and all("BatchMode=yes" in c for c in ssh)
+
+
+def test_a_failed_job_listing_without_a_recorded_job_prints_no_scancel(tmp_path):
+    env = live_sandbox(tmp_path)
+    _stub(tmp_path / "fakebin" / "ssh", """case "$*" in *"-O check"*) exit 0 ;; esac
+exit 255""")
+    out = run(tmp_path, env, "run_live_eval.sh", "t1", "C")
+    assert out.returncode == 1 and "STEP_FAILED could not list the GPU jobs" in out.stdout
+    assert "scancel" not in out.stdout and recorded_job(tmp_path) is None
+
+
 def test_keep_job_records_the_job_and_the_next_run_reuses_then_cancels_it(tmp_path):
     env = live_sandbox(tmp_path)
     out = run(tmp_path, {**env, "KEEP_JOB": "1"}, "run_live_eval.sh", "t1", "C")
