@@ -169,7 +169,7 @@ _DATA_WORDS = re.compile(
     r"compar\w+|breakdown|listings?|average|how much|per sqm|psf|distribution|highest|lowest|costs?|costliest|dearest|"
     r"priciest|affordable|histor\w+|gone up|gone down|appreciat\w+|cheaper|pricier|"
     # value questions: "do maisonettes hold their value?", "resale value", "worth more"
-    r"(?:resale |market )?values?|valuations?|worth(?: more| less)?|depreciat\w+)\b", re.I)
+    r"(?:resale |market )?valu(?:e|es|able|ations?)|worth(?: more| less)?|depreciat\w+)\b", re.I)
 
 
 def mentions_data(text: str) -> bool:

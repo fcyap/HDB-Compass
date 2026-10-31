@@ -433,6 +433,9 @@ _STOREY_DIM = re.compile(r"\b(?:high(?:er)?|low(?:er)?|top|upper|middle|mid)[- ]
 _LEASE_DIM = re.compile(r"\blease (?:left|remaining|bands?|ranges?)\b|\bby (?:remaining )?lease\b|"
                         r"\b(?:older|newer|younger) (?:flats|blocks|estates)\b", re.I)
 _YEAR_DIM = re.compile(r"\b(?:by|each|per|every) year\b|\byear[- ]by[- ]year\b|\byearly\b", re.I)
+_FLATTYPE_DIM = re.compile(r"\b(?:which|what|by|each|all|compare|across)\s+(?:the\s+)?(?:flat|room|unit)[- ]?types?\b|"
+                           r"\bflat[- ]?types?\s+(?:compare|sell|cost|fetch)", re.I)
+_PSM = re.compile(r"\bper\s+(?:square\s+met(?:re|er)|sq\.?\s?m|sqm)\b|\bpsm\b|\bpsf\b|\bper\s+sq(?:uare)?\s*f(?:oo|ee)?t\b", re.I)
 
 # URA planning regions: the 26 HDB towns, each in one region, so "in the east" is a list of towns, not ignored.
 REGION_TOWNS = {
@@ -480,11 +483,12 @@ def extract_group_stats(q: str, base: Dict[str, Any], addresses: List[str]) -> D
     if _SEARCH_VERBS.search(q) and not (group_cue or strong):
         return {}
     near = _stats_near(near_m.group("a")) if near_m else None
-    price_ask = bool(re.search(r"\b(?:expensive|cheap\w*|price\w*|priciest|dearest|costs?|affordable|median|average|sold|sales?)\b", q, re.I))
+    price_ask = bool(re.search(r"\b(?:expensive|cheap\w*|price\w*|priciest|dearest|costs?|affordable|median|average|sold|sales?|"
+                               r"sells?|selling|fetch\w*|worth)\b", q, re.I))
     if near is None and station_group and (price_ask or strong):
         near = "mrt" if not re.search(r"\blrt\b", q, re.I) or re.search(r"\bmrt\b", q, re.I) else "lrt"
     dim = ("storey_band" if _STOREY_DIM.search(q) else "lease_band" if _LEASE_DIM.search(q)
-           else "year" if _YEAR_DIM.search(q) else None)
+           else "flat_type" if _FLATTYPE_DIM.search(q) else "year" if _YEAR_DIM.search(q) else None)
     region = region_towns(q) if not base.get("towns") else None
     if near is None and not (island and strong) and not (town_group and strong and not base.get("towns")) \
             and not (dim and price_ask) and not (region and (strong or price_ask)):
@@ -514,6 +518,10 @@ def extract_group_stats(q: str, base: Dict[str, Any], addresses: List[str]) -> D
         out["stats_sort"], out["stats_order"] = "median_price", "desc"
     if _ASC.search(q) and group != ["distance_band"]:
         out["stats_sort"], out["stats_order"] = "median_price", "asc"
+    if _PSM.search(q) and group not in (["distance_band"], ["year"], ["storey_band"], ["lease_band"]):
+        # "sell for the most per square metre": ranked by $/sqm, not by price
+        out["stats_sort"] = "median_psm"
+        out["stats_order"] = "asc" if _ASC.search(q) else "desc"
     if group == ["town"] and not out.get("stats_sort"):
         out["stats_sort"], out["stats_order"] = "median_price", "desc"
     if group == ["station"] and not out.get("stats_sort"):
@@ -1055,8 +1063,15 @@ def _stats_headline(r: Dict[str, Any]) -> str:
     word = {"count": "most sales", "median_psm": "highest price per sqm" if desc else "lowest price per sqm"}.get(
         r.get("sort_by") or "", "highest median price" if desc else "lowest median price")
     line = f"{_gl(r, top)} has the {word}"
-    if (r.get("sort_by") or "median_price") == "count":
+    sort = r.get("sort_by") or "median_price"
+    if sort == "count":
         line += f" ({top['count']:,} sales)"
+    elif sort == "median_psm" and top.get("median_psm"):
+        # a per-sqm ranking quotes and compares $/sqm, not the price
+        line += f" ({_m(top['median_psm'])} per sqm)"
+        if base.get("median_psm"):
+            line += f", {_gap(top['median_psm'], base['median_psm'])} the {_m(base['median_psm'])} per sqm for {base['label']}"
+        return line + "."
     else:
         line += f" ({_m(top['median_price'])})"
     if base.get("median_price"):

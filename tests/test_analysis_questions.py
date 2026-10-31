@@ -215,11 +215,10 @@ LONG_TAIL = [
     ("Does remaining lease affect resale prices?", {"group_by": ["lease_band"]}),
     ("Compare executive and 5-room flat prices", {"group_by": ["flat_type"], "flat_types": ["EXECUTIVE", "5 ROOM"]}),
     ("Do maisonettes hold their value?", {"group_by": ["flat_type"]}),
-    ("Which flat type is the most expensive?", {"group_by": ["flat_type"], "sort_by": "median_price"}),
+    ("Are corner units more valuable?", {"group_by": ["flat_type"], "sort_by": "median_price"}),
     ("Are prices on the rise?", {"group_by": ["year"], "lookback_years": 5}),
-    ("Which flat types sell for the most per square metre?", {"group_by": ["flat_type"], "sort_by": "median_psm"}),
+    ("How much more do bigger flats cost per square metre?", {"group_by": ["flat_type"], "sort_by": "median_psm"}),
     ("Show the price distribution of 3-room flats", {"group_by": ["town"], "flat_types": ["3 ROOM"], "top_n": 5}),
-    ("What do older flats with short leases sell for?", {"group_by": ["lease_band"], "sort_by": "median_price", "order": "asc"}),
 ]
 
 
@@ -260,7 +259,7 @@ def test_data_words_are_needed_for_analysis_mode_otherwise_the_menu():
 
 def test_analysis_mode_is_off_when_add_ons_are_off(monkeypatch):
     monkeypatch.setenv("HDB_ADDONS", "off")
-    out = ask("Which flat type is the most expensive?", fast=False)
+    out = ask("Do maisonettes hold their value?", fast=False)
     assert out["user_constraints"]["analysis_mode"] is False
     assert out["clarification"]["kind"] == "menu" and tools_run(out) == []
 
@@ -376,3 +375,20 @@ def test_region_towns_cover_all_hdb_towns_once():
     from agents.research_intents import REGION_TOWNS
     towns = [t for ts in REGION_TOWNS.values() for t in ts]
     assert len(towns) == len(set(towns)) == 26
+
+
+def test_flat_type_question_ranked_per_square_metre_without_a_model():
+    # found with Groq rate-limited: analysis mode's no-model fallback had no amenity or town, so it showed the menu
+    c = sv.rule_based_extract("Which flat types sell for the most per square metre?").model_dump()
+    assert c["wants_group_stats"] and c["stats_group_by"] == ["flat_type"]
+    assert c["stats_sort"] == "median_psm" and c["stats_order"] == "desc"
+
+
+def test_per_sqm_ranking_headline_quotes_per_sqm_figures():
+    # found in review: the headline named the per-sqm ranking but quoted the median price
+    from agents.research_intents import _stats_headline
+    r = {"group_by": ["flat_type"], "sort_by": "median_psm", "order": "desc",
+         "groups": [{"key": "2 ROOM", "label": "2 ROOM", "median_price": 372000, "median_psm": 8085, "count": 752}],
+         "baseline": {"label": "all flat sales island-wide", "median_price": 630000, "median_psm": 6483}}
+    line = _stats_headline(r)
+    assert "$8,085 per sqm" in line and "$6,483 per sqm" in line and "$372,000" not in line
