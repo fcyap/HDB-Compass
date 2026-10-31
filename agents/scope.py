@@ -162,6 +162,18 @@ _POLICY_TOPIC = re.compile(
     r"permitted|policy|policies|restrict\w*|requirements?|criteria|age limit|how (?:long|many times))\b", re.I)
 
 
+# A question about figures in the resale data that no specific intent recognised: the market agent chooses how to
+# answer it with the analysis tools (agents/supervisor.py, "analysis mode"). A message without these words gets the menu.
+_DATA_WORDS = re.compile(
+    r"\b(?:prices?|priced|pricey|sold|sales?|transactions?|median|statistics|stats|trends?|expensive|cheap\w*|premium|"
+    r"compar\w+|breakdown|listings?|average|how much|per sqm|psf|distribution|highest|lowest|costs?|costliest|dearest|"
+    r"priciest|affordable|histor\w+|gone up|gone down|appreciat\w+|cheaper|pricier)\b", re.I)
+
+
+def mentions_data(text: str) -> bool:
+    return bool(_DATA_WORDS.search(text or ""))
+
+
 def mentions_policy_topic(text: str) -> bool:
     return bool(_POLICY_TOPIC.search(text or ""))
 

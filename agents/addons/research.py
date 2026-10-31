@@ -94,6 +94,15 @@ TOOLS = (
               "What amenities are near Blk 1 Bishan St 1?"),
 )
 
+ANALYSIS_GUIDE = """DATA QUESTION MODE. The user asked about figures in the resale data that no fixed shape covers. Answer it with your tools; code writes the figures, so you only choose the calls.
+Data: past HDB resale sales 2017 to now (no live listings). Group by distance_band, town, station, street, flat_type, year, storey_band or lease_band (1-2 at once). Distance is straight-line metres to the nearest mrt (LRT excluded), mrt_lrt, lrt, hawker, supermarket or school. Default period is the last year; use lookback_years or start_month for longer. Medians are over pooled sales.
+Method: (1) if unsure of a town, flat type or station name call describe_resale_data first; (2) call query_resale_statistics with the narrowest grouping that answers the question (use sort_by and top_n for 'most/least expensive'); (3) for one named place use find_resale_blocks_near or get_area_resale_statistics, for one block get_block_transaction_history; (4) at most 6 calls, then reply with one short sentence and no numbers.
+Examples:
+- 'Do 5-room flats near hawker centres cost more?' -> query_resale_statistics(group_by=['distance_band'], near='hawker', flat_types=['5 ROOM'])
+- 'Which streets in Bishan are priciest?' -> query_resale_statistics(group_by=['street'], towns=['BISHAN'], sort_by='median_price', top_n=10)
+- 'How did 4-room prices change by storey since 2020?' -> query_resale_statistics(group_by=['year','storey_band'], flat_types=['4 ROOM'], start_month='2020-01')
+- 'What can you tell me about the data?' -> describe_resale_data()"""
+
 PACK = ToolPack(
     name="research",
     tools=TOOLS,
@@ -102,4 +111,5 @@ PACK = ToolPack(
         "market_sql": "pass the user's addresses verbatim (these tools resolve them) and never estimate coordinates",
         "spatial": "pass addresses exactly as given and never estimate coordinates",
     },
+    analysis_guide={"market_sql": ANALYSIS_GUIDE},
 )

@@ -610,6 +610,34 @@ def _area_arg(c: Dict[str, Any], assumptions: List[str]) -> Optional[Dict[str, A
     return {**place, "radius_meters": int(radius)}
 
 
+ANALYSIS_TOOLS = ("describe_resale_data", "query_resale_statistics", "find_resale_blocks_near", "get_area_resale_statistics",
+                  "get_area_price_trend", "get_block_transaction_history", "get_market_snapshot", "rank_towns_by_value",
+                  "compute_town_price_timeseries")
+ANALYSIS_MAX_ITERATIONS = 6
+
+
+def analysis_fallback(c: Dict[str, Any], query: str) -> List[Tuple[str, Dict[str, Any]]]:
+    """What runs in analysis mode when the model makes no valid call (or there is no model): an overview that needs
+    no judgement. A question naming an amenity gets the distance bands for it; a town gets its flat types. Nothing to
+    go on gives no call, and the answer is the menu."""
+    m = _NEAR_GENERIC.search(query) or re.search(rf"\b(?P<a>{_AMEN})\b", query, re.I)
+    towns = list(c.get("towns") or [])
+    flats = list(c.get("flat_types") or [])
+    if m:
+        args: Dict[str, Any] = {"group_by": ["distance_band"], "near": _stats_near(m.group("a"))}
+        if towns:
+            args["towns"] = towns
+    elif towns:
+        args = {"group_by": ["flat_type"], "towns": towns}
+    elif flats:
+        args = {"group_by": ["town"], "sort_by": "median_price", "order": "desc"}
+    else:
+        return []
+    if flats:
+        args["flat_types"] = flats
+    return [("query_resale_statistics", args)]
+
+
 def stats_call_args(c: Dict[str, Any], assumptions: List[str]) -> Dict[str, Any]:
     """The query_resale_statistics call for a grouped-statistics question: what the user asked, with disclosed defaults."""
     group = [g for g in (c.get("stats_group_by") or []) if g][:2] or ["distance_band"]
@@ -1046,7 +1074,7 @@ def stats_lines(r: Dict[str, Any], c: Dict[str, Any]) -> List[str]:
 def _catalog_lines(d: Dict[str, Any]) -> List[str]:
     p = d.get("period_covered") or {}
     lines = [f"**What the resale data covers** ({p.get('first_month')} to {p.get('last_complete_month')}, past sales only):",
-             "- Break sales down by: " + "; ".join(f"{k.replace('_', ' ')} ({v})" for k, v in (d.get("dimensions") or {}).items()),
+             "- Break sales down by: " + "; ".join(f"{k.replace('_', ' ')} - {v}" for k, v in (d.get("dimensions") or {}).items()),
              "- Distances can be measured to: " + "; ".join(f"{v}" for v in (d.get("near_options") or {}).values()),
              f"- Towns: {', '.join(t.title() for t in d.get('towns') or [])}",
              f"- Flat types: {', '.join(d.get('flat_types') or [])}",

@@ -1494,6 +1494,14 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     for vals in (constraints.get("financial_inputs") or {}).values():
         for k in unsure:
             vals.pop(k, None)
+    # a data question no specific intent recognised goes to the market agent's analysis tools instead of the menu
+    constraints["analysis_mode"] = False
+    if (with_history and not pending and not constraints.get("clarifications") and not constraints.get("place_options")
+            and not constraints.get("addresses") and not constraints.get("map_pin") and scope.mentions_data(query)
+            and addons.offered_in(state.get("variant"), bool(state.get("fast_path")))
+            # nothing specific was recognised; a town on its own (which only started a block search) does not count
+            and not decide_routing({**constraints, "towns": []})):
+        constraints["analysis_mode"] = True
     # read by code from every user message so far, so an ask in the first turn still counts after a follow-up reply
     constraints["requested_tools"] = requested_tools(users)
     comparables = "query_comparable_resale_transactions"
@@ -1575,6 +1583,8 @@ def decide_routing(c: Dict[str, Any], pending: Optional[Dict[str, Any]] = None) 
     if not active and (c.get("addresses") or c.get("map_pin")):
         pass  # a place with no recognised question: route_node asks instead of guessing a search or policy query
     elif not active and c.get("towns"):
+        active.append("market_sql")
+    elif not active and c.get("analysis_mode"):
         active.append("market_sql")
     # Nothing recognised and no towns: no specialist runs. route_node answers with a menu of what the app can do, rather
     # than searching the policy text for a message that is not a policy question.
@@ -1738,6 +1748,8 @@ TASK_TOOLS.update(addons.task_tools())   # add-on tools: offered only when their
 def needed_for_task(name: str, c: Dict[str, Any], query: str = "") -> bool:
     """Whether a Variant C specialist is offered this tool: an optional tool only when asked for (asked_for), a
     task tool only when the constraints call for it (TASK_TOOLS), every other tool always."""
+    if c.get("analysis_mode") and TOOL_OWNER.get(name) == "market_sql":
+        return name in ri.ANALYSIS_TOOLS            # the analysis tools only; the block search and its kin are not offered
     return asked_for(name, c, query) and TASK_TOOLS.get(name, lambda _: True)(c)
 
 
@@ -1775,6 +1787,8 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
             plan.append(("compute_town_price_timeseries", dict(towns=towns, flat_type=(c.get("flat_types") or ["4 ROOM"])[0],
                                                                lookback_years=c.get("trend_years") or 3)))
         plan.extend(addons.plan(agent, c, query))
+        if c.get("analysis_mode") and addons.active():
+            plan.extend(ri.analysis_fallback(c, query))
         if c.get("wants_bto_comparison") and not c.get("bto_project_name"):
             m = re.search(r"([A-Z][A-Za-z]+(?: [A-Z][A-Za-z]+)*)\s+(?:BTO|launch)", query)
             plan.append(("compare_bto_launch_vs_resale", dict(bto_project_name=m.group(1) if m else (towns[0] if towns else "Recent BTO"), radius_meters=500)))
@@ -2063,6 +2077,8 @@ def requested_outputs(agent: str, outputs: Dict[str, Any], c: Dict[str, Any], qu
     if agent not in ("market_sql", "spatial"):
         return outputs
     asked = {name for name, _ in deterministic_plan(agent, c, query)}
+    if c.get("analysis_mode") and agent == "market_sql":
+        asked |= set(ri.ANALYSIS_TOOLS)     # whatever the model chose from the analysis tools is the evidence
     return {name: out for name, out in outputs.items() if name in asked or name == "sync_interactive_map_ui"}
 
 
@@ -2078,7 +2094,11 @@ def make_specialist_node(agent: str) -> Callable[[HDBCompassState], Dict[str, An
         tools = [name for name in visible if needed_for_task(name, c, query)]
         system = AGENT_SYSTEM[agent] if addons.offered_in(state.get("variant"), bool(state.get("fast_path"))) \
             else CORE_AGENT_SYSTEM[agent]
+        analysis = bool(c.get("analysis_mode")) and agent == "market_sql" and addons.offered_in(state.get("variant"), bool(state.get("fast_path")))
+        if analysis:
+            system = system + "\n\n" + addons.analysis_section(agent)
         outputs, log, errors, final = run_react(agent, tools, system, query, c,
+                                                max_iter=ri.ANALYSIS_MAX_ITERATIONS if analysis else None,
                                                 known_points=known, use_model=c.get("extraction_source") != FAST_PATH_SOURCE,
                                                 stop_when_covered=bool(state.get("fast_path")))
         update = slot_outputs(requested_outputs(agent, outputs, c, query), c.get("towns") or [])
@@ -3321,6 +3341,12 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
         text, payload = present_school_result(state["nearby_school_results"])
         return {"draft_response": text, "map_ui_payload": payload}
     c = state.get("user_constraints", {})
+    if c.get("analysis_mode") and not (state.get("sql_market_results") or state.get("location_results")):
+        # a data question the model could not turn into a valid call and code has no overview for: the menu, as before
+        menu = scope.menu_for(last_user_query(state))
+        return {"draft_response": menu["question"], "map_ui_payload": {}, "tool_call_log": [], "errors": [],
+                "clarification": {"kind": "menu", "needed": [], "question": menu["question"], "options": menu["options"]},
+                "suggestions": []}
     blocks = state.get("candidate_blocks_intersection") or []
     log: List[Dict[str, Any]] = []
     payload = build_map_payload(blocks, c, log) if blocks else ri.research_map_payload(state)

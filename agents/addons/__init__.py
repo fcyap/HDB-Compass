@@ -55,6 +55,8 @@ class ToolPack:
     plan: Callable[[str, Dict[str, Any], str], Plan] = field(default=lambda agent, c, query: [])
     # a general rule for the owner's prompt, added once before the tools' hints
     prompt_preamble: Dict[str, str] = field(default_factory=dict)
+    # a longer guide for the owner, added only to runs in analysis mode (a data question no specific intent covers)
+    analysis_guide: Dict[str, str] = field(default_factory=dict)
 
 
 def _load(ref: str) -> Any:
@@ -158,6 +160,11 @@ def prompt_section(agent: str) -> str:
                 parts.append(p.prompt_preamble[agent])
             parts.extend(hints)
     return (" Also available when offered: " + "; ".join(parts) + ".") if parts else ""
+
+
+def analysis_section(agent: str) -> str:
+    """The data guide, method and worked examples for an owner in analysis mode (empty for owners without one)."""
+    return "\n\n".join(p.analysis_guide[agent] for p in packs() if p.analysis_guide.get(agent))
 
 
 def not_checked() -> Dict[str, str]:
