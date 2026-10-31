@@ -82,6 +82,20 @@ class ExtractedConstraints(BaseModel):
     wants_nearby_amenities: bool = False
     wants_area_statistics: bool = False
     area_radius_meters: Optional[int] = Field(None, ge=50, le=3000, description="Radius for an area question, e.g. 'within 300m of Blk 277'")
+    # --- grouped statistics over many blocks (query_resale_statistics; see agents/research_intents.py) ---
+    wants_group_stats: bool = Field(False, description="A broad market question: statistics across towns, stations or distance bands, not one named place")
+    stats_group_by: List[str] = Field(default_factory=list, description="1-2 of distance_band, town, station, street, flat_type, year, storey_band, lease_band")
+    stats_near: Optional[str] = Field(None, description="mrt (LRT excluded), mrt_lrt, lrt, hawker, supermarket or school: what distance is measured to")
+    stats_distance_m: Optional[int] = Field(None, description="A distance the user stated for the grouped statistics, e.g. 'within 300m of an MRT'")
+    stats_bands: Optional[List[int]] = Field(None, description="Upper edges in metres of distance bands the user stated")
+    stats_trend: bool = Field(False, description="The user asked how the figures changed over time")
+    stats_lookback_years: Optional[int] = Field(None, description="Years of sales to use for grouped statistics")
+    stats_since_year: Optional[int] = Field(None, description="'since 2019' style start year for grouped statistics")
+    stats_sort: Optional[str] = Field(None, description="median_price, count, median_psm or change")
+    stats_order: Optional[str] = Field(None, description="desc (most expensive first) or asc (cheapest first)")
+    stats_listings: bool = Field(False, description="The user said listings; the data is past sales only")
+    analysis_mode: bool = Field(False, description="A data question no specific intent covers; the market agent chooses its tools")
+    wants_data_catalog: bool = Field(False, description="The user asks what data or breakdowns are available")
     assumptions: List[str] = Field(default_factory=list, description="Defaults applied to vague requests; shown to the user")
     clarifications: List[str] = Field(default_factory=list, description="Questions the user must answer; never guess these")
 

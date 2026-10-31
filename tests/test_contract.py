@@ -42,9 +42,9 @@ OUTPUT_MODELS = {
 
 
 def test_inventory_includes_comparable_analytics():
-    assert len(S.TOOL_OWNER) == 23
+    assert len(S.TOOL_OWNER) == 25
     assert set(S.TOOL_OWNER) == set(S.TOOL_INPUT_MODEL)
-    assert len(tools_for_agent("market_sql")) == 12
+    assert len(tools_for_agent("market_sql")) == 14
     assert len(tools_for_agent("spatial")) == 7
     assert len(tools_for_agent("financial")) == 3
     assert len(tools_for_agent("policy_rag")) == 1

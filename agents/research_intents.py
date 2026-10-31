@@ -25,7 +25,8 @@ DEFAULT_FLAT_TYPE = "4 ROOM"
 VAGUE_RADIUS_METERS = 500
 MARKET_RESEARCH_TOOLS = ("get_block_transaction_history", "get_market_snapshot", "rank_towns_by_value",
                          "compare_resale_options", "assess_resale_price", "compare_bto_launch_vs_resale",
-                         "find_resale_blocks_near", "get_area_resale_statistics", "get_area_price_trend")
+                         "find_resale_blocks_near", "get_area_resale_statistics", "get_area_price_trend",
+                         "query_resale_statistics", "describe_resale_data")
 LOCATION_TOOLS = ("resolve_location", "get_nearby_amenities")
 COORDINATE_TOOLS = {"query_comparable_resale_transactions": ("latitude", "longitude"),
                     "get_nearby_amenities": ("latitude", "longitude"),
@@ -221,6 +222,9 @@ TURN_ONLY_KEYS = frozenset({
     "addresses", "wants_block_history", "wants_market_snapshot", "wants_town_ranking", "wants_option_comparison",
     "wants_price_assessment", "wants_nearby_amenities", "wants_area_statistics", "asking_price_sgd",
     "bto_project_name", "area_radius_meters", "map_pin", "pin_radius_meters", "nearby_schools",
+    "wants_group_stats", "stats_group_by", "stats_near", "stats_distance_m", "stats_bands", "stats_trend",
+    "stats_lookback_years", "stats_since_year", "stats_sort", "stats_order", "stats_listings", "analysis_mode",
+    "wants_data_catalog",
 })
 # Never carried from an earlier turn, not even into a reply: they are worked out afresh for every message.
 ALWAYS_FRESH_KEYS = frozenset({"clarifications", "assumptions", "extraction_source", "requested_tools", "place_options"})
@@ -344,6 +348,164 @@ def _asks_town_price(q: str, base: Dict[str, Any]) -> bool:
                 and not extract_addresses(q))
 
 
+
+# ---------------------------------------------------------------------------
+# Broad market questions: grouped statistics (query_resale_statistics)
+# ---------------------------------------------------------------------------
+# "What are the historical statistics of HDBs sold near MRT stations?", "Which MRT stations have the most expensive
+# resale flats nearby?", "Sales statistics across Singapore". No named place, no budget: a question about many blocks,
+# answered by one grouped query that code runs and code writes up (research_lines). Named places, one block, block
+# searches with limits and policy questions are not read as this.
+_AMEN = (r"(?:(?:mrt|lrt|train)(?:\s*(?:or|and|/)\s*(?:mrt|lrt))?(?:\s+stations?)?|mrts|lrts|"
+         r"hawker\s+(?:centres?|centers?)|food\s+(?:centres?|centers?)|supermarkets?|(?:primary\s+)?schools?)")
+_NEAR_GENERIC = re.compile(
+    r"\b(?:near(?:by)?|close\s+to|next\s+to|beside|around|(?:far|away)\s+from|walking\s+distance\s+(?:to|from)|"
+    r"within\s+\d+(?:\.\d+)?\s*(?:km|m|metres?|meters?)\s+(?:of|from)|distance\s+(?:to|from)|"
+    r"\d+(?:\.\d+)?\s*(?:km|m|metres?|meters?)\s+(?:of|from))\s+(?:an?\s+|the\s+|any\s+|some\s+|each\s+|every\s+)?"
+    rf"(?P<a>{_AMEN})\b", re.I)
+_STATS_WORDS = re.compile(r"\b(statistics|stats|prices?|priced|sold|sales?|sells?|transactions?|history|historical|median|"
+                          r"average|costs?|expensive|cheap\w*|pricey|premium|how much|listings?|for sale|resale|"
+                          r"compar\w+|breakdown|trends?|affordable|dearest|priciest)\b", re.I)
+_SEARCH_VERBS = re.compile(r"\b(find|list|search|look(?:ing)? for|recommend|suggest|which blocks|map)\b", re.I)
+_STATS_STRONG = re.compile(r"\b(statistics|stats|median|average|breakdown|historical)\b", re.I)
+_STATION_GROUP = re.compile(
+    r"\b(?:by|per|each|every|which|what|top|best|worst|cheapest|priciest|dearest)\s+(?:(?!near\b|town|by\b)\w+\s+){0,2}?(?:mrt\s+|lrt\s+)?stations?\b"
+    r"|\b(?:mrt\s+|lrt\s+)?stations?\s+(?:have|has|with|in|are|is)\b"
+    r"|\b(?:most|least)\s+\w+\s+(?:mrt\s+)?stations?\b|\bstations?\s+(?:of|in)\s+\w+", re.I)
+_TOWN_GROUP = re.compile(
+    r"\b(?:by|per|each|every|across|which|what|top|best|worst)\s+(?:\w+\s+){0,2}?towns?\b|\bby\s+(?:estate|region)\b"
+    r"|\btowns?\s+(?:have|has|with|are|is)\b|\bacross\s+(?:all\s+)?towns\b", re.I)
+_ISLAND = re.compile(r"\b(?:across\s+(?:all\s+of\s+)?singapore|island[- ]?wide|nation[- ]?wide|throughout singapore|"
+                     r"whole of singapore|all (?:of )?singapore|entire island|singapore[- ]wide|overall)\b", re.I)
+_CATALOG = re.compile(r"\b(?:what|which)\s+(?:data|breakdowns?|statistics|stats|towns|flat types|stations)\b[^.?]{0,40}"
+                      r"\b(?:do you have|can you|available|cover|analy[sz]e|offer)\b"
+                      r"|\bdescribe (?:the |your )?(?:resale |hdb )?data\b|\bwhat can you (?:tell me|analy[sz]e|show) about the (?:resale )?data\b", re.I)
+_DESC = re.compile(r"\b(?:most expensive|highest|priciest|dearest|costliest|pricey|most)\b", re.I)
+_ASC = re.compile(r"\b(?:cheapest|lowest|least expensive|most affordable|least|cheaper)\b", re.I)
+_DISTANCE = re.compile(r"(?<![$\d.,])(\d+(?:\.\d+)?)\s*(km|m|metres?|meters?)\b(?!\s*(?:k|illion))", re.I)
+STATS_MIN_M, STATS_MAX_M = 50, 3000
+_NEAR_BY_WORD = {"hawker": "hawker", "food": "hawker", "supermarket": "supermarket", "school": "school"}
+
+
+def _stats_near(amenity: str) -> str:
+    a = amenity.lower()
+    if re.search(r"hawker|food", a):
+        return "hawker"
+    if "supermarket" in a:
+        return "supermarket"
+    if "school" in a:
+        return "school"
+    if "lrt" in a and re.search(r"mrt|train", a):
+        return "mrt_lrt"
+    return "lrt" if "lrt" in a else "mrt"
+
+
+def _stated_bands(q: str) -> Optional[List[int]]:
+    """Distance bands the user wrote out: '0-300m, 300-800m, beyond 800m' or 'bands of 200/500/1000'."""
+    m = re.search(r"\bbands?\s*(?:of|at|:)?\s*((?:\d+\s*(?:m|metres?)?\s*[/,]\s*)+\d+)\s*(?:m|metres?)?", q, re.I)
+    edges: List[int] = []
+    if m:
+        edges = [int(n) for n in re.findall(r"\d+", m.group(1))]
+    else:
+        ranges = re.findall(r"\b(\d{1,4})\s*(?:m|metres?)?\s*(?:-|–|to)\s*(\d{2,4})\s*(?:m|metres?)\b", q, re.I)
+        tail = re.findall(r"\b(?:beyond|over|more than|above|>)\s*(\d{2,4})\s*(?:m|metres?)\b", q, re.I)
+        if len(ranges) + len(tail) >= 2:
+            edges = [int(b) for _, b in ranges] + [int(t) for t in tail]
+    edges = sorted(set(edges))
+    return edges if len(edges) >= 1 and edges[0] >= STATS_MIN_M and edges[-1] <= STATS_MAX_M and len(edges) <= 6 \
+        and (m or len(edges) >= 2) else None
+
+
+def extract_group_stats(q: str, base: Dict[str, Any], addresses: List[str]) -> Dict[str, Any]:
+    """The grouped-statistics intent and its parameters, or {} when the question is about something else."""
+    if _CATALOG.search(q) and not addresses:
+        return {"wants_data_catalog": True}
+    if (addresses or base.get("max_budget_sgd") or base.get("min_remaining_lease_years") or base.get("school_name")
+            or base.get("policy_question") or base.get("work_destinations") or base.get("household_income")
+            or base.get("cpf_oa_balance")):
+        return {}
+    near_m = _NEAR_GENERIC.search(q)
+    sm, tm = _STATION_GROUP.search(q), _TOWN_GROUP.search(q)
+    station_group, town_group = bool(sm), bool(tm)
+    if sm and tm:                     # "by town near MRT stations" / "stations by town": the first one named is the grouping
+        station_group, town_group = sm.start() < tm.start(), tm.start() < sm.start()
+    island = bool(_ISLAND.search(q)) and not base.get("towns")
+    stats_word = bool(_STATS_WORDS.search(q))
+    strong = bool(_STATS_STRONG.search(q))
+    if not stats_word:
+        return {}
+    group_cue = station_group or town_group
+    if _SEARCH_VERBS.search(q) and not (group_cue or strong):
+        return {}
+    near = _stats_near(near_m.group("a")) if near_m else None
+    price_ask = bool(re.search(r"\b(?:expensive|cheap\w*|price\w*|priciest|dearest|costs?|affordable|median|average|sold|sales?)\b", q, re.I))
+    if near is None and station_group and (price_ask or strong):
+        near = "mrt" if not re.search(r"\blrt\b", q, re.I) or re.search(r"\bmrt\b", q, re.I) else "lrt"
+    if near is None and not (island and strong) and not (town_group and strong and not base.get("towns")):
+        return {}
+    if near is None and station_group:
+        return {}
+    out: Dict[str, Any] = {"wants_group_stats": True, "stats_near": near,
+                           "stats_listings": bool(re.search(r"\blistings?\b|\bfor sale\b", q, re.I))}
+    notes: List[str] = []
+    # what to group by
+    if station_group and near in ("mrt", "mrt_lrt", "lrt"):
+        group = ["station"]
+    elif town_group or (island and near is None):
+        group = ["town"]
+    else:
+        group = ["distance_band"]
+    if near is None and group == ["town"]:
+        out["stats_near"] = None
+    out["stats_group_by"] = group
+    if _DESC.search(q) and group != ["distance_band"] and (price_ask or station_group):
+        out["stats_sort"], out["stats_order"] = "median_price", "desc"
+    if _ASC.search(q) and group != ["distance_band"]:
+        out["stats_sort"], out["stats_order"] = "median_price", "asc"
+    if group == ["town"] and not out.get("stats_sort"):
+        out["stats_sort"], out["stats_order"] = "median_price", "desc"
+    if group == ["station"] and not out.get("stats_sort"):
+        out["stats_sort"], out["stats_order"] = "median_price", "desc"
+    # a distance the user stated: "within 300m of an MRT", "near MRT (400 m)"
+    bands = _stated_bands(q)
+    if bands:
+        out["stats_bands"] = bands
+    else:
+        d = None
+        for m in _DISTANCE.finditer(q):
+            metres = float(m.group(1)) * (1000 if m.group(2).lower() == "km" else 1)
+            if metres >= 20:
+                d = metres
+                break
+        if d is not None and near is not None:
+            clamped = int(min(max(round(d), STATS_MIN_M), STATS_MAX_M))
+            if clamped != round(d):
+                notes.append(f"A distance of {d:,.0f} m is outside the 50-3,000 m range this analysis supports, so "
+                             f"{clamped:,} m was used.")
+            out["stats_distance_m"] = clamped
+    # the period: "over the last 5 years", "since 2019", "historical"
+    m = re.search(r"(?:last|past|over|previous)\s+(\d{1,2}|two|three|four|five|ten)\s+years?", q, re.I)
+    if m:
+        words = {"two": 2, "three": 3, "four": 4, "five": 5, "ten": 10}
+        out["stats_lookback_years"] = min(max(int(words.get(m.group(1).lower(), m.group(1))), 1), 10)
+        out["stats_trend"] = True
+    elif re.search(r"(?:last|past) decade", q, re.I):
+        out["stats_lookback_years"], out["stats_trend"] = 10, True
+    m = re.search(r"\bsince\s+(?:\w+\s+)?(20[12]\d)\b", q, re.I)
+    if m:
+        out["stats_since_year"], out["stats_trend"] = int(m.group(1)), True
+    if re.search(r"\b(?:histor\w+|over the years|all[- ]time|over time|trends?)\b", q, re.I) and not out.get("stats_lookback_years") \
+            and not out.get("stats_since_year"):
+        out["stats_lookback_years"], out["stats_trend"] = 10, True
+    out["wants_price_trend"] = False
+    out["wants_market_snapshot"] = False
+    out["wants_town_ranking"] = False
+    out["trend_years"] = None
+    if notes:
+        out["assumptions"] = notes
+    return out
+
+
 def extract_research_fields(query: str, base: Dict[str, Any]) -> Dict[str, Any]:
     """Research fields for ExtractedConstraints, given the classic regex fields in `base`."""
     q = query
@@ -351,6 +513,15 @@ def extract_research_fields(query: str, base: Dict[str, Any]) -> Dict[str, Any]:
     out.update(_place_intents(q, extract_addresses(q)))
     out["wants_market_snapshot"] = _has("snapshot", q) or _asks_town_price(q, base)
     out["wants_town_ranking"] = _has("ranking", q) and not base.get("towns")
+    stats = extract_group_stats(q, base, out["addresses"])
+    if stats.get("wants_group_stats"):
+        # a grouped question owns its distance words: no vague 500 m default, no block search, no spatial agent
+        radii = {k: v for k, v in (base.get("amenity_radii_meters") or {}).items() if k not in ("mrt", "hawker", "supermarket", "school")}
+        out.update(stats)
+        out["amenity_radii_meters"] = radii
+        out["bto_project_name"] = known_bto_project(q)
+        return out
+    out.update(stats)
     m = re.search(r"(?:last|past|over|previous)\s+(\d{1,2}|two|three|four|five|ten)\s+years?", q, re.I)
     if m:
         words = {"two": 2, "three": 3, "four": 4, "five": 5, "ten": 10}
@@ -391,6 +562,8 @@ def is_block_search(c: Dict[str, Any], query: str) -> bool:
                                    "bto_project_name"))   # a named launch is its own question, not a town search
     stated = c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or \
         {k: v for k, v in (c.get("amenity_radii_meters") or {}).items() if k != "school"}
+    if c.get("wants_group_stats") or c.get("wants_data_catalog") or c.get("analysis_mode"):
+        return bool(stated)     # "show me prices by town near MRT" is a statistics question, not a flat search
     return bool(stated) or _has("search", query) or not other
 
 
@@ -399,6 +572,7 @@ def needs_market_agent(c: Dict[str, Any]) -> bool:
     if c.get("wants_area_statistics") and (c.get("addresses") or c.get("map_pin")):
         return True
     return bool(c.get("wants_market_snapshot") or c.get("wants_town_ranking") or c.get("bto_project_name")
+                or c.get("wants_group_stats") or c.get("wants_data_catalog") or c.get("analysis_mode")
                 or (c.get("wants_price_trend") and not c.get("towns"))
                 or (has_blocks and (c.get("wants_block_history") or c.get("wants_price_assessment")
                                     or c.get("wants_option_comparison"))))
@@ -436,12 +610,46 @@ def _area_arg(c: Dict[str, Any], assumptions: List[str]) -> Optional[Dict[str, A
     return {**place, "radius_meters": int(radius)}
 
 
+def stats_call_args(c: Dict[str, Any], assumptions: List[str]) -> Dict[str, Any]:
+    """The query_resale_statistics call for a grouped-statistics question: what the user asked, with disclosed defaults."""
+    group = [g for g in (c.get("stats_group_by") or []) if g][:2] or ["distance_band"]
+    near = c.get("stats_near")
+    args: Dict[str, Any] = {"group_by": group}
+    if c.get("towns"):
+        args["towns"] = list(c["towns"])
+    if c.get("flat_types"):
+        args["flat_types"] = list(c["flat_types"])
+    if near:
+        args["near"] = near
+    distance = c.get("stats_distance_m")
+    if c.get("stats_bands") and "distance_band" in group:
+        args["bands"] = list(c["stats_bands"])
+    elif distance and "distance_band" in group:
+        args["bands"] = [int(distance)]          # "within 300 m" against "further than 300 m"
+    elif "distance_band" not in group and near:
+        args["max_distance_m"] = int(distance or VAGUE_RADIUS_METERS)
+    if c.get("stats_since_year"):
+        args["start_month"] = f"{int(c['stats_since_year'])}-01"
+    elif c.get("stats_lookback_years"):
+        args["lookback_years"] = int(c["stats_lookback_years"])
+    if c.get("stats_trend"):
+        args["include_trend"] = True
+    if c.get("stats_sort"):
+        args["sort_by"] = c["stats_sort"]
+        args["order"] = c.get("stats_order") or "desc"
+    return args
+
+
 def research_plan(agent: str, c: Dict[str, Any], query: str) -> List[Tuple[str, Dict[str, Any]]]:
     """Deterministic calls for the research intents; assumptions are recorded in c['assumptions']."""
     plan: List[Tuple[str, Dict[str, Any]]] = []
     assumptions: List[str] = c.setdefault("assumptions", [])
     blocks = [a for a in c.get("addresses") or [] if re.match(r"(?:blk\s+)?\d", a, re.I)]
     if agent == "market_sql":
+        if c.get("wants_data_catalog"):
+            plan.append(("describe_resale_data", {}))
+        if c.get("wants_group_stats"):
+            plan.append(("query_resale_statistics", stats_call_args(c, assumptions)))
         area = _area_arg(c, assumptions)
         if area:
             flat = (c.get("flat_types") or [None])[0]
@@ -839,7 +1047,7 @@ def place_clarification(c: Dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 # Fast path: questions the regex fully understands need no model round trip
 # ---------------------------------------------------------------------------
-FAST_INTENTS = ("wants_nearby_amenities", "wants_block_history", "wants_price_assessment", "wants_area_statistics",
+FAST_INTENTS = ("wants_group_stats", "wants_data_catalog", "wants_nearby_amenities", "wants_block_history", "wants_price_assessment", "wants_area_statistics",
                 "wants_option_comparison", "wants_market_snapshot", "wants_town_ranking", "wants_price_trend")
 
 

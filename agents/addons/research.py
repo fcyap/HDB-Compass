@@ -22,6 +22,10 @@ def _area(c: Dict[str, Any]) -> bool:
     return bool(c.get("wants_area_statistics")) and _place(c)
 
 
+def _stats(c: Dict[str, Any]) -> bool:
+    return bool(c.get("wants_group_stats") or c.get("analysis_mode"))
+
+
 def _plan(agent: str, c: Dict[str, Any], query: str):
     from agents import research_intents as ri   # noqa: PLC0415 — research_intents imports agents.schemas
     return ri.research_plan(agent, c, query)
@@ -65,6 +69,17 @@ TOOLS = (
               f"{R}:GetAreaPriceTrendInput", f"{R}:GetAreaPriceTrendOutput", _area,
               "how prices around a place changed over time", "The price trend around the place",
               "How have 4-room prices within 300m of Blk 1 Bishan St 1 changed over the last 3 years?"),
+    ToolAddon("query_resale_statistics", ("mcp_server.aggregate_resale_tools", "query_resale_statistics"), "market_sql",
+              f"{R}:QueryResaleStatisticsInput", f"{R}:QueryResaleStatisticsOutput", _stats,
+              "grouped resale statistics over many blocks: by distance band from an MRT/hawker/school, town, "
+              "station, flat type, year, storey or lease; medians, quartiles, price per sqm and change; "
+              "island-wide or near amenities (not one named place)", "Grouped resale statistics",
+              "What are the historical statistics of HDBs sold near MRT stations?"),
+    ToolAddon("describe_resale_data", ("mcp_server.aggregate_resale_tools", "describe_resale_data"), "market_sql",
+              f"{R}:DescribeResaleDataInput", f"{R}:DescribeResaleDataOutput",
+              lambda c: bool(c.get("analysis_mode") or c.get("wants_group_stats") or c.get("wants_data_catalog")),
+              "the valid towns, flat types, station names, dimensions and metrics for a grouped query",
+              "The description of the resale data", "What data do you have about resale flats that I can analyse?"),
     ToolAddon("resolve_location", ("mcp_server.location_tools", "resolve_location"), "spatial",
               f"{R}:ResolveLocationInput", f"{R}:ResolveLocationOutput",
               lambda c: _place(c) and any(c.get(k) for k in ("wants_nearby_amenities", "wants_area_statistics",
