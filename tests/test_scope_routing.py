@@ -235,3 +235,37 @@ def test_unknown_score_still_shows_passages():
     assert not sv.policy_below_floor({"passages": [], "best_keyword_score": None})
     assert not sv.policy_below_floor({"passages": []})
     assert sv.policy_below_floor({"passages": [], "best_keyword_score": 1.0})
+
+
+# ---------------------------------------------------------------------------
+# price questions get the town's prices, not a block list
+# ---------------------------------------------------------------------------
+from agents import research_intents as ri  # noqa: E402
+
+
+@pytest.mark.parametrize("query, snapshot", [
+    ("How much is a 4-room in Tampines?", True),
+    ("What's the median resale price of 5-room flats in Punggol?", True),
+    ("Is Woodlands cheaper than Yishun for 4-room flats?", True),
+    ("How much is a 4-room in Tampines under $600k?", False),          # a budget makes it a search
+    ("Find 4-room flats in Tampines under $600k", False),
+    ("Show me how much 4-room flats cost in Tampines", False),         # a search word
+    ("How much can I afford?", False),                                 # no town
+])
+def test_price_questions_ask_for_the_town_snapshot(query, snapshot):
+    c = sv.rule_based_extract(query).model_dump()
+    assert bool(c["wants_market_snapshot"]) is snapshot
+    if snapshot:
+        assert not ri.is_block_search(c, query)
+        assert ri.research_plan("market_sql", c, query)[0][0] == "get_market_snapshot"
+    elif c["towns"]:
+        assert ri.is_block_search(c, query)
+
+
+def test_two_town_snapshot_says_which_town_is_cheaper():
+    rows = [{"town": "WOODLANDS", "flat_type": "4 ROOM", "median_price": 545000.0},
+            {"town": "YISHUN", "flat_type": "4 ROOM", "median_price": 550000.0},
+            {"town": "ALL TOWNS", "flat_type": "4 ROOM", "median_price": 628000.0}]
+    assert ri._cheaper_town_lines(rows) == [
+        "- Woodlands is cheaper than Yishun for 4 ROOM by $5,000 (0.9% below Yishun's median)."]
+    assert ri._cheaper_town_lines(rows[:1] + rows[2:]) == []   # one town and the island row: nothing to compare

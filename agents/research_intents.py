@@ -73,6 +73,12 @@ _RX = {
     "area_trend": r"\b(trends?|appreciat\w*|over (?:the )?(?:last|past)|changed|moved|risen|fallen|gone (?:up|down)|"
                   r"increas\w*|grow\w*|year[- ]on[- ]year)\b",
 }
+# "How much is a 4-room in Tampines?", "median price of 5-room flats in Punggol", "is Woodlands cheaper than Yishun":
+# a question about what flats cost in a town, answered with the town's price figures rather than a list of blocks.
+_PRICE_QUESTION = re.compile(
+    r"\bhow much (?:is|are|does|do|would|will|did|might)\b|\b(?:median|average|avg|typical|mean|going|current) (?:resale )?(?:prices?|rates?)\b"
+    r"|\bprices? (?:of|for)\b|\bwhat(?:'s|s| is| are) the (?:resale )?prices?\b|\bhow (?:much|expensive)\b"
+    r"|\b(?:cheaper|pricier|dearer|costlier|more expensive|less expensive|more affordable)\b", re.I)
 _AREA_RADIUS = re.compile(r"\b(?:within|in)\s+(?:a\s+)?(\d+(?:\.\d+)?)\s*(km|m)\b(?:\s+radius)?"
                           r"(?!\s+(?:of|from)\s+(?:an?\s+|the\s+)?(?:\w+\s+){0,2}?"
                           r"(?:mrt|lrt|station|hawker|food centre|supermarket|school|bus stop)s?\b)", re.I)
@@ -318,12 +324,19 @@ def resolve_place(c: Dict[str, Any], query: str, pin: Optional[Tuple[float, floa
         _use_earlier(c, query, earlier_place, named)
 
 
+def _asks_town_price(q: str, base: Dict[str, Any]) -> bool:
+    """A price question about a town with no limit to search by (budget, lease, distance) and no search word."""
+    limits = base.get("max_budget_sgd") or base.get("min_remaining_lease_years") or base.get("amenity_radii_meters")
+    return bool(base.get("towns") and _PRICE_QUESTION.search(q) and not limits and not _has("search", q)
+                and not extract_addresses(q))
+
+
 def extract_research_fields(query: str, base: Dict[str, Any]) -> Dict[str, Any]:
     """Research fields for ExtractedConstraints, given the classic regex fields in `base`."""
     q = query
     out: Dict[str, Any] = {"assumptions": [], "clarifications": []}
     out.update(_place_intents(q, extract_addresses(q)))
-    out["wants_market_snapshot"] = _has("snapshot", q)
+    out["wants_market_snapshot"] = _has("snapshot", q) or _asks_town_price(q, base)
     out["wants_town_ranking"] = _has("ranking", q) and not base.get("towns")
     m = re.search(r"(?:last|past|over|previous)\s+(\d{1,2}|two|three|four|five|ten)\s+years?", q, re.I)
     if m:
@@ -616,6 +629,7 @@ def research_lines(state: Dict[str, Any]) -> List[str]:
                          f"(${r['median_price_per_sqm']:,.0f}/sqm, {r['transaction_count']} sales); "
                          f"vs prior quarter {_pct(r['qoq_change_pct'])}, 1 yr {_pct(r['yoy_change_pct'])}, "
                          f"3 yrs {_pct(r['change_3y_pct'])}, 5 yrs {_pct(r['change_5y_pct'])}")
+        lines.extend(_cheaper_town_lines(snap["rows"]))
 
     bto = sql.get("compare_bto_launch_vs_resale")
     if bto and "error" not in bto and bto.get("status") in ("not_found", "flat_type_not_offered"):
@@ -650,6 +664,32 @@ def research_lines(state: Dict[str, Any]) -> List[str]:
     for question in c.get("clarifications") or []:
         # a menu is a numbered list of its own and reads better without a "Question:" label
         lines.append(question if c.get("menu_options") else f"**Question:** {question}")
+    return lines
+
+
+def _cheaper_town_lines(rows: List[Dict[str, Any]]) -> List[str]:
+    """Which of two or more named towns is cheaper, by median price, for each flat type they share. Code states it, so
+    the user gets a direct answer to "is X cheaper than Y". The island-wide row is not a town."""
+    by_type: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        if r.get("town") != "ALL TOWNS" and r.get("median_price"):
+            by_type.setdefault(r["flat_type"], []).append(r)
+    lines: List[str] = []
+    for flat_type, rs in by_type.items():
+        if len(rs) < 2:
+            continue
+        rs = sorted(rs, key=lambda r: r["median_price"])
+        low, high = rs[0], rs[-1]
+        gap = high["median_price"] - low["median_price"]
+        if len(rs) == 2:
+            if gap == 0:
+                lines.append(f"- {low['town'].title()} and {high['town'].title()} have the same {flat_type} median.")
+            else:
+                lines.append(f"- {low['town'].title()} is cheaper than {high['town'].title()} for {flat_type} by "
+                             f"${gap:,.0f} ({gap / high['median_price'] * 100:.1f}% below {high['town'].title()}'s median).")
+        else:
+            lines.append(f"- For {flat_type}, {low['town'].title()} has the lowest median and {high['town'].title()} the highest "
+                         f"(${gap:,.0f} apart).")
     return lines
 
 
