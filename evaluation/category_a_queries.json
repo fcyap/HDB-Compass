@@ -30,22 +30,26 @@
         {
           "label": "0-200 m",
           "count": 10693,
-          "median_price": 515000.0
+          "median_price": 515000.0,
+          "median_psm": 5434.8
         },
         {
           "label": "200-500 m",
           "count": 65309,
-          "median_price": 525000.0
+          "median_price": 525000.0,
+          "median_psm": 5403.2
         },
         {
           "label": "500-1,000 m",
           "count": 103487,
-          "median_price": 492000.0
+          "median_price": 492000.0,
+          "median_psm": 5179.1
         },
         {
           "label": ">1,000 m",
           "count": 39543,
-          "median_price": 488000.0
+          "median_price": 488000.0,
+          "median_psm": 5192.3
         }
       ]
     }
@@ -79,22 +83,26 @@
         {
           "label": "0-200 m",
           "count": 1014,
-          "median_price": 630000.0
+          "median_price": 630000.0,
+          "median_psm": 6502.7
         },
         {
           "label": "200-500 m",
           "count": 6524,
-          "median_price": 650000.0
+          "median_price": 650000.0,
+          "median_psm": 6437.4
         },
         {
           "label": "500-1,000 m",
           "count": 10690,
-          "median_price": 620000.0
+          "median_price": 620000.0,
+          "median_psm": 6323.5
         },
         {
           "label": ">1,000 m",
           "count": 3956,
-          "median_price": 620000.0
+          "median_price": 620000.0,
+          "median_psm": 6611.4
         }
       ]
     }
@@ -128,22 +136,26 @@
         {
           "label": "0-200 m",
           "count": 1151,
-          "median_price": 528000.0
+          "median_price": 528000.0,
+          "median_psm": 6470.6
         },
         {
           "label": "200-500 m",
           "count": 3488,
-          "median_price": 550000.0
+          "median_price": 550000.0,
+          "median_psm": 6367.6
         },
         {
           "label": "500-1,000 m",
           "count": 3150,
-          "median_price": 622250.0
+          "median_price": 622250.0,
+          "median_psm": 6573.4
         },
         {
           "label": ">1,000 m",
           "count": 14395,
-          "median_price": 636888.0
+          "median_price": 636888.0,
+          "median_psm": 6406.2
         }
       ]
     }
@@ -180,12 +192,75 @@
         {
           "label": "0-300 m",
           "count": 2658,
-          "median_price": 650000.0
+          "median_price": 650000.0,
+          "median_psm": 6537.8
         },
         {
           "label": ">300 m",
           "count": 19526,
-          "median_price": 625000.0
+          "median_price": 625000.0,
+          "median_psm": 6409.1
+        }
+      ]
+    }
+  },
+  {
+    "id": "A1-05",
+    "category": "A",
+    "sub_use_case": "A1-0",
+    "query": "What's the price premium for 5-room flats close to MRT in the east?",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_statistics",
+        "required_params": {
+          "group_by": [
+            "distance_band"
+          ],
+          "towns": [
+            "BEDOK",
+            "PASIR RIS",
+            "TAMPINES"
+          ],
+          "flat_types": [
+            "5 ROOM"
+          ],
+          "near": "mrt"
+        }
+      }
+    ],
+    "ground_truth_facts": {
+      "snapshot_id": "d888eb158ece963898a0",
+      "min_sales_per_group": 10,
+      "period": "2025-10..2026-09",
+      "groups": [
+        {
+          "label": "0-200 m",
+          "count": 40,
+          "median_price": 750000.0,
+          "median_psm": 5917.2
+        },
+        {
+          "label": "200-500 m",
+          "count": 210,
+          "median_price": 779000.0,
+          "median_psm": 6145.8
+        },
+        {
+          "label": "500-1,000 m",
+          "count": 546,
+          "median_price": 780000.0,
+          "median_psm": 6280.7
+        },
+        {
+          "label": ">1,000 m",
+          "count": 105,
+          "median_price": 795000.0,
+          "median_psm": 6583.3
         }
       ]
     }
@@ -222,17 +297,20 @@
         {
           "label": "Outram Park MRT",
           "count": 40,
-          "median_price": 1446944.0
+          "median_price": 1446944.0,
+          "median_psm": 14462.6
         },
         {
           "label": "Havelock MRT",
           "count": 23,
-          "median_price": 1200000.0
+          "median_price": 1200000.0,
+          "median_psm": 11500.0
         },
         {
           "label": "Beauty World MRT",
           "count": 38,
-          "median_price": 1134000.0
+          "median_price": 1134000.0,
+          "median_psm": 9253.1
         }
       ]
     }
@@ -274,17 +352,20 @@
         {
           "label": "BUKIT MERAH",
           "count": 446,
-          "median_price": 900000.0
+          "median_price": 900000.0,
+          "median_psm": 9600.0
         },
         {
           "label": "TOA PAYOH",
           "count": 580,
-          "median_price": 889444.0
+          "median_price": 889444.0,
+          "median_psm": 9891.9
         },
         {
           "label": "QUEENSTOWN",
           "count": 212,
-          "median_price": 859000.0
+          "median_price": 859000.0,
+          "median_psm": 9263.2
         }
       ]
     }
@@ -321,17 +402,127 @@
         {
           "label": "JURONG EAST",
           "count": 268,
-          "median_price": 514000.0
+          "median_price": 514000.0,
+          "median_psm": 5864.6
         },
         {
           "label": "YISHUN",
           "count": 300,
-          "median_price": 517944.0
+          "median_price": 517944.0,
+          "median_psm": 5995.9
         },
         {
           "label": "BEDOK",
           "count": 408,
-          "median_price": 545000.0
+          "median_price": 545000.0,
+          "median_psm": 6370.6
+        }
+      ]
+    }
+  },
+  {
+    "id": "A2-04",
+    "category": "A",
+    "sub_use_case": "A2-0",
+    "query": "Resale statistics near MRT stations in the north-east region",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_statistics",
+        "required_params": {
+          "group_by": [
+            "station"
+          ],
+          "towns": [
+            "ANG MO KIO",
+            "HOUGANG",
+            "PUNGGOL",
+            "SENGKANG",
+            "SERANGOON"
+          ],
+          "near": "mrt",
+          "max_distance_m": 500,
+          "sort_by": "median_price",
+          "order": "desc"
+        }
+      }
+    ],
+    "ground_truth_facts": {
+      "snapshot_id": "d888eb158ece963898a0",
+      "min_sales_per_group": 10,
+      "period": "2025-10..2026-09",
+      "groups": [
+        {
+          "label": "Kovan MRT",
+          "count": 26,
+          "median_price": 835000.0,
+          "median_psm": 6768.0
+        },
+        {
+          "label": "Defu MRT",
+          "count": 32,
+          "median_price": 822944.0,
+          "median_psm": 8696.8
+        },
+        {
+          "label": "Buangkok MRT",
+          "count": 186,
+          "median_price": 802500.0,
+          "median_psm": 8294.4
+        }
+      ]
+    }
+  },
+  {
+    "id": "A2-05",
+    "category": "A",
+    "sub_use_case": "A2-0",
+    "query": "Resale prices within 1km of MRT stations by town",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_statistics",
+        "required_params": {
+          "group_by": [
+            "town"
+          ],
+          "near": "mrt",
+          "max_distance_m": 1000,
+          "sort_by": "median_price",
+          "order": "desc"
+        }
+      }
+    ],
+    "ground_truth_facts": {
+      "snapshot_id": "d888eb158ece963898a0",
+      "min_sales_per_group": 10,
+      "period": "2025-10..2026-09",
+      "groups": [
+        {
+          "label": "BUKIT TIMAH",
+          "count": 41,
+          "median_price": 1115000.0,
+          "median_psm": 9239.3
+        },
+        {
+          "label": "BUKIT MERAH",
+          "count": 483,
+          "median_price": 910000.0,
+          "median_psm": 10032.3
+        },
+        {
+          "label": "QUEENSTOWN",
+          "count": 369,
+          "median_price": 888000.0,
+          "median_psm": 11666.7
         }
       ]
     }
@@ -366,17 +557,264 @@
         {
           "label": "BUKIT TIMAH",
           "count": 58,
-          "median_price": 1010000.0
+          "median_price": 1010000.0,
+          "median_psm": 8979.4
         },
         {
           "label": "QUEENSTOWN",
           "count": 751,
-          "median_price": 850000.0
+          "median_price": 850000.0,
+          "median_psm": 10578.9
         },
         {
           "label": "BISHAN",
           "count": 410,
-          "median_price": 848000.0
+          "median_price": 848000.0,
+          "median_psm": 8000.0
+        }
+      ]
+    }
+  },
+  {
+    "id": "A3-02",
+    "category": "A",
+    "sub_use_case": "A3-0",
+    "query": "Resale prices by storey in Tampines",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_statistics",
+        "required_params": {
+          "group_by": [
+            "storey_band"
+          ],
+          "towns": [
+            "TAMPINES"
+          ]
+        }
+      }
+    ],
+    "ground_truth_facts": {
+      "snapshot_id": "d888eb158ece963898a0",
+      "min_sales_per_group": 10,
+      "period": "2025-10..2026-09",
+      "groups": [
+        {
+          "label": "storey 1-5",
+          "count": 968,
+          "median_price": 668000.0,
+          "median_psm": 6479.7
+        },
+        {
+          "label": "storey 6-10",
+          "count": 856,
+          "median_price": 735000.0,
+          "median_psm": 6775.0
+        },
+        {
+          "label": "storey 11-15",
+          "count": 150,
+          "median_price": 802444.0,
+          "median_psm": 8539.8
+        },
+        {
+          "label": "storey 16-20",
+          "count": 32,
+          "median_price": 859444.0,
+          "median_psm": 8892.0
+        }
+      ]
+    }
+  },
+  {
+    "id": "A3-03",
+    "category": "A",
+    "sub_use_case": "A3-0",
+    "query": "Average resale price by year over the last 5 years",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_statistics",
+        "required_params": {
+          "group_by": [
+            "year"
+          ],
+          "lookback_years": 5,
+          "include_trend": true
+        }
+      }
+    ],
+    "ground_truth_facts": {
+      "snapshot_id": "d888eb158ece963898a0",
+      "min_sales_per_group": 10,
+      "period": "2021-10..2026-09",
+      "groups": [
+        {
+          "label": "2021",
+          "count": 7487,
+          "median_price": 500000.0,
+          "median_psm": 5087.0
+        },
+        {
+          "label": "2022",
+          "count": 26720,
+          "median_price": 525000.0,
+          "median_psm": 5373.1
+        },
+        {
+          "label": "2023",
+          "count": 25754,
+          "median_price": 550000.0,
+          "median_psm": 5708.8
+        },
+        {
+          "label": "2024",
+          "count": 27832,
+          "median_price": 590000.0,
+          "median_psm": 6097.7
+        },
+        {
+          "label": "2025",
+          "count": 25084,
+          "median_price": 628000.0,
+          "median_psm": 6500.0
+        },
+        {
+          "label": "2026",
+          "count": 19635,
+          "median_price": 630000.0,
+          "median_psm": 6476.2
+        }
+      ]
+    }
+  },
+  {
+    "id": "A3-04",
+    "category": "A",
+    "sub_use_case": "A3-0",
+    "query": "Which flat types sell for the most per square metre?",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_statistics",
+        "required_params": {
+          "group_by": [
+            "flat_type"
+          ],
+          "sort_by": "median_psm",
+          "order": "desc"
+        }
+      }
+    ],
+    "ground_truth_facts": {
+      "snapshot_id": "d888eb158ece963898a0",
+      "min_sales_per_group": 10,
+      "period": "2025-10..2026-09",
+      "groups": [
+        {
+          "label": "2 ROOM",
+          "count": 752,
+          "median_price": 372000.0,
+          "median_psm": 8085.1
+        },
+        {
+          "label": "4 ROOM",
+          "count": 10810,
+          "median_price": 630000.0,
+          "median_psm": 6611.1
+        },
+        {
+          "label": "3 ROOM",
+          "count": 5760,
+          "median_price": 440000.0,
+          "median_psm": 6388.1
+        },
+        {
+          "label": "EXECUTIVE",
+          "count": 1531,
+          "median_price": 915000.0,
+          "median_psm": 6301.4
+        },
+        {
+          "label": "5 ROOM",
+          "count": 5787,
+          "median_price": 740000.0,
+          "median_psm": 6250.0
+        }
+      ]
+    }
+  },
+  {
+    "id": "A3-05",
+    "category": "A",
+    "sub_use_case": "A3-0",
+    "query": "Resale prices by remaining lease in the east",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_statistics",
+        "required_params": {
+          "group_by": [
+            "lease_band"
+          ],
+          "towns": [
+            "BEDOK",
+            "PASIR RIS",
+            "TAMPINES"
+          ]
+        }
+      }
+    ],
+    "ground_truth_facts": {
+      "snapshot_id": "d888eb158ece963898a0",
+      "min_sales_per_group": 10,
+      "period": "2025-10..2026-09",
+      "groups": [
+        {
+          "label": "under 60 years",
+          "count": 1474,
+          "median_price": 508888.0,
+          "median_psm": 6105.2
+        },
+        {
+          "label": "60-70 years",
+          "count": 1401,
+          "median_price": 720000.0,
+          "median_psm": 6198.3
+        },
+        {
+          "label": "70-80 years",
+          "count": 240,
+          "median_price": 750000.0,
+          "median_psm": 6681.1
+        },
+        {
+          "label": "80-90 years",
+          "count": 327,
+          "median_price": 795000.0,
+          "median_psm": 8849.6
+        },
+        {
+          "label": "90+ years",
+          "count": 631,
+          "median_price": 804888.0,
+          "median_psm": 8451.3
         }
       ]
     }

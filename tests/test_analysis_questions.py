@@ -342,6 +342,8 @@ def test_category_a_question_is_read_and_matches_independent_sql(item):
     expected = [(g["label"], g["count"], round(g["median_price"])) for g in facts["groups"]]
     assert [(g["label"], g["count"], g["median_price"]) for g in got["groups"]][:len(expected)] == expected
     assert got["period"]["start_month"] == facts["period"].split("..")[0]
+    assert [g["median_psm"] for g in got["groups"]][:len(expected)] == [g["median_psm"] for g in facts["groups"]]
+    assert len(CATEGORY_A) == 15
 
 
 # --- found in review (Groq rate-limited, so the rule layer answered): parts of a question were silently dropped -----

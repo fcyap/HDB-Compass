@@ -47,8 +47,8 @@ def test_upload_is_idempotent():
     c = FakeClient()
     first = L.ensure_dataset(c, "category_a")
     second = L.ensure_dataset(c, "category_a")
-    assert first["created"] and first["added"] == 8 and second["added"] == 0 and second["updated"] == 8
-    assert len(c.examples) == 8 and len(c.datasets) == 1
+    assert first["created"] and first["added"] == 15 and second["added"] == 0 and second["updated"] == 15
+    assert len(c.examples) == 15 and len(c.datasets) == 1
 
 
 def test_run_experiment_limit_and_addons(monkeypatch):

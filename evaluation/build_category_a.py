@@ -42,6 +42,9 @@ SPECS: List[Dict[str, Any]] = [
          params={"group_by": ["distance_band"], "near": "hawker"}),
     dict(id="A1-04", query="Resale prices within 300m of an MRT", years=1,
          params={"group_by": ["distance_band"], "near": "mrt", "bands": [300]}),
+    dict(id="A1-05", query="What's the price premium for 5-room flats close to MRT in the east?", years=1,
+         params={"group_by": ["distance_band"], "towns": ["BEDOK", "PASIR RIS", "TAMPINES"], "flat_types": ["5 ROOM"],
+                 "near": "mrt"}),
     dict(id="A2-01", query="Which MRT stations have the most expensive resale flats nearby?", years=1,
          params={"group_by": ["station"], "near": "mrt", "max_distance_m": 500, "sort_by": "median_price", "order": "desc"}),
     dict(id="A2-02", query="Show me 4-room resale prices by town near MRT stations over the last 5 years", years=5, flat="4 ROOM",
@@ -49,9 +52,28 @@ SPECS: List[Dict[str, Any]] = [
                  "include_trend": True, "sort_by": "median_price", "order": "desc"}),
     dict(id="A2-03", query="Which towns have the cheapest flats near MRT stations?", years=1,
          params={"group_by": ["town"], "near": "mrt", "max_distance_m": 500, "sort_by": "median_price", "order": "asc"}),
+    dict(id="A2-04", query="Resale statistics near MRT stations in the north-east region", years=1,
+         params={"group_by": ["station"], "towns": ["ANG MO KIO", "HOUGANG", "PUNGGOL", "SENGKANG", "SERANGOON"],
+                 "near": "mrt", "max_distance_m": 500, "sort_by": "median_price", "order": "desc"}),
+    dict(id="A2-05", query="Resale prices within 1km of MRT stations by town", years=1,
+         params={"group_by": ["town"], "near": "mrt", "max_distance_m": 1000, "sort_by": "median_price", "order": "desc"}),
     dict(id="A3-01", query="Sales statistics across Singapore", years=1,
          params={"group_by": ["town"], "sort_by": "median_price", "order": "desc"}),
+    dict(id="A3-02", query="Resale prices by storey in Tampines", years=1,
+         params={"group_by": ["storey_band"], "towns": ["TAMPINES"]}),
+    dict(id="A3-03", query="Average resale price by year over the last 5 years", years=5,
+         params={"group_by": ["year"], "lookback_years": 5, "include_trend": True}),
+    dict(id="A3-04", query="Which flat types sell for the most per square metre?", years=1,
+         params={"group_by": ["flat_type"], "sort_by": "median_psm", "order": "desc"}),
+    dict(id="A3-05", query="Resale prices by remaining lease in the east", years=1,
+         params={"group_by": ["lease_band"], "towns": ["BEDOK", "PASIR RIS", "TAMPINES"]}),
 ]
+
+# Band definitions restated from the tool's documented labels (storey = lowest storey of the range; lease = months left).
+STOREY_BANDS = [("storey 1-5", 0, 5), ("storey 6-10", 6, 10), ("storey 11-15", 11, 15), ("storey 16-20", 16, 20),
+                ("storey 21-30", 21, 30), ("storey 31+", 31, 999)]
+LEASE_BANDS = [("under 60 years", 0, 720), ("60-70 years", 720, 840), ("70-80 years", 840, 960),
+               ("80-90 years", 960, 1080), ("90+ years", 1080, 10 ** 6)]
 
 
 def _station_key(name: str) -> Tuple[str, bool]:
@@ -93,50 +115,81 @@ def _period(con, years: int) -> Tuple[str, str]:
     return f"{start:%Y-%m-%d}", f"{last:%Y-%m-%d}"
 
 
-def _prices(con, keys: List[str], start: str, end: str, flat: str | None) -> List[float]:
-    sql = "SELECT resale_price FROM resale_transactions WHERE block_key IN (SELECT unnest(?::VARCHAR[])) AND month BETWEEN ? AND ?"
-    params: List[Any] = [keys, start, end]
-    if flat:
-        sql += " AND flat_type = ?"
-        params.append(flat)
-    return [float(r[0]) for r in con.execute(sql, params).fetchall()]
+def _sales(con, keys: List[str] | None, start: str, end: str, flats: List[str], towns: List[str]) -> List[Dict[str, Any]]:
+    """Raw sales in the period as dicts: price, price per sqm, town, flat type, lowest storey, months of lease left, year."""
+    sql = ("SELECT resale_price, resale_price / floor_area_sqm, town, flat_type, storey_min, remaining_lease_months, year(month) "
+           "FROM resale_transactions WHERE month BETWEEN ? AND ?")
+    params: List[Any] = [start, end]
+    if keys is not None:
+        sql += " AND block_key IN (SELECT unnest(?::VARCHAR[]))"
+        params.append(keys)
+    if flats:
+        sql += " AND flat_type IN (SELECT unnest(?::VARCHAR[]))"
+        params.append(flats)
+    if towns:
+        sql += " AND town IN (SELECT unnest(?::VARCHAR[]))"
+        params.append(towns)
+    cols = ("price", "psm", "town", "flat_type", "storey", "lease", "year")
+    return [dict(zip(cols, (float(r[0]), float(r[1])) + tuple(r[2:]))) for r in con.execute(sql, params).fetchall()]
+
+
+def _group(rows: List[Dict[str, Any]], label: str) -> Dict[str, Any] | None:
+    if len(rows) < MIN_SALES:
+        return None
+    return {"label": label, "count": len(rows), "median_price": statistics.median(r["price"] for r in rows),
+            "median_psm": round(statistics.median(r["psm"] for r in rows), 1)}
 
 
 def truth(con, loaded: Dict[str, Any], spec: Dict[str, Any]) -> Dict[str, Any]:
-    p, flat = spec["params"], spec.get("flat")
+    p = spec["params"]
+    flats, towns_f = p.get("flat_types", []), p.get("towns", [])
     start, end = _period(con, spec["years"])
-    near = p.get("near")
+    near, by_dim = p.get("near"), p["group_by"][0]
+    town_of = dict(con.execute("SELECT block_key, town FROM blocks").fetchall())
+    allowed = [k for k in loaded["keys"] if not towns_f or town_of[k] in towns_f]
     groups: List[Dict[str, Any]] = []
-    if p["group_by"] == ["distance_band"]:
+    if by_dim == "distance_band":
         dist = loaded[near][0]
         edges = p.get("bands") or BANDS
         bounds = [(0, edges[0])] + list(zip(edges, edges[1:])) + [(edges[-1], None)]
         for lo, hi in bounds:
-            keys = [k for k, d in dist.items() if (d > lo or lo == 0) and (hi is None or d <= hi)]
-            prices = _prices(con, keys, start, end, flat)
+            keys = [k for k in allowed if (dist[k] > lo or lo == 0) and (hi is None or dist[k] <= hi)]
             label = f"0-{hi:,} m" if lo == 0 else f">{lo:,} m" if hi is None else f"{lo:,}-{hi:,} m"
-            if len(prices) >= MIN_SALES:
-                groups.append({"label": label, "count": len(prices), "median_price": statistics.median(prices)})
-    else:
-        town_of = dict(con.execute("SELECT block_key, town FROM blocks").fetchall())
+            g = _group(_sales(con, keys, start, end, flats, towns_f), label)
+            if g:
+                groups.append(g)
+    elif by_dim in ("station", "town"):
         by: Dict[str, List[str]] = {}
-        if p["group_by"] == ["station"]:
+        if by_dim == "station":
             dist, station = loaded["mrt"]
-            for k, d in dist.items():
-                if d <= p["max_distance_m"]:
+            for k in allowed:
+                if dist[k] <= p["max_distance_m"]:
                     by.setdefault(station[k], []).append(k)
         else:
             dist = loaded["mrt"][0] if near else None
-            for k in loaded["keys"] if near else town_of:
+            for k in (allowed if near else town_of):
                 if near is None or dist[k] <= p["max_distance_m"]:
                     by.setdefault(town_of[k], []).append(k)
         for name, keys in by.items():
-            prices = _prices(con, keys, start, end, flat)
-            if len(prices) >= MIN_SALES:
-                groups.append({"label": name, "count": len(prices), "median_price": statistics.median(prices)})
+            g = _group(_sales(con, keys, start, end, flats, towns_f), name)
+            if g:
+                groups.append(g)
         groups.sort(key=lambda g: (g["median_price"], g["label"]), reverse=p.get("order", "desc") == "desc")
         groups = groups[:3]
-    return {"period": f"{start[:7]}..{end[:7]}", "groups": groups}
+    else:
+        rows = _sales(con, None, start, end, flats, towns_f)
+        if by_dim == "storey_band":
+            buckets = [(n, [r for r in rows if lo <= r["storey"] <= hi]) for n, lo, hi in STOREY_BANDS]
+        elif by_dim == "lease_band":
+            buckets = [(n, [r for r in rows if lo <= r["lease"] < hi]) for n, lo, hi in LEASE_BANDS]
+        elif by_dim == "year":
+            buckets = [(str(y), [r for r in rows if r["year"] == y]) for y in sorted({r["year"] for r in rows})]
+        else:                                                   # flat_type
+            buckets = [(t, [r for r in rows if r["flat_type"] == t]) for t in sorted({r["flat_type"] for r in rows})]
+        groups = [g for g in (_group(rs, n) for n, rs in buckets) if g]
+        if p.get("sort_by") == "median_psm":
+            groups.sort(key=lambda g: (g["median_psm"], g["label"]), reverse=p.get("order", "desc") == "desc")
+    return {"period": f"{start[:7]}..{end[:7]}", "groups": groups[:10]}
 
 
 def build() -> List[Dict[str, Any]]:
