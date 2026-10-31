@@ -10,10 +10,12 @@ Proposal §6.3:
   Constraint Satisfaction — recommended blocks satisfying 100% of user constraints
   Routing accuracy        — active_subagents vs expected_agents (C only; A/B map to coarse labels)
   Category C task success — every key clause of a policy question appears in the answer (Member 3's matching rule)
+  Category A task success — every ground-truth group's asked figures stated beside its label, none contradicted
   Wilson 95% intervals and an exact McNemar test for the success rates, so 15-question results carry their spread
 """
 from __future__ import annotations
 
+import functools
 from typing import Any, Dict, Iterable, List, Optional, Set
 
 
@@ -381,11 +383,397 @@ def asked_for_missing(draft: str, missing: List[str]) -> bool:
     return named and asks
 
 
+# ---------------------------------------------------------------------------
+# Category A (historical resale statistics, evaluation/category_a_queries.json, built by build_category_a.py): the
+# ground truth lists groups ({label, count, median_price, median_psm}). An answer is right when it states each
+# group's figures BESIDE THAT GROUP'S LABEL and states no group figure that disagrees with the truth:
+#   - the median price of every group always; the sales count when the question asks for statistics or a number of
+#     sales; the price per sqm when the question asks per square metre;
+#   - a figure belongs to a group when it sits in that group's table row (the column header says which figure it is),
+#     on a line naming only that group, or, on a line naming several, in the clause naming the group;
+#   - a figure is right within $1 (count: exactly; per sqm: within the truth's 0.1 rounding) or within the rounding
+#     the answer itself uses ("$515k", "$1.45M", "about $1,450,000"); a figure with fewer than three significant
+#     digits ("$1.4M") is too vague to count either way;
+#   - a group figure is wrong when the answer gives that figure for the group and none of the numbers it gives match
+#     (quartiles and per-year medians next to the median do not count against it);
+#   - figures the answer never states are missing, not wrong; lines about grants, loans or CPF are not read.
+# The truth was computed on one database snapshot; the score records the snapshot the answer's tool used (or this
+# database's), so a stale truth shows up instead of silently failing or passing answers.
+# ---------------------------------------------------------------------------
+STAT_MEASURES = ("median_price", "count", "median_psm")
+_ASKS_COUNT = _re.compile(r"\bstatistic|\bhow many\b|\bnumber of\b|\bvolume\b|\btransactions?\b|\bcount\b", _re.I)
+_PSM_WORDS = r"(?:per\s+(?:sq(?:uare)?\.?\s*(?:m\b|met(?:re|er)s?)|sqm\b|m²|m2\b)|psm\b|/\s*(?:sq\.?\s*m\b|sqm\b|m²|m2\b))"
+_ASKS_PSM = _re.compile(_PSM_WORDS + r"|\bpsf\b", _re.I)
+_DASH = r"\s*(?:-|–|—|to)\s*"
+_M_UNIT = r"\s*(?:m\b|metres?\b|meters?\b)"
+_YEARS_UNIT = r"\s*(?:years?|yrs?)\b"
+# lines about money the buyer has or borrows, not about past sales (a grant amount beside "4-room" is no median)
+_OFF_TOPIC = _re.compile(r"\b(?:grants?|loans?|cpf|income|afford\w*|stamp duty|levy|subsid\w*|ceiling|eligib\w*|"
+                         r"down ?payment|mortgage)\b", _re.I)
+_CLAUSE_SPLIT = _re.compile(r"(?<=[.!?;])\s+|,\s+|;\s*|\s+[–—-]\s+|\s+(?:and|while|whereas|but|compared (?:with|to)|"
+                            r"versus|vs\.?|than)\s+", _re.I)
+_FIGURE_RE = _re.compile(r"(?<![\w.,])(?P<cur>S\$|SGD\s?|\$)?\s?(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
+                         r"(?:\s?(?P<suf>k|thousand|million|mil|mn|m)\b)?", _re.I)
+_APPROX_BEFORE = _re.compile(r"(?:about|around|approximately|approx\.?|roughly|nearly|almost|~|≈)\s*(?:S\$|SGD\s?|\$)?\s*$", _re.I)
+_NOT_A_FIGURE_AFTER = _re.compile(r"\s*(?:%|-\s*\d{2}\b|/\d|km\b|metres?\b|meters?\b|months?\b|mths?\b|years?\b|yrs?\b|"
+                                  r"-?\s*rooms?\b|storeys?\b|floors?\b)", _re.I)
+_COUNT_AFTER = _re.compile(r"\s*(?:resale\s+)?(?:sales|transactions|resales|deals|units|records|flats(?:\s+sold)?)\b", _re.I)
+_COUNT_BEFORE = _re.compile(r"(?:\bn\s*=|\b(?:sales|transactions|count|volume)\s*[:=]|\bbased on)\s*$", _re.I)
+_PRICE_BEFORE = _re.compile(r"\b(?:median|price|sold (?:at|for)|went for)\s*(?:price\s*)?(?:of|is|was|at|:|=)?\s*$", _re.I)
+_PSM_AFTER = _re.compile(r"\s*" + _PSM_WORDS, _re.I)
+_PSM_BEFORE = _re.compile(_PSM_WORDS + r"\s*(?:of|is|was|at|:|=|-|–|—)?\s*(?:S\$|SGD\s?|\$)?\s*$", _re.I)
+_COL_PSM = _re.compile(_PSM_WORDS + r"|\bpsf\b|\bsqm\b", _re.I)
+_COL_PRICE = _re.compile(r"median|price|typical|\bavg\b|average|\bmean\b", _re.I)
+_COL_COUNT = _re.compile(r"\b(?:sales|transactions|count|volume|number|no\.|n|units|deals|resales)\b", _re.I)
+_COL_OTHER = _re.compile(r"middle|range|iqr|percentile|\bp\d|25|75|change|\bvs\b|%|growth|premium|diff|\bmin|\bmax|lowest|"
+                         r"highest|trend|year|since|from|first", _re.I)
+
+
+def stat_measures_asked(query: str) -> List[str]:
+    """The figures a statistics question asks for: the median price always, the count and price per sqm when asked."""
+    out = ["median_price"]
+    if _ASKS_COUNT.search(query or ""):
+        out.append("count")
+    if _ASKS_PSM.search(query or ""):
+        out.append("median_psm")
+    return out
+
+
+def _int_re(n: int) -> str:
+    """A whole number as an answer may write it: 1000, 1,000 (never part of a longer number)."""
+    return r"(?<![\d,.])" + f"{n:,}".replace(",", ",?") + r"(?![\d])"
+
+
+def _metres_re(n: int, unit: str = "optional") -> str:
+    """n metres: '200', '200 m', '200m', '200 metres'; a whole kilometre also as '1 km'."""
+    tail = {"optional": f"(?:{_M_UNIT})?", "required": _M_UNIT}[unit]
+    alts = [_int_re(n) + tail]
+    if n and n % 1000 == 0:
+        alts.append(r"(?<![\d,.])" + f"{n // 1000}(?:\\.0)?" + r"\s*km\b")
+    return "(?:" + "|".join(alts) + ")"
+
+
+def _label_patterns(label: str) -> tuple:
+    """(search regex, whole-table-cell regex or None) for one ground-truth group label as an answer may write it:
+    the tool's own label in any case, plus the usual wordings of distance, storey and lease bands, years, flat types
+    and station names."""
+    lab = label.strip()
+    generic = _re.escape(lab)
+    generic = _re.sub(r"(?:\\ )+", r"\\s+", generic).replace(r"\-", r"\s*[-–—]\s*").replace(",", ",?")
+    pats = [r"(?<![\w>])" + generic + r"(?![\w+])"]
+    cell = None
+    m = _re.fullmatch(r"(\d[\d,]*)-(\d[\d,]*) m", lab)
+    if m:                                                   # distance band "0-200 m", "500-1,000 m"
+        lo, hi = (int(x.replace(",", "")) for x in m.groups())
+        pats.append(_metres_re(lo) + _DASH + _metres_re(hi))
+        pats.append(r"\bbetween\s+" + _metres_re(lo) + r"\s+and\s+" + _metres_re(hi))
+        if lo == 0:
+            pats.append(r"(?:\bwithin|\bunder|\bbelow|\bless than|\bup to|<|≤|<=)\s*" + _metres_re(hi, "required"))
+    m = _re.fullmatch(r">(\d[\d,]*) m", lab)
+    if m:                                                   # open distance band ">1,000 m"
+        n = int(m.group(1).replace(",", ""))
+        pats.append(r"(?:>|≥|>=)\s*" + _metres_re(n))
+        pats.append(r"(?:\bmore than|\bover|\babove|\bbeyond|\bfurther than|\bfarther than)\s*" + _metres_re(n, "required"))
+        pats.append(_metres_re(n) + r"\s*\+")
+    m = _re.fullmatch(r"storey (\d+)-(\d+)", lab, _re.I)
+    if m:                                                   # storey band "storey 1-5" (also "floors 1 to 5", "01 TO 05")
+        lo, hi = (f"0?{int(x)}" for x in m.groups())
+        pats.append(r"\b(?:storeys?|floors?|levels?)\s*" + lo + _DASH + hi + r"\b")
+        pats.append(r"(?<![\d.])" + lo + _DASH + hi + r"\s*(?:storeys?|floors?)\b")
+        cell = lo + _DASH + hi
+    m = _re.fullmatch(r"storey (\d+)\+", lab, _re.I)
+    if m:
+        pats.append(r"\b(?:storeys?|floors?|levels?)\s*" + m.group(1) + r"\s*(?:\+|and above)")
+    m = _re.fullmatch(r"under (\d+) years", lab, _re.I)
+    if m:                                                   # lease bands "under 60 years", "60-70 years", "90+ years"
+        pats.append(r"(?:\bunder|\bbelow|\bless than|<)\s*" + m.group(1) + _YEARS_UNIT)
+        cell = r"(?:under|below|less than|<)\s*" + m.group(1)
+    m = _re.fullmatch(r"(\d+)-(\d+) years", lab, _re.I)
+    if m:
+        pats.append(r"(?<![\d.])" + m.group(1) + _DASH + m.group(2) + r"(?:" + _YEARS_UNIT + r"|(?![\d%.]))")
+    m = _re.fullmatch(r"(\d+)\+ years", lab, _re.I)
+    if m:
+        pats.append(r"(?<![\d.])" + m.group(1) + r"\s*\+")
+        pats.append(r"(?:\bover|\babove|\bmore than|\bat least|≥|>=)\s*" + m.group(1) + _YEARS_UNIT)
+    if _re.fullmatch(r"(?:19|20)\d\d", lab):              # a year (never "2021-10", a month)
+        pats = [r"(?<![\w$,./-])" + lab + r"(?![\d]|-\d|/\d)"]
+    m = _re.fullmatch(r"(\d) ROOM", lab, _re.I)
+    if m:                                                   # flat types "4 ROOM" ("4-room"), "EXECUTIVE"
+        pats.append(r"(?<![\d.])" + m.group(1) + r"\s*-?\s*room\b")
+    if lab.upper() == "EXECUTIVE":
+        pats.append(r"\bexec(?:utive)?\b")
+    if lab.upper() == "MULTI-GENERATION":
+        pats.append(r"\bmulti\s*-?\s*gen(?:eration)?\b")
+    m = _re.fullmatch(r"(.+?) (?:MRT|LRT)", lab)
+    if m:                                                   # a station: "Outram Park MRT" is also "Outram Park"
+        pats.append(r"\b" + _re.sub(r"(?:\\ )+", r"\\s+", _re.escape(m.group(1))) + r"\b")
+    return _re.compile("|".join(f"(?:{p})" for p in pats), _re.I), (_re.compile(cell, _re.I) if cell else None)
+
+
+def _label_spans(text: str, matchers: List[tuple]) -> List[tuple]:
+    """(start, end, group) of every group label in the text; a label inside a longer label of another group
+    (a town inside a longer town name) is dropped."""
+    spans = [(m.start(), m.end(), gi) for gi, (rx, _) in enumerate(matchers) for m in rx.finditer(text) if m.end() > m.start()]
+    spans.sort(key=lambda s: (s[0], s[0] - s[1]))
+    keep: List[tuple] = []
+    for s in spans:
+        if not any(k[0] <= s[0] and s[1] <= k[1] and (k[1] - k[0]) > (s[1] - s[0]) and k[2] != s[2] for k in keep):
+            keep.append(s)
+    return keep
+
+
+def _figures(text: str, blank: List[tuple]) -> List[Dict[str, Any]]:
+    """Numbers in the text outside the label spans, each with its value, the rounding unit it is written to, and the
+    figure it is (median_price, count, median_psm) when the wording says so (kind None otherwise). Percentages,
+    distances, months, years and dates are not figures."""
+    chars = list(text)
+    for a, b, _ in blank:
+        chars[a:b] = " " * (b - a)
+    text = "".join(chars)
+    out = []
+    for m in _FIGURE_RE.finditer(text):
+        cur, num, suf = m.group("cur"), m.group("num"), (m.group("suf") or "").lower()
+        after, before = text[m.end():m.end() + 30], text[max(0, m.start() - 30):m.start()]
+        if suf == "m" and not cur:
+            continue                                        # "500 m" is a distance
+        if not suf and _NOT_A_FIGURE_AFTER.match(after):
+            continue
+        mult = 1000.0 if suf in ("k", "thousand") else 1e6 if suf in ("m", "mil", "million", "mn") else 1.0
+        whole, _, frac = num.replace(",", "").partition(".")
+        value = float(whole + ("." + frac if frac else "")) * mult
+        unit = mult / 10 ** len(frac)
+        if not suf and not frac and _APPROX_BEFORE.search(before) and int(whole):
+            zeros = len(whole) - len(whole.rstrip("0"))
+            unit = 10.0 ** max(0, min(zeros, len(whole) - 3))   # "about $1,450,000": to the nearest $10,000
+        if unit > 1 and len(str(int(round(value / unit)))) < 3:
+            continue                                        # "$1.4M", "$5.4k": too vague to hold to a figure
+        money = bool(cur) or bool(suf)
+        if _PSM_AFTER.match(after) or _PSM_BEFORE.search(before):
+            kind = "median_psm"
+        elif value >= 100_000 and (money or _PRICE_BEFORE.search(before)):
+            kind = "median_price"                           # "$515,000", "515k", or "a median of 515,000"
+        elif not money and not frac and (_COUNT_AFTER.match(after) or _COUNT_BEFORE.search(before)) \
+                and not (len(num) == 4 and 1990 <= value <= 2039):
+            kind = "count"
+        else:
+            kind = None
+        out.append({"pos": m.start("cur") if cur else m.start("num"), "value": value, "unit": unit, "kind": kind})
+    return out
+
+
+def _clean_line(line: str) -> str:
+    """Markdown marks to spaces, keeping every position (label spans and figures are found on the same text). '>' is
+    kept: it is part of a label such as '>1,000 m'."""
+    return _re.sub(r"[*_`#]", " ", line)
+
+
+def _column_kind(header: str) -> Optional[str]:
+    h = (header or "").strip()
+    if _COL_PSM.search(h):
+        return "median_psm"
+    if _COL_OTHER.search(h):
+        return None
+    if _COL_PRICE.search(h):
+        return "median_price"
+    if _COL_COUNT.search(h):
+        return "count"
+    return None
+
+
+def _cell_groups(cell: str, matchers: List[tuple]) -> set:
+    found = {g for _, _, g in _label_spans(cell, matchers)}
+    if not found:
+        found = {gi for gi, (_, whole) in enumerate(matchers) if whole is not None and whole.fullmatch(cell.strip())}
+    return found
+
+
+def _attach(claims: Dict[int, Dict[str, List[tuple]]], g: int, figs: List[Dict[str, Any]], kind: Optional[str] = None) -> None:
+    for f in figs:
+        k = kind or f["kind"]
+        if k:
+            claims[g][k].append((f["value"], f["unit"]))
+
+
+def _table_claims(lines: List[str], matchers: List[tuple], claims: Dict[int, Dict[str, List[tuple]]]) -> None:
+    """Figures in a markdown table: a row naming one group gives that group the figures in the columns whose header
+    says which figure they hold (median price, sales, per sqm); a table with groups as columns is read the other way
+    round; without a usable header the row is read like a line of text."""
+    rows = [[_clean_line(c).strip() for c in line.strip().strip("|").split("|")] for line in lines]
+    sep = lambda r: all(set(c) <= set("-: ") for c in r)
+    header = rows[0] if len(rows) >= 2 and sep(rows[1]) else None
+    body = [r for r in (rows[2:] if header else rows) if not sep(r)]
+    kinds = [_column_kind(h) for h in header] if header else []
+    header_groups = [_cell_groups(h, matchers) for h in header] if header else []
+    if header and sum(1 for hg in header_groups if len(hg) == 1) >= 1 and not any(kinds[1:]):
+        for r in body:                                          # groups as columns, figures as rows
+            kind = _column_kind(r[0]) if r else None
+            for c, hg in enumerate(header_groups):
+                if kind and len(hg) == 1 and c < len(r):
+                    _attach(claims, next(iter(hg)), _figures(r[c], []), kind)
+        return
+    for r in body:
+        groups = set()
+        for c in r:
+            groups |= _cell_groups(c, matchers)
+        if len(groups) != 1 or any(_OFF_TOPIC.search(c) for c in r):
+            continue
+        g = next(iter(groups))
+        if any(kinds):
+            for c, k in enumerate(kinds):
+                if k and c < len(r):
+                    _attach(claims, g, _figures(r[c], _label_spans(r[c], matchers)), k)
+        else:
+            text = " | ".join(r)
+            _attach(claims, g, _figures(text, _label_spans(text, matchers)))
+
+
+def _line_claims(text: str, spans: List[tuple], claims: Dict[int, Dict[str, List[tuple]]]) -> None:
+    """Figures on a line naming several groups: split into clauses (never inside a label); a figure goes to the
+    group named before it in its clause, else the one after it; a clause naming none goes to the last one named."""
+    bounds, start = [], 0
+    for m in _CLAUSE_SPLIT.finditer(text):
+        if any(a < m.end() and m.start() < b for a, b, _ in spans):
+            continue
+        bounds.append((start, m.start()))
+        start = m.end()
+    bounds.append((start, len(text)))
+    figs = _figures(text, spans)
+    last: Optional[int] = None
+    pending: List[Dict[str, Any]] = []                         # figures in a clause before any group is named
+    for a, b in bounds:
+        own = [s for s in spans if a <= s[0] < b]
+        fs = [f for f in figs if a <= f["pos"] < b]
+        if not own:
+            if last is None:
+                pending += fs
+            else:
+                _attach(claims, last, fs)
+            continue
+        if pending:
+            _attach(claims, own[0][2], pending)
+            pending = []
+        for f in fs:
+            before = [s for s in own if s[1] <= f["pos"]]
+            _attach(claims, (before[-1] if before else own[0])[2], [f])
+        last = own[-1][2]
+
+
+def statistic_claims(draft: str, labels: List[str]) -> Dict[int, Dict[str, List[tuple]]]:
+    """Every (value, rounding unit) the answer gives for each group (by index into labels) and figure."""
+    matchers = [_label_patterns(lab) for lab in labels]
+    claims: Dict[int, Dict[str, List[tuple]]] = {gi: {k: [] for k in STAT_MEASURES} for gi in range(len(labels))}
+    lines = (draft or "").splitlines()
+    context: Optional[int] = None          # a group named alone on a heading or label line, for the lines under it
+    sticky = False                         # a markdown heading's group lasts past blank lines, a label line's does not
+    i = 0
+    while i < len(lines):
+        if lines[i].lstrip().startswith("|"):
+            j = i
+            while j < len(lines) and lines[j].lstrip().startswith("|"):
+                j += 1
+            _table_claims(lines[i:j], matchers, claims)
+            context, i = None, j
+            continue
+        raw = lines[i]
+        i += 1
+        text = _clean_line(raw)
+        heading = raw.lstrip().startswith("#") or bool(_PSEUDO_HEADING_RE.match(raw))
+        if not text.strip():
+            context = context if sticky else None
+            continue
+        if _OFF_TOPIC.search(text):
+            continue
+        spans = _label_spans(text, matchers)
+        groups = {g for _, _, g in spans}
+        if not groups:
+            if heading:
+                context = None
+            elif context is not None:
+                _attach(claims, context, _figures(text, []))
+            continue
+        if len(groups) == 1:
+            g = next(iter(groups))
+            figs = _figures(text, spans)
+            _attach(claims, g, figs)
+            if not any(f["kind"] for f in figs):
+                context, sticky = g, raw.lstrip().startswith("#")
+            continue
+        context = None
+        _line_claims(text, spans, claims)
+    return claims
+
+
+def _figure_right(value: float, unit: float, truth: float, kind: str) -> bool:
+    tol = {"median_price": max(1.0, unit / 2), "count": unit / 2, "median_psm": unit / 2 + 0.05}[kind]
+    return abs(value - float(truth)) <= tol + 1e-9
+
+
+@functools.lru_cache(maxsize=1)
+def database_snapshot() -> Optional[str]:
+    """The snapshot id of the market database on this machine, or None when it cannot be read."""
+    try:
+        from data.market_database import open_market_database
+        with open_market_database() as con:
+            return con.execute("SELECT snapshot_id FROM source_snapshot").fetchone()[0]
+    except Exception:  # noqa: BLE001 — scoring goes on without it; the score says the snapshot is unknown
+        return None
+
+
+def answer_snapshot(state: Dict[str, Any]) -> tuple:
+    """(snapshot id, where it came from): the one the variant's own statistics tool reported, else this database's."""
+    for res in (state.get("sql_market_results") or {}).values():
+        if isinstance(res, dict) and res.get("snapshot_id"):
+            return res["snapshot_id"], "tool"
+    snap = database_snapshot()
+    return snap, ("database" if snap else None)
+
+
+def statistics_scores(item: Dict[str, Any], state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """A Category A answer against the question's ground-truth groups (rules above)."""
+    truth = item.get("ground_truth_facts") or {}
+    groups = [g for g in truth.get("groups") or [] if g.get("label")]
+    if not groups:
+        return None
+    asked = stat_measures_asked(item.get("query", ""))
+    claims = statistic_claims(state.get("draft_response") or "", [g["label"] for g in groups])
+    per_group, right, total, wrong = [], 0, 0, 0
+    for gi, g in enumerate(groups):
+        row: Dict[str, Any] = {"label": g["label"]}
+        for k in STAT_MEASURES:
+            if g.get(k) is None:
+                continue
+            said = claims[gi][k]
+            status = ("right" if any(_figure_right(v, u, g[k], k) for v, u in said) else "wrong") if said else "missing"
+            row[k] = status
+            wrong += status == "wrong"
+            if k in asked:
+                total += 1
+                right += status == "right"
+        per_group.append(row)
+    snap, source = answer_snapshot(state)
+    return {
+        "kind": "statistics",
+        "measures_asked": asked,
+        "figures_correct": right, "figures_total": total,
+        "figure_accuracy": right / total if total else None,
+        "figures_wrong": wrong,
+        "groups_total": len(groups),
+        "groups_right": sum(1 for r in per_group if all(r.get(k) == "right" for k in asked if k in r)),
+        "groups_missing": [r["label"] for r in per_group if r.get("median_price") == "missing"],
+        "per_group": per_group,
+        "snapshot_truth": truth.get("snapshot_id"), "snapshot_answer": snap, "snapshot_source": source,
+        "snapshot_matches": (snap == truth.get("snapshot_id")) if snap and truth.get("snapshot_id") else None,
+        "success": total > 0 and right == total and wrong == 0,
+    }
+
+
 def ground_truth_scores(item: Dict[str, Any], state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Compare an answer with the question's stored ground truth. None for questions without ground truth."""
     truth = item.get("ground_truth_facts")
     if truth and "key_clauses" in truth:              # a Category C policy question
         return policy_clause_scores(item, state)
+    if truth and "groups" in truth:                   # a Category A statistics question
+        return statistics_scores(item, state)
     if not truth or "matching_block_keys" not in truth:
         return None
     draft = state.get("draft_response") or ""
@@ -553,6 +941,11 @@ def aggregate(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
             # block questions only: a policy answer has no blocks to get right
             "blocks_exact_rate": mean((1.0 if g["blocks_exact"] else 0.0) for g in gts if "blocks_exact" in g),
             "policy_clause_coverage": mean(g["clause_coverage"] for g in gts if g.get("kind") == "policy"),
+            # Category A: share of the asked group figures stated right, and of answers whose tool ran on the
+            # snapshot the ground truth was built on (below 1 means the truth may be stale for those answers)
+            "stat_figure_accuracy": mean(g["figure_accuracy"] for g in gts if g.get("kind") == "statistics"),
+            "stat_snapshot_matches": mean((1.0 if g["snapshot_matches"] else 0.0) for g in gts
+                                          if g.get("kind") == "statistics" and g.get("snapshot_matches") is not None),
         }
     return out
 
