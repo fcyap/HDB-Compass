@@ -6,7 +6,9 @@ full 90-query benchmark; the per-item scoring is shared (architecture_metrics.py
 Runs Variants A/B/C over evaluation/category_e_queries.json on whatever LLM
 profile is active (ollama laptop, vllm cluster, or none), checkpointing one
 JSON line per (variant, query) so a dropped VPN, a Slurm wall-time limit or a
-closed laptop lid loses at most one query. Re-running resumes.
+closed laptop lid loses at most one query. Re-running resumes. On a live profile each row starts with one quick
+GET <base_url>/models (LLM_PROBE_TIMEOUT_S, default 5 s); when the server fails to answer twice in a row the run stops
+at once with MODEL_UNREACHABLE and exit code 3, writing nothing for the rows it did not run.
 
     LLM_PROFILE=ollama .venv/bin/python evaluation/run_category_e_prelim.py            # all variants, all 15
     LLM_PROFILE=vllm   .venv/bin/python evaluation/run_category_e_prelim.py --variants C --ids E1-01,E2-01
@@ -180,6 +182,40 @@ def model_fallbacks(state: Dict[str, Any]) -> List[str]:
             any("extract_constraints[json_mode] failed" in e for e in errors):
         out.append("extract_constraints: both modes failed; code-only reading used")
     return out
+
+
+# Before each row of a live run, one quick question to the model server: does it answer at all? A dropped VPN leaves
+# the tunnel's local port open, so without this every model call in the row waits out LLM_TIMEOUT_S (and its
+# retries) before the row is found lost: on 31 Oct that took about 4 hours for two rows.
+PROBE_TIMEOUT_S = float(os.getenv("LLM_PROBE_TIMEOUT_S", "5"))
+PROBE_PAUSE_S = 1.0   # between the two tries, so a single dropped packet does not stop the run
+
+
+def server_answers(profile: Dict[str, Any], timeout: Optional[float] = None) -> Tuple[bool, str]:
+    """One GET <base_url>/models, no retries. True when the server answers 2xx; otherwise False and why."""
+    import urllib.error
+    import urllib.request
+    url = (profile.get("base_url") or "").rstrip("/") + "/models"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {profile.get('api_key') or 'not-needed'}"})
+    # no proxy: the model server is always on localhost (the laptop's Ollama or the cluster tunnel)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(req, timeout=PROBE_TIMEOUT_S if timeout is None else timeout) as resp:
+            return 200 <= resp.status < 300, f"HTTP {resp.status}"
+    except urllib.error.HTTPError as e:   # the server answered, but refused (wrong key, no such path)
+        return False, f"HTTP {e.code}"
+    except Exception as e:  # noqa: BLE001 — refused connection, timeout, closed tunnel
+        return False, f"{type(e).__name__}: {e}"
+
+
+def server_down(profile: Dict[str, Any]) -> Optional[str]:
+    """Why the model server is gone (two failed tries in a row), or None when it answered. Never asked for "none"."""
+    ok, why = server_answers(profile)
+    if ok:
+        return None
+    time.sleep(PROBE_PAUSE_S)
+    ok, why = server_answers(profile)
+    return None if ok else why
 
 
 def run_settings(profile: Dict[str, Any]) -> Dict[str, Any]:
@@ -437,10 +473,19 @@ def main() -> None:
     print(f"{len(done)} rows already done, {len(todo)} to run")
 
     unreachable = 0
+    stopped = False
+    live = profile["name"] != "none"
     with path.open("a", encoding="utf-8") as f:
         for n, (v, it) in enumerate(todo, 1):
             if unreachable >= 2:  # the server or tunnel is gone: every further row would fail the same way
                 print(f"MODEL_UNREACHABLE: stopped after {n - 1}/{len(todo)}; run the same command again to resume")
+                stopped = True
+                break
+            why = server_down(profile) if live else None
+            if why:  # nothing is written for this row: it never ran, so the resume runs it
+                print(f"MODEL_UNREACHABLE: {profile.get('base_url')} did not answer twice ({why}); stopped after "
+                      f"{n - 1}/{len(todo)}; run the same command again to resume", flush=True)
+                stopped = True
                 break
             mod = load_variant(v)
             print(f"[{n}/{len(todo)}] variant {v} {it['id']} ...", end="", flush=True)
@@ -464,6 +509,8 @@ def main() -> None:
     path.with_suffix(".summary.json").write_text(json.dumps(agg, indent=2))
     print_table(agg)
     print(f"\nsummary -> {path.with_suffix('.summary.json')}")
+    if stopped:
+        sys.exit(3)   # run_live_eval.sh stops here instead of starting the next tag against a lost server
 
 
 if __name__ == "__main__":
