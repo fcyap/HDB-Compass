@@ -416,6 +416,38 @@ def _stated_bands(q: str) -> Optional[List[int]]:
         and (m or len(edges) >= 2) else None
 
 
+# Other ways to slice the sales. "Do higher floors near hawkers sell for more?" groups by storey, with the hawker as a
+# filter; reading it as distance bands answered a different question.
+_STOREY_DIM = re.compile(r"\b(?:high(?:er)?|low(?:er)?|top|upper|middle|mid)[- ]?(?:floors?|storeys?|levels?)\b|"
+                         r"\b(?:floor|storey)\s*(?:levels?|heights?|bands?|ranges?)\b|\bby (?:floor|storey)s?\b", re.I)
+_LEASE_DIM = re.compile(r"\blease (?:left|remaining|bands?|ranges?)\b|\bby (?:remaining )?lease\b|"
+                        r"\b(?:older|newer|younger) (?:flats|blocks|estates)\b", re.I)
+_YEAR_DIM = re.compile(r"\b(?:by|each|per|every) year\b|\byear[- ]by[- ]year\b|\byearly\b", re.I)
+
+# URA planning regions: the 26 HDB towns, each in one region, so "in the east" is a list of towns, not ignored.
+REGION_TOWNS = {
+    "north-east": ["ANG MO KIO", "HOUGANG", "PUNGGOL", "SENGKANG", "SERANGOON"],
+    "east": ["BEDOK", "PASIR RIS", "TAMPINES"],
+    "north": ["SEMBAWANG", "WOODLANDS", "YISHUN"],
+    "west": ["BUKIT BATOK", "BUKIT PANJANG", "CHOA CHU KANG", "CLEMENTI", "JURONG EAST", "JURONG WEST"],
+    "central": ["BISHAN", "BUKIT MERAH", "BUKIT TIMAH", "CENTRAL AREA", "GEYLANG", "KALLANG/WHAMPOA", "MARINE PARADE",
+                "QUEENSTOWN", "TOA PAYOH"],
+}
+_REGION = re.compile(r"(?:\b(?:in|across|around|of)\s+(?:the\s+)?|\bthe\s+)(north[- ]?east|east|west|north|central)(?:ern)?\b"
+                     r"(?!\s+(?:coast|area|ave|avenue|st|street|rd|road|dr|drive|link|way|mrt|lrt))"
+                     r"|\b(north[- ]?east|east|west|north|central)(?:ern)?\s+(?:region|side|part|singapore)\b", re.I)
+
+
+def region_towns(q: str) -> Optional[Tuple[str, List[str]]]:
+    """'in the east', 'the north-east region', 'western Singapore' -> (region, its HDB towns)."""
+    m = _REGION.search(q)
+    if not m:
+        return None
+    key = (m.group(1) or m.group(2)).lower().replace(" ", "-")
+    key = "north-east" if key in ("northeast", "north-east") else key
+    return key, REGION_TOWNS[key]
+
+
 def extract_group_stats(q: str, base: Dict[str, Any], addresses: List[str]) -> Dict[str, Any]:
     """The grouped-statistics intent and its parameters, or {} when the question is about something else."""
     if _CATALOG.search(q) and not addresses:
@@ -441,15 +473,25 @@ def extract_group_stats(q: str, base: Dict[str, Any], addresses: List[str]) -> D
     price_ask = bool(re.search(r"\b(?:expensive|cheap\w*|price\w*|priciest|dearest|costs?|affordable|median|average|sold|sales?)\b", q, re.I))
     if near is None and station_group and (price_ask or strong):
         near = "mrt" if not re.search(r"\blrt\b", q, re.I) or re.search(r"\bmrt\b", q, re.I) else "lrt"
-    if near is None and not (island and strong) and not (town_group and strong and not base.get("towns")):
+    dim = ("storey_band" if _STOREY_DIM.search(q) else "lease_band" if _LEASE_DIM.search(q)
+           else "year" if _YEAR_DIM.search(q) else None)
+    region = region_towns(q) if not base.get("towns") else None
+    if near is None and not (island and strong) and not (town_group and strong and not base.get("towns")) \
+            and not (dim and price_ask) and not (region and (strong or price_ask)):
         return {}
     if near is None and station_group:
         return {}
     out: Dict[str, Any] = {"wants_group_stats": True, "stats_near": near,
                            "stats_listings": bool(re.search(r"\blistings?\b|\bfor sale\b", q, re.I))}
     notes: List[str] = []
+    if region:
+        # a region is its towns; said so, since the user named an area rather than towns
+        out["towns"] = list(region[1])
+        notes.append(f"'The {region[0]}' was taken as {', '.join(t.title() for t in region[1])} (URA planning regions).")
     # what to group by
-    if station_group and near in ("mrt", "mrt_lrt", "lrt"):
+    if dim:
+        group = [dim]                     # storey / lease / year; a 'near X' in the question becomes a filter
+    elif station_group and near in ("mrt", "mrt_lrt", "lrt"):
         group = ["station"]
     elif town_group or (island and near is None):
         group = ["town"]
@@ -1063,6 +1105,10 @@ def stats_lines(r: Dict[str, Any], c: Dict[str, Any]) -> List[str]:
         lines.append(f"_Period: {p['start_month']} to {p['end_month']} ({p['months']} months). Medians pool every sale in the group; "
                      f"groups with fewer than {r.get('min_sales', 10)} sales are left out"
                      + (f" ({r['excluded_small_groups']} left out)" if r.get("excluded_small_groups") else "") + "._")
+    if (r.get("group_by") or [None])[0] in ("storey_band", "lease_band") and len(r.get("flat_types") or []) != 1:
+        # taller blocks and longer leases are also newer, bigger and more central: the gap is not floor or lease alone
+        lines.append("_These groups mix flat types and estates, so the gap is not due to floor or lease alone; "
+                     "ask for one flat type (e.g. '4-room') for a closer like-for-like comparison._")
     for n in r.get("assumptions") or []:
         lines.append(f"_Assumption: {n}_")
     for n in r.get("notes") or []:

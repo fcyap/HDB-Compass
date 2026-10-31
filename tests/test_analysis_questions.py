@@ -210,13 +210,14 @@ class ToolModel:
 
 LONG_TAIL = [
     ("Which streets in Bishan have the priciest flats?", {"group_by": ["street"], "towns": ["BISHAN"], "sort_by": "median_price", "top_n": 5}),
-    ("How did 4-room prices change by storey since 2020?", {"group_by": ["year", "storey_band"], "flat_types": ["4 ROOM"], "start_month": "2020-01"}),
+    # storey/lease/year wordings are rule shapes now (test_floor_and_lease_questions_group_by_that_dimension)
+    ("Are bigger flats worth the premium per square metre?", {"group_by": ["flat_type"], "sort_by": "median_psm"}),
     ("Does remaining lease affect resale prices?", {"group_by": ["lease_band"]}),
     ("Compare executive and 5-room flat prices", {"group_by": ["flat_type"], "flat_types": ["EXECUTIVE", "5 ROOM"]}),
-    ("What is the price premium for higher floors?", {"group_by": ["storey_band"]}),
+    ("Do maisonettes hold their value?", {"group_by": ["flat_type"]}),
     ("Which flat type is the most expensive?", {"group_by": ["flat_type"], "sort_by": "median_price"}),
     ("Are prices on the rise?", {"group_by": ["year"], "lookback_years": 5}),
-    ("Average resale price by year", {"group_by": ["year"], "lookback_years": 5}),
+    ("Which flat types sell for the most per square metre?", {"group_by": ["flat_type"], "sort_by": "median_psm"}),
     ("Show the price distribution of 3-room flats", {"group_by": ["town"], "flat_types": ["3 ROOM"], "top_n": 5}),
     ("What do older flats with short leases sell for?", {"group_by": ["lease_band"], "sort_by": "median_price", "order": "asc"}),
 ]
@@ -342,3 +343,36 @@ def test_category_a_question_is_read_and_matches_independent_sql(item):
     expected = [(g["label"], g["count"], round(g["median_price"])) for g in facts["groups"]]
     assert [(g["label"], g["count"], g["median_price"]) for g in got["groups"]][:len(expected)] == expected
     assert got["period"]["start_month"] == facts["period"].split("..")[0]
+
+
+# --- found in review (Groq rate-limited, so the rule layer answered): parts of a question were silently dropped -----
+@pytest.mark.parametrize("query, group, near", [
+    ("Do flats on higher floors near hawker centres sell for more? Show me since 2020", ["storey_band"], "hawker"),
+    ("Resale prices by storey in Tampines", ["storey_band"], None),
+    ("What is the price premium for higher floors?", ["storey_band"], None),
+    ("Average resale price by year", ["year"], None),
+    ("Do flats with more lease left sell for more near MRT?", ["lease_band"], "mrt"),
+])
+def test_floor_and_lease_questions_group_by_that_dimension(query, group, near):
+    c = sv.rule_based_extract(query).model_dump()
+    assert c["wants_group_stats"] and c["stats_group_by"] == group and c.get("stats_near") == near
+
+
+@pytest.mark.parametrize("query, towns", [
+    ("What's the price premium for 5-room flats close to MRT in the east?", ["BEDOK", "PASIR RIS", "TAMPINES"]),
+    ("Resale statistics near MRT stations in the north-east region", ["ANG MO KIO", "HOUGANG", "PUNGGOL", "SENGKANG", "SERANGOON"]),
+])
+def test_a_region_becomes_its_towns_and_is_disclosed(query, towns):
+    c = sv.rule_based_extract(query).model_dump()
+    assert c["towns"] == towns and any("URA planning regions" in a for a in c["assumptions"])
+
+
+def test_jurong_east_is_a_town_not_the_east_region():
+    c = sv.rule_based_extract("Show 4-room prices near MRT in Jurong East").model_dump()
+    assert c["towns"] == ["JURONG EAST"]
+
+
+def test_region_towns_cover_all_hdb_towns_once():
+    from agents.research_intents import REGION_TOWNS
+    towns = [t for ts in REGION_TOWNS.values() for t in ts]
+    assert len(towns) == len(set(towns)) == 26

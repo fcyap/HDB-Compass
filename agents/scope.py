@@ -167,7 +167,9 @@ _POLICY_TOPIC = re.compile(
 _DATA_WORDS = re.compile(
     r"\b(?:prices?|priced|pricey|sold|sell(?:s|ing)? for|sales?|transactions?|median|statistics|stats|trends?|expensive|cheap\w*|premium|"
     r"compar\w+|breakdown|listings?|average|how much|per sqm|psf|distribution|highest|lowest|costs?|costliest|dearest|"
-    r"priciest|affordable|histor\w+|gone up|gone down|appreciat\w+|cheaper|pricier)\b", re.I)
+    r"priciest|affordable|histor\w+|gone up|gone down|appreciat\w+|cheaper|pricier|"
+    # value questions: "do maisonettes hold their value?", "resale value", "worth more"
+    r"(?:resale |market )?values?|valuations?|worth(?: more| less)?|depreciat\w+)\b", re.I)
 
 
 def mentions_data(text: str) -> bool:
