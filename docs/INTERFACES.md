@@ -446,3 +446,30 @@ Radius chips: an area-statistics or nearby-amenities answer about one place carr
 (`[{"label": "Within 200 m", "text": "What are resale prices within 200m of <place>?"}]`, the current radius left out).
 The websocket sends them as `clarification = {"kind": "drilldown", "question": null, "options": [...]}` (after any drill-down chips, §11), but they are
 not a pending question: `state["clarification"]` stays empty, so a click is answered as a fresh question on the fast path.
+
+## 13. Tracing and evals (LangSmith)
+
+**Tracing** (`agents/tracing.py`). Off unless `LANGSMITH_TRACING=true`. `configure_tracing()` runs once per process
+(backend start-up, the evaluation runner, the CLI): it asks LangSmith whether the key is accepted at
+`LANGSMITH_ENDPOINT` (a 401/403 is retried against the other regions to say which one accepts it), and checks the
+destination. On failure tracing is switched off for the process with one log line. `python -m agents.tracing --check`
+prints the verdict and the fix. Tests never upload (`LANGSMITH_TRACING` is forced off).
+
+- Destination: `LANGSMITH_PROJECT`, or an agent address (`LANGSMITH_AGENT_ID` + `LANGSMITH_AGENT_ENVIRONMENT`, runs land
+  in the environment's project, e.g. `hdb-compass-local`). Half an address, or an address plus a project, is untraced.
+- `run_config(variant, session_id, question_id)` names the root run `hdb-compass-<variant>[:<question id>]`, tags it
+  `variant:<v>` and `app`/`eval`, and records `model_profile`, `addons`, `commit`, and `session_id`/`thread_id`
+  (LangSmith groups a conversation by `thread_id`). Variants A, B, C and the backend all pass it to the graph.
+- `ToolRunner` runs each tool through `traced_tool_call`, a child run of type `tool` (arguments, and the result cut to
+  `MAX_TRACED_CHARS`). With tracing off it is a plain call.
+
+**Evals** (`evaluation/langsmith_evals.py`). Datasets `hdb-compass-category-a|c|e` are built from
+`evaluation/category_{a,c,e}_queries.json` (example id = uuid5 of dataset name and question id, so uploads are
+idempotent; the reference outputs are the file's expected route, tools and ground truth). Evaluators reuse our own
+scoring (`route_correct`, `tool_precision/recall/f1`, `ground_truth_success`, `figures_present`, `answerable`).
+Experiments are named `hdb-eval-<dataset>-variant-<v>-<suffix>`.
+
+```
+python -m evaluation.langsmith_evals --dataset category_a --upload-only
+LLM_PROFILE=none python -m evaluation.langsmith_evals --dataset category_a --variant C --limit 3
+```
