@@ -152,6 +152,7 @@ export function App() {
                             policy_notes: payload.policy_notes,
                             school_lookup: payload.school_lookup,
                             clarification: payload.clarification,
+                            flat_type: payload.flat_type,
                           },
                         }
                       : m

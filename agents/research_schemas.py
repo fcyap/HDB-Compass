@@ -306,6 +306,8 @@ class AssessResalePriceOutput(BaseModel):
     asking_percentile: Optional[float] = Field(None, description="Share of nearby sales priced below the asking price, 0-100")
     asking_vs_nearby_median_pct: Optional[float] = None
     position: Optional[Literal["below_lower_quartile", "within_middle_50", "above_upper_quartile"]] = None
+    remaining_lease_years: Optional[float] = Field(None, description="The block's remaining lease now, from its latest sale (any flat type)")
+    nearby_median_lease_years: Optional[float] = Field(None, description="Median remaining lease of the nearby sales used, at the end of the window")
     metadata: Optional[ResearchMetadata] = None
 
 

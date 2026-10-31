@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import sys
 import json
+import re
 import pickle
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -349,14 +350,24 @@ def _is_lrt_station(record: Dict[str, Any]) -> bool:
     return " LRT " in name_upper
 
 
+def station_key(name: str) -> str:
+    """'NOVENA MRT STATION' / 'Bishan Interchange MRT Station' / 'novena mrt' -> 'NOVENA' / 'BISHAN'."""
+    words = re.sub(r"[^A-Z0-9 ]", " ", str(name or "").upper()).split()
+    while words and words[-1] in {"STATION", "MRT", "LRT", "INTERCHANGE"}:
+        words.pop()
+    return " ".join(words)
+
+
 @mcp.tool()
 def filter_blocks_by_amenity_proximity(
     towns: List[str],
-    amenity_constraints: Dict[str, int]
+    amenity_constraints: Dict[str, int],
+    mrt_station: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Filters HDB blocks across specified towns where walking distance to EVERY requested
     amenity (mrt, mrt_only, lrt, mrt_lrt, hawker, supermarket) is strictly <= the threshold in metres.
+    mrt_station (e.g. "Novena") limits the MRT/LRT check to that one named station instead of the nearest one.
     """
     index_data = get_spatial_index()
     blocks = index_data["payload"]["blocks"]
@@ -382,6 +393,9 @@ def filter_blocks_by_amenity_proximity(
             ]
         else:
             category_amenities[cat_lower] = [a for a in amenities if a["category"].lower() == cat_lower]
+        if mrt_station and cat_lower in ("mrt", "mrt_only", "lrt", "mrt_lrt"):
+            want = station_key(mrt_station)
+            category_amenities[cat_lower] = [a for a in category_amenities[cat_lower] if station_key(a["name"]) == want]
 
     matched_results = []
     for b in candidate_blocks:

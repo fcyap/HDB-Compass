@@ -700,7 +700,9 @@ def pr_buyer(text: str) -> bool:
 
 
 def _citizen_view(text: str) -> str:
-    return ". ".join(c for c in _clauses_of(statements(text, own=True)) if not _GENERAL_TALK.search(c))
+    # "first-time buyers" is the buyers' own status, not talk about buyers in general
+    return ". ".join(c for c in _clauses_of(statements(text, own=True))
+                     if not _GENERAL_TALK.search(re.sub(r"\bfirst[- ]time (?:home )?(?:buyers|applicants)\b", "", c, flags=re.I)))
 
 
 def citizenship_stated(text: str) -> Optional[str]:
@@ -863,6 +865,12 @@ def _amount(m: re.Match) -> float:
     return float(m.group(1).replace(",", "")) * (1000 if m.group(2) else 1)
 
 
+# "Our monthly debt repayments are $500", and the age of the youngest person who will live in the flat
+_DEBT_PAYMENT = r"\bmonthly (?:debt|loan) (?:repayments?|payments?|obligations?)\s+(?:are|is|of|total)\s+" + _AMOUNT
+_YOUNGEST_OCCUPANT = (r"\byoungest (?:person|occupant|member|resident)\b[^.;]{0,40}\b(?:flat|home|household)\b[^.;]{0,15}"
+                     r"\bis (\d{1,2})(?:\s*(?:years?|yrs?)(?:\s+old)?)?(?!\d)")
+
+
 def stated_financial_inputs(text: str, context: str = "") -> Dict[str, Dict[str, Any]]:
     """The calculator facts the user's own words state, in the financial_inputs shape. Nothing is inferred:
     "couple" alone gives no citizenship, and the youngest core member is the youngest buyer only when the
@@ -886,6 +894,10 @@ def stated_financial_inputs(text: str, context: str = "") -> Dict[str, Dict[str,
     f.update(bound_amounts(own, is_couple(f"{context} {t}")))
     if no_debts_stated(s):
         f["monthly_debt_obligations"] = 0.0
+    elif (m := _stated_match(_DEBT_PAYMENT, s)):
+        f["monthly_debt_obligations"] = _amount(m)
+    if (m := _stated_match(_YOUNGEST_OCCUPANT, statements(t, keep=("plan",)))):   # "who will live in the flat"
+        f["youngest_core_member_age"] = float(m.group(1))
     if _stated_match(_CONTINUOUS_WORK, s) and not _JOB_LOSS.search(s):
         f["continuous_employment_12_months"] = True
     # "eligibility for the grants is confirmed", "HDB has confirmed our eligibility for the grants"
@@ -901,8 +913,15 @@ def stated_financial_inputs(text: str, context: str = "") -> Dict[str, Dict[str,
         f["loan_type"] = "bank"
     elif re.search(r"\bHDB loan\b", t, re.I):
         f["loan_type"] = "hdb"
-    if re.search(_NO_PROXIMITY, s, re.I):
+    if re.search(_NO_PROXIMITY + r"|\bnot (?:buying |living |staying )?near (?:my|our) parents\b", s, re.I):
         f["proximity"] = "none"
+    elif _parents_clause(_PARENTS_WITH, t):
+        f["proximity"] = "with"
+    elif _parents_clause(_PARENTS_NEAR, t):
+        f["proximity"] = "near"
+    if _stated_match(r"\bproximity (?:housing )?grant\b.{0,40}\bconfirmed\b|\bconfirmed\b.{0,40}\bproximity\b", s) \
+            and not re.search(r"\bnot confirmed\b", s, re.I):
+        f["proximity_eligibility_confirmed"] = True
     if re.search(r"\bno (?:housing )?grants\b", s, re.I):
         f["total_grants"] = 0.0
     m = re.search(_CALC_LEASE, s, re.I)
@@ -1063,7 +1082,7 @@ _PARENTS_NEAR = (r"\b(?:we|i|us|me)\b[^.;]{0,40}\b(?:near|nearby|close to|within
                  r"|\bparents?\b[^.;]{0,40}\b(?:near|nearby|close to|within 4\s?km of)\s+(?:us|me|our (?:home|flat|place))\b"
                  r"|\bparents?\b[^.;]{0,40}\bsame (?:town|estate|block|street)\b")
 _PARENTS_WITH = (r"\bparents?\b[^.;]{0,40}\b(?:live|living|stay|staying|move in|moving in)\s+with\s+(?:us|me)\b"
-                 r"|\b(?:live|living|stay|staying)\s+with\s+(?:my|our)\s+parents\b")
+                 r"|\b(?:live|living|stay|staying|buy|buying)\s+with\s+(?:my|our)\s+parents\b")
 _SOMEONE_ELSE = re.compile(r"\b(?:brothers?|sisters?|siblings?|relatives?|far|away)\b", re.I)
 
 
@@ -1091,6 +1110,9 @@ def fact_is_grounded(field: str, value: Any, text: str) -> bool:
     if field in ("youngest_buyer_age", "oldest_buyer_age"):
         return _isint(value) and int(value) not in corrected and int(value) in (_ages_anywhere(own) or _bare_ages(own))
     if field == "youngest_core_member_age":
+        m = _stated_match(_YOUNGEST_OCCUPANT, statements(t, keep=("plan",)))
+        if m and _isint(value) and int(value) == int(m.group(1)):
+            return True
         return _isint(value) and int(value) not in corrected and int(value) in (_ages_anywhere(own) or _bare_ages(own)) \
             and no_children(t)
     if field in MONEY_FIELDS:
@@ -1133,9 +1155,9 @@ def fact_is_grounded(field: str, value: Any, text: str) -> bool:
         return value is True and stated(r"\bloan\b", r"\beligib|\bapprov", r"\bconfirmed\b|\bapproved\b")
     if field == "continuous_employment_12_months":
         return value is True and not _JOB_LOSS.search(t) and not _NOT_CONTINUOUS.search(s) and \
-            stated(r"\b(?:employ\w*|working|work|job)\b", r"\b(?:12|twelve)\s*(?:months?|mths?)\b|\b(?:a|one|1|past) year\b")
+            stated(r"\b(?:employ\w*|working|work|worked|job)\b", r"\b(?:12|twelve)\s*(?:months?|mths?)\b|\b(?:a|one|1|past) year\b")
     if field in ("proximity", "near_parents_4km"):
-        none = bool(re.search(_NO_PROXIMITY + r"|\bno proximity\b|\bnot (?:living )?near (?:my|our) parents\b", s, re.I))
+        none = bool(re.search(_NO_PROXIMITY + r"|\bno proximity\b|\bnot (?:buying |living |staying )?near (?:my|our) parents\b", s, re.I))
         if value in ("none", False):
             return none
         if value == "with":
@@ -1231,7 +1253,8 @@ def stated_across_turns(turns: List[str], unsure: Optional[set] = None) -> Dict[
         for k in drop:
             vals.pop(k, None)
     g = out.get("grants") or {}
-    if "youngest_core_member_age" in g and "youngest_buyer_age" in g:
+    if "youngest_core_member_age" in g and "youngest_buyer_age" in g and \
+            not g["youngest_core_member_age"] <= g["youngest_buyer_age"] - 15:      # a child's age is its own
         g["youngest_core_member_age"] = g["youngest_buyer_age"]       # follow a corrected age
     if unsure is not None:
         unsure |= drop
@@ -1512,6 +1535,13 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     for vals in (constraints.get("financial_inputs") or {}).values():
         for k in unsure:
             vals.pop(k, None)
+    if constraints.get("wants_flat_affordability"):
+        _add_flat_purchase(constraints)
+    elif constraints.get("wants_area_affordability"):
+        _add_area_purchase(constraints)
+    elif constraints.get("household_income") or any((constraints.get("financial_inputs") or {}).get(sec)
+                                                    for sec in ("grants", "affordability")):
+        _assume_flat_basics(constraints)   # "how much can we afford?": no flat chosen, so no lease or type to ask for
     # a data question no specific intent recognised goes to the market agent's analysis tools instead of the menu
     constraints["analysis_mode"] = False
     if (with_history and not pending and not constraints.get("clarifications") and not constraints.get("place_options")
@@ -1526,6 +1556,66 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     if comparables not in constraints["requested_tools"] and coordinates_stated(constraints.get("comparable_resale"), users):
         constraints["requested_tools"].append(comparables)
     return constraints
+
+
+def _add_flat_purchase(c: Dict[str, Any]) -> None:
+    """'Can we afford Blk X?': the block's price and remaining lease, read from the sales data, go to the calculators
+    as facts about that flat (what the user stated wins), and the source of the price is disclosed."""
+    facts = ri.flat_purchase_facts(c)
+    if not facts:
+        return
+    c["flat_purchase"] = facts
+    fin = c.get("financial_inputs") or {}
+    c["financial_inputs"] = fin
+    fin.setdefault("upfront", {}).setdefault("purchase_price", facts["purchase_price"])
+    fin.setdefault("grants", {}).setdefault("flat_type", facts["flat_type"])
+    lease = facts.get("remaining_lease_years")
+    if lease and lease > 20:
+        for sec in ("grants", "affordability"):
+            fin.setdefault(sec, {}).setdefault("remaining_lease_years", lease)
+    note = f"Price for {facts['block']} taken as ${facts['purchase_price']:,.0f}: {facts['price_source']}."
+    if lease:
+        note += f" Remaining lease about {lease:g} years (from the block's latest sale)."
+    c.setdefault("assumptions", []).append(note)
+
+
+def _add_area_purchase(c: Dict[str, Any]) -> None:
+    """'Can I afford a resale near Novena MRT?': no one flat is named, so the calculators work out the household's
+    ceiling for a flat whose lease lasts until the youngest buyer turns 95 (the case they model; an older flat's CPF use,
+    loan and grants are prorated), and that ceiling then filters the area's blocks (intersect_node). Both are disclosed."""
+    fin = c.get("financial_inputs") or {}
+    c["financial_inputs"] = fin
+    if not c.get("flat_types"):
+        c["flat_types"] = ["4 ROOM"]   # one flat type, so the prices compared with the ceiling are like for like
+        c.setdefault("assumptions", []).append("Prices and grants are for 4-room flats; name a flat type to change this.")
+    fin.setdefault("grants", {})["flat_type"] = c["flat_types"][0]
+    _assume_flat_basics(c)
+
+
+def _assume_flat_basics(c: Dict[str, Any]) -> None:
+    """A budget question with no flat chosen: rather than asking which flat type and what lease to assume (a flat the
+    user has not picked has neither), the grants use their stated flat type or a 4-room one, and the lease is taken to
+    last until the youngest buyer turns 95 (the case the calculators model). Each choice is disclosed; a stated
+    flat type or lease wins."""
+    fin = c.get("financial_inputs") or {}
+    c["financial_inputs"] = fin
+    grants = fin.setdefault("grants", {})
+    if not grants.get("flat_type"):
+        grants["flat_type"] = (c.get("flat_types") or ["4 ROOM"])[0]
+        if not c.get("flat_types"):
+            c.setdefault("assumptions", []).append("Grants were worked out for a 4-room flat (a 5-room or larger flat gets "
+                                                   "a smaller Family Grant); name a flat type to change this.")
+    if any((fin.get(sec) or {}).get("remaining_lease_years") for sec in ("grants", "affordability")) \
+            and not c.get("wants_area_affordability"):
+        return   # the user stated a lease
+    ages = [v.get("youngest_buyer_age") for v in fin.values() if isinstance(v, dict) and v.get("youngest_buyer_age")]
+    if ages:
+        lease = max(95 - int(min(ages)), 20)
+        for sec in ("grants", "affordability"):
+            fin.setdefault(sec, {})["remaining_lease_years"] = lease
+        c.setdefault("assumptions", []).append(
+            f"The ceiling assumes a flat with at least {lease} years of lease left (until the youngest buyer turns 95). "
+            "For a flat with less, HDB reduces the CPF you can use, the loan and the grants, so your ceiling there is lower.")
 
 
 FAST_PATH_SOURCE = "regex:fast_path"
@@ -1594,7 +1684,8 @@ def decide_routing(c: Dict[str, Any], pending: Optional[Dict[str, Any]] = None) 
     if ri.needs_spatial_agent(c) and "spatial" not in active:
         active.append("spatial")
     financial_facts = has_financial_facts(c) if (pending or {}).get("kind") == "financial" else calculator_facts(c)
-    if financial_facts or c.get("household_income") or c.get("cpf_oa_balance") or (c.get("citizenship_scheme") and c.get("max_budget_sgd")):
+    if financial_facts or c.get("household_income") or c.get("cpf_oa_balance") or (c.get("citizenship_scheme") and c.get("max_budget_sgd")) \
+            or c.get("wants_area_affordability"):
         active.append("financial")
     if c.get("policy_question"):
         active.append("policy_rag")
@@ -1815,7 +1906,9 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
             return addons.plan(agent, c, query)   # schools near an address: that lookup alone (schools pack)
         radii = {k: v for k, v in (c.get("amenity_radii_meters") or {}).items() if k != "school"}
         if radii:
-            plan.append(("filter_blocks_by_amenity_proximity", dict(towns=towns, amenity_constraints=radii)))
+            station = c.get("mrt_station") if "mrt" in radii else None
+            plan.append(("filter_blocks_by_amenity_proximity",
+                         dict(towns=towns, amenity_constraints=radii, **({"mrt_station": station} if station else {}))))
         if c.get("school_name"):
             r = (c.get("amenity_radii_meters") or {}).get("school", 1000)
             bracket = "1-2km" if re.search(r"\b1\s*[-–]\s*2\s*km\b", query, re.I) else ("1km" if r <= 1000 else "2km")
@@ -2199,7 +2292,8 @@ def _price_spatial_blocks(state: HDBCompassState, log: List[Dict[str, Any]]) -> 
     c = state.get("user_constraints", {})
     spatial = state.get("spatial_block_candidates")
     if _sql_blocks(state) is not None or not spatial or not (
-            c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or c.get("flat_types")):
+            c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or c.get("flat_types")
+            or c.get("wants_area_affordability") or re.search(r"\bresale\b", last_user_query(state), re.I)):
         return None
     runner = ToolRunner("query_resale_blocks_by_criteria")
     runner.agent = "supervisor"
@@ -2574,6 +2668,7 @@ def template_response(state: HDBCompassState) -> str:
             for s in rel.get("suggestions", []):
                 label, orig, new = plain_relaxation(s["constraint"], s["original"], s["relaxed"])
                 lines.append(f"- {label}: {orig} → {new} unlocks {s['unlocked_blocks']}")
+    lines[:0] = area_affordability_lines(state)   # the answer to "can I afford…" comes before the block list
     lines.extend(not_checked_lines(state))   # straight after the blocks, so what was not checked is read with them
     sql = state.get("sql_market_results") or {}
     lines.extend(_comparable_lines(sql))
@@ -2650,6 +2745,7 @@ def template_response(state: HDBCompassState) -> str:
             lines.append(f"- Upfront: BSD ${u['buyer_stamp_duty']:,.0f}, cash required ${u['cash_required']:,.0f}, total ${u['total_upfront']:,.0f}")
             if (u.get("cash_shortfall") or 0) > 0:
                 lines.append(f"- Cash shortfall: ${u['cash_shortfall']:,.0f}.")
+    lines.extend(flat_affordability_lines(state))
     passages = state.get("rag_policy_passages") or []
     if passages and "retrieve_hdb_policy_knowledge" in unbuilt:
         lines.append("**Policy:**")
@@ -2665,6 +2761,83 @@ def template_response(state: HDBCompassState) -> str:
     if state.get("financial_breakdown") or passages:
         lines.append(HFE_DISCLAIMER)
     return "\n".join(lines)
+
+
+def area_affordability_lines(state: HDBCompassState) -> List[str]:
+    """'Can I afford a resale near Novena MRT?': the household's ceiling and how many of the area's blocks have a
+    median price within it (intersect_node already applied it), or what is needed to work the ceiling out."""
+    c = state.get("user_constraints") or {}
+    if not c.get("wants_area_affordability") or c.get("flat_purchase"):
+        return []
+    where = (f"near {c['mrt_station']} MRT" if c.get("mrt_station")
+             else "in " + " / ".join(t.title() for t in c["towns"]) if c.get("towns") else "in this area")
+    kind = (c.get("flat_types") or [None])[0]
+    flat = f"a {kind.lower()} flat" if kind else "a flat"
+    out = [f"**Can you afford {flat} {where}?**"]
+    fin = state.get("financial_breakdown") or {}
+    a, g = (fin.get(k) or {} for k in ("calculate_maximum_affordability", "calculate_cpf_housing_grants"))
+    priced = [b["median_resale_price"] for b in (_sql_blocks(state) or []) if b.get("median_resale_price")]
+    blocks = state.get("candidate_blocks_intersection") or []
+    cap = _affordable_price(state)
+    if cap is not None:
+        out.append(f"- Your purchase ceiling, with grants, is about **${cap:,.0f}**.")
+        if blocks:
+            out.append(f"- **{len(blocks)} block(s)** {where} have a median price within it; they are listed below.")
+        elif priced:
+            out.append(f"- **None** of the blocks {where} has a median price within it: the cheapest median is "
+                       f"${min(priced):,.0f}, ${min(priced) - cap:,.0f} above your ceiling.")
+        else:
+            out.append(f"- No recent sales {where} could be compared with it.")
+        out.append("- Use **Afford?** on a block for a verdict on that flat, with its own lease and stamp duty.")
+    elif any(r.get("status") == "unsupported" for r in (a, g)):
+        out.append("- I can't work out a ceiling for these facts: the calculators don't yet model a lease that ends "
+                   "before the youngest buyer turns 95. An HDB Flat Eligibility (HFE) letter gives the exact figure.")
+    else:
+        if priced:
+            out.append(f"- Recent median prices {where} range from ${min(priced):,.0f} to ${max(priced):,.0f}.")
+        out.append("- To say which of these you can afford, I need your household facts (the form below). I'll then "
+                   "work out your price ceiling and keep only the blocks within it.")
+    return out
+
+
+def flat_affordability_lines(state: HDBCompassState) -> List[str]:
+    """'Can you afford Blk X?': the verdict, from tool results only (the block's price and its source, the affordability
+    ceiling, the instalment, the grants and the stamp duty). Nothing here is computed beyond one subtraction."""
+    fp = (state.get("user_constraints") or {}).get("flat_purchase")
+    fin = state.get("financial_breakdown") or {}
+    if not fp or not fin:
+        return []
+    price = fp["purchase_price"]
+    out = [f"**Can you afford {fp['block']}?**",
+           f"- Price used: **${price:,.0f}** ({fp['price_source']})."]
+    a, g, u = (fin.get(k) or {} for k in ("calculate_maximum_affordability", "calculate_cpf_housing_grants",
+                                           "calculate_bsd_and_upfront_outlay"))
+    if a.get("status", "ok") == "ok" and "error" not in a and a.get("max_purchase_price") is not None:
+        ceiling, gap = a["max_purchase_price"], a["max_purchase_price"] - price
+        if gap >= 0:
+            out.append(f"- Your purchase ceiling is ${ceiling:,.0f}, so this flat is **within your ceiling by ${gap:,.0f}**.")
+        else:
+            out.append(f"- Your purchase ceiling is ${ceiling:,.0f}, so this flat is **above your ceiling by ${-gap:,.0f}**.")
+        if a.get("monthly_instalment") is not None:
+            out.append(f"- Monthly instalment at the ceiling: ${a['monthly_instalment']:,.0f}.")
+    elif any(r.get("status") == "unsupported" for r in (a, g)):
+        # the calculators model only a lease that lasts until the youngest buyer is 95; for a shorter one CPF use,
+        # the loan (LTV) and grants are prorated, which they do not compute, so no ceiling is given rather than a wrong one
+        lease = fp.get("remaining_lease_years")
+        out.append(f"- I can't give a verdict for this flat: its remaining lease{f' (about {lease:g} years)' if lease else ''} "
+                   "does not last until the youngest buyer turns 95, so HDB prorates the CPF you can use, the loan and the "
+                   "grants, and I don't calculate that proration yet. Ask HDB for an HFE letter, or try a block with "
+                   "more lease left.")
+    elif state.get("clarification"):
+        out.append("- A verdict needs your household facts (see my question below); no ceiling can be stated until then.")
+    else:
+        out.append("- No purchase ceiling could be worked out from the facts given, so there is no verdict yet.")
+    if g.get("status", "ok") == "ok" and "error" not in g and g.get("total_grants") is not None:
+        out.append(f"- Housing grants you would get: ${g['total_grants']:,.0f}.")
+    if u.get("buyer_stamp_duty") is not None:
+        out.append(f"- Buyer's stamp duty on this price: ${u['buyer_stamp_duty']:,.0f}.")
+    out.append("- The ceiling excludes stamp duty, legal and valuation fees, and any cash over valuation.")
+    return out
 
 
 SYNTH_SYSTEM = (
@@ -2776,6 +2949,8 @@ def synthesis_evidence(state: HDBCompassState) -> Tuple[Dict[str, Any], str]:
             "financial_breakdown": state.get("financial_breakdown"),
             "rag_policy_passages": [] if "retrieve_hdb_policy_knowledge" in unbuilt else state.get("rag_policy_passages"),
             "location_results": state.get("location_results")}
+    if (state.get("user_constraints") or {}).get("flat_purchase"):
+        base["flat_purchase"] = state["user_constraints"]["flat_purchase"]
     if unbuilt:
         base["not_available_yet"] = [UNBUILT_NOTES[t] for t in unbuilt]
     if unavailable_tools(state):   # only then, so every other prompt stays as it was
@@ -2841,11 +3016,13 @@ def clarification_needed(state: HDBCompassState) -> Optional[Dict[str, Any]]:
     if "calculate_cpf_housing_grants" in fin:
         needed = [n for n in needed if n != "total_grants"]   # the grant calculator supplies it once its facts are known
     needed = list(dict.fromkeys(needed))
+    if not (state.get("user_constraints") or {}).get("flat_purchase"):
+        needed = [n for n in needed if n != "remaining_lease_years"]   # assumed from the buyers' ages (_assume_flat_basics)
     if not needed:
         return None
     phrases = list(dict.fromkeys(FACT_WORDS.get(n, n.replace("_", " ")) for n in needed))
     listed = phrases[0] if len(phrases) == 1 else ", ".join(phrases[:-1]) + " and " + phrases[-1]
-    return {"needed": needed, "question": f"To finish your grant and budget estimate, please tell me {listed}."}
+    return {"kind": "financial", "needed": needed, "question": f"To finish your grant and budget estimate, please tell me {listed}."}
 
 
 def user_request(state: HDBCompassState) -> str:
@@ -3480,7 +3657,7 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
         text = text.rstrip() + "\n\n" + clar["question"]
     return {"draft_response": text, "map_ui_payload": payload, "tool_call_log": log, "errors": errors,
             # drill-down chips first, then radius chips (both are whole questions, not answers to a pending question)
-            "clarification": clar, "suggestions": [] if clar else _merge_chips(ri.drilldown_suggestions(state), ri.radius_chips(c))}
+            "clarification": clar, "suggestions": [] if clar else _merge_chips(ri.drilldown_suggestions(state), ri.comparison_chips(state), ri.price_check_chips(state), ri.radius_chips(c))}
 
 
 # ---------------------------------------------------------------------------

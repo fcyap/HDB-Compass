@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import math
+import functools
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -39,11 +40,13 @@ _STREET = (r"(?:st|street|ave|avenue|rd|road|dr|drive|cres|crescent|ctrl|central
            r"vale|grove|green|garden|gdns|circle|cir|hill|pk|park|wk|ctr|centre|square|sq)")
 _STOP = (r"(?=\s*(?:[,;?!()]|\.(?:\s|$)|$|\s(?:vs\.?|versus|or|and|for|is|are|was|with|near|compared|against|in|at|"
          r"that|which|under|below|to|a|an|the|good|worth|sold|flat|flats|unit|units|price|prices|cost|fair)\b))")
-_BLK_STREET = re.compile(r"\b(?:blk|block)\s*(\d{1,4}[a-z]?\s+(?:[a-z]+\s){0,3}?" + _STREET + r"(?:\s+\d{1,3}[a-z]?)?)\b", re.I)
+# a street name may end in several street words ("Bedok North St 2", "Yishun Ring Rd"): take them all, not just the first
+_STREET_END = _STREET + r"(?:\s+" + _STREET + r")*(?:\s+\d{1,3}[a-z]?)?"
+_BLK_STREET = re.compile(r"\b(?:blk|block)\s*(\d{1,4}[a-z]?\s+(?:[a-z]+\s){0,3}?" + _STREET_END + r")\b", re.I)
 _BLK_ADDRESS = re.compile(r"\b(?:blk|block)\s*(\d{1,4}[a-z]?(?:\s+[a-z0-9']+){1,3}?)" + _STOP, re.I)
 _BARE_ADDRESS = re.compile(
     r"(?<![\w$-])(\d{1,4}[a-z]?)\s+(?!(?:room|rm|years?|yrs?|mins?|minutes|km|m|sqm|storey|bedroom)\b)"
-    r"((?:[a-z]+\s){0,3}?" + _STREET + r"(?:\s+\d{1,3}[a-z]?)?)\b", re.I)
+    r"((?:[a-z]+\s){0,3}?" + _STREET_END + r")\b", re.I)
 _POSTAL = re.compile(r"(?<![\d$,])(\d{6})(?![\d,])")
 _PLACE = re.compile(r"\b(?:near|around|close to|beside|next to|from)\s+((?:[a-z][a-z'’-]*\s){0,4}?"
                     r"(?:mrt(?:\s+station)?|lrt(?:\s+station)?|station|interchange|hawker centre|food centre|market|"
@@ -54,7 +57,10 @@ _RX = {
                r"previous(?:ly)? sold|recent sales|"
                r"transactions? (?:at|for|in)|transacted)\b",
     "assessment": r"\b(fair(?:ly)?(?: price)?|reasonable|over-?priced|under-?priced|good (?:price|deal)|worth|"
-                  r"valuation|too (?:much|high|expensive)|asking|offer(?:ed)?|is \$\s?\d)",
+                  r"valuation|too (?:much|high|expensive)|asking|offer(?:ed)?|"
+                  # "is $650k" asks about a price; "income is $9,000 a month" and "balance is $80,000" do not
+                  r"(?<!income )(?<!balance )(?<!savings )(?<!salary )(?<!debt )is \$\s?\d[\d,.]*(?![\d,.])\s*[km]?"
+                  r"(?!\s*(?:a|per|/|each)\s*(?:month|mth|mo)\b))",
     "comparison": r"\b(vs\.?|versus|compare|comparison|compared|which is better|better (?:choice|option|buy))\b|\bor\b",
     "nearby": r"\b(what(?:'s|s| is| are)?\s+(?:near(?:by)?|around|close to)|nearby (?:amenities|facilities)|"
               r"amenities|facilities|what is around|near it|around it)\b",
@@ -66,6 +72,9 @@ _RX = {
                r"rank(?:ing)? (?:the |all )?towns|towns? (?:to|should (?:i|we)) (?:buy|look|consider)|"
                r"where (?:should|can|could) (?:i|we) (?:buy|afford|look))\b",
     "search": r"\b(find|show|list|search|look(?:ing)? for|recommend|suggest|which blocks|map (?:the )?matches)\b",
+    # "can we afford Blk 231 Tampines St 21?", "is it within our budget", "do we have enough cash for it"
+    "afford": r"\b(afford\w*|can (?:i|we) (?:buy|get|manage|pay for)|within (?:my|our) (?:budget|means)|"
+              r"enough (?:money|cash|savings|funds|cpf)|(?:my|our) budget (?:for|cover))",
     # "around Blk 277", "within 300m of Toh Guan MRT", "nearby flats": a question about an area, not one block.
     "area": r"\b(around|near(?:by)?|close to|within \d+(?:\.\d+)?\s*k?m\b|vicinity|surrounding|neighbou?r(?:ing|hood)|"
             r"in the area|same (?:area|estate|street))",
@@ -83,6 +92,11 @@ _PRICE_QUESTION = re.compile(
 _AREA_RADIUS = re.compile(r"\b(?:within|in)\s+(?:a\s+)?(\d+(?:\.\d+)?)\s*(km|m)\b(?:\s+radius)?"
                           r"(?!\s+(?:of|from)\s+(?:an?\s+|the\s+)?(?:\w+\s+){0,2}?"
                           r"(?:mrt|lrt|station|hawker|food centre|supermarket|school|bus stop)s?\b)", re.I)
+# the flat's own price in an affordability message: "asking $650k", "listed at $650,000", "for $650k", "$650k for it"
+_FLAT_PRICE = re.compile(
+    r"\b(?:asking(?: price)?|listed|priced|selling|sold|offer(?:ed)?|price(?: is| of)?|costs?|going|for|at)\s+"
+    r"(?:is\s+|of\s+|at\s+|for\s+|around\s+|about\s+)?\$\s?(\d[\d,]*(?:\.\d+)?\s*[km]?)(?!\s*(?:/|per|a)\s*month)"
+    r"(?!\s*(?:in\s+)?(?:cash|cpf|savings|income|salary|a month|monthly))", re.I)
 _GENERIC_SCHOOL_WORDS = {"good", "top", "popular", "best", "reputable", "nearby", "branded", "any", "a", "the", "some",
                          "great", "elite", "famous", "decent", "nice", "local", "primary", "school", "schools", "sap"}
 
@@ -161,6 +175,11 @@ def _place_intents(q: str, addresses: List[str], has_point: bool = False) -> Dic
     out: Dict[str, Any] = {"addresses": addresses}
     out["wants_block_history"] = bool(blocks) and _has("history", q)
     out["wants_price_assessment"] = bool(blocks) and _has("assessment", q)
+    # "can we afford Blk X?": the price check supplies the flat's price and lease to the calculators
+    # (flat_purchase_facts), so the affordability answer is about that flat, not a town search
+    out["wants_flat_affordability"] = bool(blocks) and _has("afford", q)
+    if out["wants_flat_affordability"]:
+        out["wants_price_assessment"] = True
     out["wants_option_comparison"] = len(blocks) >= 2 and (_has("comparison", q) or not _has("history", q))
     out["wants_nearby_amenities"] = bool(addresses or has_point) and _has("nearby", q)
     out["wants_area_statistics"] = bool(addresses or has_point) and _has("area", q) and _has("stats", q)
@@ -170,7 +189,12 @@ def _place_intents(q: str, addresses: List[str], has_point: bool = False) -> Dic
         out["area_radius_meters"] = int(min(max(stated, 50), 3000))
         if int(stated) != out["area_radius_meters"]:
             out["radius_clamped_from"] = int(stated)
-    if out["wants_price_assessment"]:
+    if out["wants_flat_affordability"]:
+        # an affordability message also states income, CPF and cash: only an amount tied to the flat is its price
+        m = _FLAT_PRICE.search(q)
+        if m:
+            out["asking_price_sgd"] = _money(m.group(1))
+    elif out["wants_price_assessment"]:
         for m in re.finditer(r"\$\s?(\d[\d,]*(?:\.\d+)?\s*[km]?)(?!\s*(?:/|per|a)\s*month)", q, re.I):
             out["asking_price_sgd"] = _money(m.group(1))
             break
@@ -230,14 +254,15 @@ def apply_map_pin(c: Dict[str, Any], query: str, pin: Optional[Tuple[float, floa
 # (pending clarification) keeps them, since it completes that request. See supervisor._finalize_constraints.
 TURN_ONLY_KEYS = frozenset({
     "addresses", "wants_block_history", "wants_market_snapshot", "wants_town_ranking", "wants_option_comparison",
-    "wants_price_assessment", "wants_nearby_amenities", "wants_area_statistics", "asking_price_sgd",
+    "wants_price_assessment", "wants_flat_affordability", "wants_area_affordability", "wants_nearby_amenities", "wants_area_statistics", "asking_price_sgd",
     "bto_project_name", "area_radius_meters", "map_pin", "pin_radius_meters", "nearby_schools",
     "wants_group_stats", "stats_group_by", "stats_near", "stats_distance_m", "stats_bands", "stats_trend",
     "stats_lookback_years", "stats_since_year", "stats_sort", "stats_order", "stats_listings", "analysis_mode",
     "wants_data_catalog",
 })
 # Never carried from an earlier turn, not even into a reply: they are worked out afresh for every message.
-ALWAYS_FRESH_KEYS = frozenset({"clarifications", "assumptions", "extraction_source", "requested_tools", "place_options"})
+ALWAYS_FRESH_KEYS = frozenset({"clarifications", "assumptions", "extraction_source", "requested_tools", "place_options",
+                               "flat_purchase"})
 
 # Words pointing at the pin ("here", "this block") and words that could mean the pin or a place named earlier.
 _NEAR_REF = re.compile(r"\b(here|this (?:flat|block|unit|place|location|spot|area|address|one|point)|"
@@ -309,6 +334,8 @@ def resolve_place(c: Dict[str, Any], query: str, pin: Optional[Tuple[float, floa
     if named != list(c.get("addresses") or []):
         c["addresses"] = named
     earlier_place = next((a for a in earlier if a.upper() not in {n.upper() for n in named}), None)
+    if pending and pending.get("kind", "financial") == "financial" and not named:
+        return   # a reply with household facts completes the earlier request: its place and asks carry over as they were
     if pending and pending.get("kind") == "location":
         if named:
             return
@@ -566,6 +593,34 @@ def extract_group_stats(q: str, base: Dict[str, Any], addresses: List[str]) -> D
     return out
 
 
+_STATION_PHRASE = re.compile(r"((?:[a-z0-9][a-z0-9'’-]*\s+){1,4})(?:mrt|lrt)\b|((?:[a-z0-9][a-z0-9'’-]*\s+){1,4})"
+                             r"(?:station|interchange)\b", re.I)
+
+
+@functools.lru_cache(maxsize=1)
+def _station_names() -> Dict[str, str]:
+    """Station key ('NOVENA') -> display name ('Novena'), from the spatial index's rail stations."""
+    try:
+        from mcp_server.spatial_onemap_tools import get_spatial_index, station_key
+        amenities = get_spatial_index()["payload"]["amenities"]
+    except Exception:  # noqa: BLE001 — without the index no station can be named
+        return {}
+    return {station_key(a["name"]): station_key(a["name"]).title() for a in amenities
+            if str(a.get("category", "")).lower() in ("mrt", "lrt") and station_key(a["name"])}
+
+
+def named_mrt_station(query: str) -> Optional[str]:
+    """'near Novena MRT' -> 'Novena'; 'near an MRT' / 'near the station' -> None (no station is named)."""
+    names = _station_names()
+    for m in _STATION_PHRASE.finditer(query):
+        words = re.sub(r"[^A-Z0-9 ]", " ", (m.group(1) or m.group(2)).upper()).split()
+        for n in range(min(4, len(words)), 0, -1):
+            key = " ".join(words[-n:])
+            if key in names:
+                return names[key]
+    return None
+
+
 def extract_research_fields(query: str, base: Dict[str, Any]) -> Dict[str, Any]:
     """Research fields for ExtractedConstraints, given the classic regex fields in `base`."""
     q = query
@@ -592,6 +647,14 @@ def extract_research_fields(query: str, base: Dict[str, Any]) -> Dict[str, Any]:
 
     # Vague proximity: "near an MRT" with no distance gets an explicit, disclosed default.
     radii = dict(base.get("amenity_radii_meters") or {})
+    station = named_mrt_station(q)
+    if station and not (out["wants_nearby_amenities"] or out["wants_area_statistics"]):
+        # "near Novena MRT": distance to that one station, not to whichever station is nearest each block
+        out["mrt_station"] = station
+        if "mrt" not in radii:
+            radii["mrt"] = VAGUE_RADIUS_METERS
+            out["assumptions"].append(f"'Near' was taken as within {VAGUE_RADIUS_METERS} m straight-line of {station} "
+                                      f"MRT station. Say a different distance to change this.")
     if not (out["wants_nearby_amenities"] or out["wants_area_statistics"]):
         for m in re.finditer(r"\b(?:near|close to|walking distance (?:to|from)|next to|beside)\s+(?:an?\s+|the\s+)?"
                              r"(?:[a-z]+\s+){0,2}?(mrt|lrt|train station|hawker|food centre|supermarket)\b", q, re.I):
@@ -604,6 +667,10 @@ def extract_research_fields(query: str, base: Dict[str, Any]) -> Dict[str, Any]:
                     f"not a specific named station). Say a different distance to change this.")
     if radii != (base.get("amenity_radii_meters") or {}):
         out["amenity_radii_meters"] = radii
+    # "can I afford a resale near Novena MRT / in Bishan?": no one block is named, so the answer is the area's flats
+    # filtered by the household's purchase ceiling (supervisor._add_area_purchase), not a verdict on one flat
+    out["wants_area_affordability"] = (_has("afford", q) and not out.get("wants_flat_affordability")
+                                       and bool(base.get("towns") or radii or out.get("mrt_station")))
 
     # "near good schools" names no school; ask instead of matching a school containing "good".
     if generic_school_phrase(base.get("school_name")):
@@ -612,6 +679,42 @@ def extract_research_fields(query: str, base: Dict[str, Any]) -> Dict[str, Any]:
         out["amenity_radii_meters"] = radii
         out["clarifications"].append(SCHOOL_CLARIFICATION)
     return out
+
+
+# a block's own sales set its price only when there are enough of them; otherwise the nearby median does
+MIN_SAME_BLOCK_SALES = 3
+
+
+def flat_purchase_facts(c: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The price and remaining lease of the one block an affordability question names ("can we afford Blk X?"), for
+    the calculators: the stated asking price, else the block's own median of recent sales of the flat type (at least
+    MIN_SAME_BLOCK_SALES), else the median of nearby sales. None when the block or its prices cannot be found."""
+    blocks = [a for a in c.get("addresses") or [] if re.match(r"(?:blk\s+)?\d", a, re.I)]
+    if not blocks:
+        return None
+    from mcp_server.market_research_tools import assess_resale_price   # noqa: PLC0415 — keep this module light
+    flat_type = (c.get("flat_types") or [DEFAULT_FLAT_TYPE])[0]
+    try:
+        r = assess_resale_price(address=blocks[0], flat_type=flat_type, asking_price=c.get("asking_price_sgd"))
+    except Exception:   # a missing database or an invalid flat type: the calculators then ask for the price
+        return None
+    if r.get("status") not in ("ok", "insufficient_sample"):
+        return None
+    name = (r.get("location") or {}).get("name") or blocks[0]
+    same, nearby = r.get("same_block") or {}, r.get("nearby") or {}
+    window = f"{r['metadata']['window_start_month']} to {r['metadata']['window_end_month']}" if r.get("metadata") else "the last 12 months"
+    if c.get("asking_price_sgd"):
+        price, source = c["asking_price_sgd"], "the asking price you gave"
+    elif same.get("transaction_count", 0) >= MIN_SAME_BLOCK_SALES:
+        price = same["median"]
+        source = f"the median of {same['transaction_count']} {flat_type} sales at {name} ({window})"
+    elif nearby.get("median"):
+        price = nearby["median"]
+        source = f"the median of {nearby['transaction_count']} nearby {flat_type} sales within 500 m ({window})"
+    else:
+        return None
+    return {"block": name, "flat_type": flat_type, "purchase_price": float(price), "price_source": source,
+            "remaining_lease_years": r.get("remaining_lease_years")}
 
 
 def is_block_search(c: Dict[str, Any], query: str) -> bool:
@@ -877,6 +980,56 @@ def _candidates(result: Dict[str, Any]) -> str:
     return f" Did you mean: {'; '.join(names)}?" if names else ""
 
 
+def _cmp_name(o: Dict[str, Any]) -> str:
+    return (o.get("location") or {}).get("name") or o.get("address") or "?"
+
+
+def comparison_takeaway(cmp_: Dict[str, Any]) -> str:
+    """One line from the compare_resale_options output, computed in code: cheapest median, most lease left, best price
+    per sqm and closest MRT among the blocks that were resolved (price figures only among those with sales)."""
+    opts = [o for o in cmp_.get("options") or [] if o.get("status") in ("ok", "no_transactions")]
+    sold = [o for o in opts if o.get("transaction_count")]
+    parts: List[str] = []
+
+    def best(pool, key, low=True):
+        pool = [o for o in pool if isinstance(key(o), (int, float))]
+        if len(pool) < 2:
+            return None
+        return (min if low else max)(pool, key=key)
+
+    cheap = best(sold, lambda o: o.get("median_price"))
+    if cheap:
+        parts.append(f"cheapest median: {_cmp_name(cheap)} ({_m(cheap['median_price'])})")
+    lease = best(sold, lambda o: o.get("median_remaining_lease_years"), low=False)
+    if lease:
+        parts.append(f"most lease left: {_cmp_name(lease)} ({lease['median_remaining_lease_years']:.0f} yrs)")
+    ppsm = best(sold, lambda o: o.get("median_price_per_sqm"))
+    if ppsm:
+        parts.append(f"best price per sqm: {_cmp_name(ppsm)} (${ppsm['median_price_per_sqm']:,.0f})")
+    mrt = best(opts, lambda o: ((o.get("nearest") or {}).get("mrt") or {}).get("distance_meters"))
+    if mrt:
+        m = mrt["nearest"]["mrt"]
+        parts.append(f"closest MRT: {_cmp_name(mrt)} ({m['distance_meters']:.0f} m to {m['name']})")
+    if not parts:
+        return ""
+    return "**Takeaway:** " + "; ".join(parts) + "."
+
+
+def comparison_chips(state: Dict[str, Any]) -> List[Dict[str, str]]:
+    cmp_ = (state.get("sql_market_results") or {}).get("compare_resale_options")
+    if not cmp_ or "error" in cmp_:
+        return []
+    ft = cmp_.get("flat_type") or "4 ROOM"
+    sold = [o for o in cmp_.get("options") or [] if o.get("status") == "ok" and isinstance(o.get("median_price"), (int, float))]
+    chips: List[Dict[str, str]] = []
+    if sold:
+        cheapest = min(sold, key=lambda o: o["median_price"])
+        name = _cmp_name(cheapest)
+        chips.append({"label": f"Price check {name}", "text": f"Is the price fair for a {ft} at {name}?"})
+        chips.append({"label": f"Afford {name}?", "text": f"Can we afford a {ft} at {name}?"})
+    return chips
+
+
 def research_lines(state: Dict[str, Any]) -> List[str]:
     lines: List[str] = []
     sql = state.get("sql_market_results") or {}
@@ -887,8 +1040,12 @@ def research_lines(state: Dict[str, Any]) -> List[str]:
     if cmp_ and "error" not in cmp_:
         lines.append(f"**Option comparison ({cmp_['flat_type']}, {cmp_['metadata']['window_start_month']} to "
                      f"{cmp_['metadata']['window_end_month']}):**")
+        take = comparison_takeaway(cmp_)
+        if take:
+            lines.extend(["", take, ""])
         lines.append("| Option | Sales | Median price | Per sqm | Lease left | Nearest MRT | Hawker | Supermarket | Primary school |")
         lines.append("|---|---|---|---|---|---|---|---|---|")
+        no_sales = []
         for o in cmp_["options"]:
             if o["status"] not in ("ok", "no_transactions"):
                 lines.append(f"| {o['address']} | address not resolved |  |  |  |  |  |  |  |")
@@ -896,10 +1053,18 @@ def research_lines(state: Dict[str, Any]) -> List[str]:
             near = o.get("nearest") or {}
             dist = [f"{near[k]['name']} {near[k]['distance_meters']:.0f} m" if near.get(k) else "n/a"
                     for k in ("mrt", "hawker", "supermarket", "school")]
+            if not o.get("transaction_count"):
+                no_sales.append(o)
+                lines.append(f"| {o['location']['name']} | 0 sales | no {cmp_['flat_type']} sales in this window |  |  | "
+                             + " | ".join(dist) + " |")
+                continue
             lease = f"{o['median_remaining_lease_years']:.0f} yrs" if o.get("median_remaining_lease_years") else "n/a"
             ppsm = f"${o['median_price_per_sqm']:,.0f}" if o.get("median_price_per_sqm") else "n/a"
             lines.append(f"| {o['location']['name']} | {o['transaction_count']} | {_m(o.get('median_price'))} | {ppsm} | "
                          f"{lease} | " + " | ".join(dist) + " |")
+        for o in no_sales:
+            lines.append(f"- {o['location']['name']} had no {cmp_['flat_type']} sales in this window, so price and lease "
+                         f"are not compared for it; the amenity distances still apply.")
         for o in cmp_["options"]:
             if o["status"] not in ("ok", "no_transactions"):
                 lines.append(f"- '{o['address']}' could not be matched to one HDB block.{_candidates(o)}")
@@ -909,21 +1074,8 @@ def research_lines(state: Dict[str, Any]) -> List[str]:
         if assess["status"] in ("ambiguous", "not_found"):
             lines.append(f"- Price check: {assess['message']}{_candidates(assess)}")
         else:
-            n = assess.get("nearby")
-            lines.append(f"**Price check for {assess['location']['name']} ({assess['flat_type']}):**")
-            if n:
-                lines.append(f"- {n['transaction_count']} nearby sales: median {_m(n['median'])}, middle 50% "
-                             f"{_m(n['lower_quartile'])}-{_m(n['upper_quartile'])}, range {_m(n['minimum'])}-{_m(n['maximum'])}.")
-            b = assess.get("same_block")
-            if b:
-                lines.append(f"- Same block: {b['transaction_count']} sale(s), median {_m(b['median'])}.")
-            if assess.get("asking_price") and assess.get("position"):
-                where = {"below_lower_quartile": "below the middle 50% of nearby sales",
-                         "within_middle_50": "within the middle 50% of nearby sales",
-                         "above_upper_quartile": "above the middle 50% of nearby sales"}[assess["position"]]
-                lines.append(f"- Asking {_m(assess['asking_price'])} is {where} ({_pct(assess['asking_vs_nearby_median_pct'])} "
-                             f"vs the median; higher than {assess['asking_percentile']:.0f}% of them).")
-            lines.append(f"- {assess['message']} " + " ".join(assess["metadata"]["notes"]))
+            lines.extend(price_check_lines(assess))
+
 
     lines.extend(_area_lines(sql))
 
@@ -1212,6 +1364,61 @@ def stats_drill_text(r: Dict[str, Any], g: Dict[str, Any], c: Optional[Dict[str,
     else:
         return None
     return text[:1].upper() + text[1:]
+
+
+def price_check_lines(assess: Dict[str, Any]) -> List[str]:
+    """The price check for one block: a one-line verdict, then the evidence (code-written, no model)."""
+    name, flat = assess["location"]["name"], assess["flat_type"]
+    n, b, ask = assess.get("nearby"), assess.get("same_block"), assess.get("asking_price")
+    meta = assess["metadata"]
+    window = f"{meta['window_start_month']} to {meta['window_end_month']}"
+    lines = [f"**Price check for {name} ({flat}):**"]
+    if not n:
+        lines.append(f"- {assess['message']}")
+        lines.append("- " + " ".join(meta["notes"]))
+        return lines
+    rng = f"{_m(n['lower_quartile'])}-{_m(n['upper_quartile'])}"
+    if ask and assess.get("position"):
+        gap = assess.get("asking_vs_nearby_median_pct")
+        rel = "in line with" if abs(gap or 0) < 1 else f"{abs(gap):.1f}% {'above' if gap > 0 else 'below'}"
+        lines.append(f"- **Verdict: {_m(ask)} is {rel} the nearby median of {_m(n['median'])}, higher than "
+                     f"{assess['asking_percentile']:.0f}% of nearby sales.**")
+        where = {"below_lower_quartile": "below", "within_middle_50": "within",
+                 "above_upper_quartile": "above"}[assess["position"]]
+        lines.append(f"- That is {where} the middle 50% of nearby sales ({rng}).")
+    else:
+        lines.append(f"- **A fair range for a {flat} here is about {rng} (nearby median {_m(n['median'])}).**")
+        lines.append("- Share an asking price and I can say where it falls in that range.")
+    lines.append(f"- Evidence: {n['transaction_count']} nearby sales of {flat} flats within {meta_radius(meta)}, {window}; "
+                 f"range {_m(n['minimum'])}-{_m(n['maximum'])}.")
+    if b:
+        lines.append(f"- Same block: {b['transaction_count']} sale(s), median {_m(b['median'])}.")
+    own, near = assess.get("remaining_lease_years"), assess.get("nearby_median_lease_years")
+    if own is not None and near is not None and abs(own - near) >= 5:
+        shorter = own < near
+        lines.append(f"- Lease: this block has about {own:.0f} years left versus {near:.0f} for the typical nearby sale, so expect "
+                     f"{'a lower' if shorter else 'a higher'} price than the nearby range suggests.")
+    elif own is not None:
+        lines.append(f"- Lease: about {own:.0f} years left" + (f" (nearby sales average {near:.0f})." if near is not None else "."))
+    if assess["status"] == "insufficient_sample":
+        lines.append("- Only a few nearby sales match, so treat this as limited evidence.")
+    lines.append("- Floor level, condition and facing move prices; this is not an HDB valuation.")
+    return lines
+
+
+def meta_radius(meta: Dict[str, Any]) -> str:
+    m = re.search(r"within (\d+) m", " ".join(meta.get("notes") or []))
+    return f"{m.group(1)} m" if m else "500 m"
+
+
+def price_check_chips(state: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Follow-ups after a price check on one block: affordability and the block's own sales."""
+    a = (state.get("sql_market_results") or {}).get("assess_resale_price")
+    if not isinstance(a, dict) or not a.get("location") or a.get("status") not in ("ok", "insufficient_sample", "no_matches"):
+        return []
+    name, flat = a["location"]["name"], a["flat_type"]
+    return [{"label": "Can we afford it?", "text": f"Can we afford a {flat} at {name}?"},
+            {"label": "Past sales", "text": f"What did {flat} flats at {name} sell for recently?"}]
 
 
 def drilldown_suggestions(state: Dict[str, Any]) -> List[Dict[str, str]]:
