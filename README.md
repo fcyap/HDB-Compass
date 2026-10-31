@@ -10,6 +10,205 @@
 
 ---
 
+## System Architecture
+
+A high-level map of how a question travels through HDB-Compass: from the chat, through the multi-agent graph, to the tools and data behind each answer. Details of every contract are in [`docs/INTERFACES.md`](docs/INTERFACES.md).
+
+### 1. System overview
+
+```mermaid
+flowchart LR
+    User(["👤 Home buyer"])
+
+    subgraph FE["Frontend · React + Vite · frontend/"]
+        Chat["Chat card<br/>(AgentChat, mascot)"]
+        Map["Interactive map<br/>(MapLibre GL)"]
+    end
+
+    subgraph BE["Backend · FastAPI · backend/main.py"]
+        WS["WebSocket /ws?session=…<br/>streams each agent step"]
+        Sessions[("Per-session memory<br/>last state → follow-ups")]
+        REST["REST /api/spatial/*<br/>/api/model/status · /health"]
+    end
+
+    subgraph AG["Multi-agent system · LangGraph · agents/"]
+        AGraph["Variant C graph<br/>Supervisor + 4 specialists<br/>(see diagram 2)"]
+        Registry["Tool registry<br/>agents/tool_registry.py<br/>validate · mock/real · log"]
+        LLM["LLM gateway agents/llm.py<br/>ollama · vllm · groq · openai · none"]
+    end
+
+    subgraph TOOLS["Tools · mcp_server/ (23 = 12 core + 11 add-on)"]
+        MCP["FastMCP server<br/>mcp_server/server.py<br/>exposes all 23 tools"]
+        T["Market · Spatial · Financial · Policy tools<br/>(see diagram 3)"]
+    end
+
+    subgraph DATA["Data"]
+        Duck[("DuckDB resale transactions<br/>data.gov.sg")]
+        Spatial[("SVY21 KD-tree index<br/>blocks · MRT/LRT · hawkers ·<br/>supermarkets · schools · OneMap")]
+        BTO[("BTO launch annexes<br/>data/bto/*.csv")]
+        Policy[("Policy store<br/>BM25 + dense + cross-encoder")]
+    end
+
+    User --> Chat
+    User --> Map
+    Chat <-->|"question / streamed answer"| WS
+    Map <-->|"pins, buffers, markers"| WS
+    Map --> REST
+    WS <--> Sessions
+    WS --> AGraph
+    AGraph --> Registry --> T
+    AGraph -.->|"extraction, tool choice,<br/>opening sentence"| LLM
+    MCP --- T
+    T --> Duck
+    T --> Spatial
+    T --> BTO
+    T --> Policy
+```
+
+### 2. Agent graph (Variant C: Supervisor + 4 specialists + auditor)
+
+Every chat message runs this LangGraph state machine (`agents/arch_3_specialist_5agent.py`, nodes in `agents/supervisor.py`). Decisions marked *code* are deterministic; the model reads the message, picks tool calls inside each specialist and writes the opening sentence, and code checks what it writes.
+
+```mermaid
+flowchart TD
+    Start(["User message<br/>+ map pin + previous turn"]) --> Guard
+
+    Guard["Input guardrail<br/>Member 5 hook · pass-through until delivered"]
+    Guard -->|"blocked"| Final
+    Guard -->|"ok"| Extract
+
+    Extract["Extract constraints<br/>model reads the message (typed schema)<br/>code reads money facts, intents, map pin,<br/>merges follow-up answers"]
+    Extract --> Route
+
+    Route{"Supervisor router<br/>(code: decide_routing)"}
+    Route -->|"nothing to run:<br/>ask the user"| Synth
+    Route -->|"parallel fan-out (Send)"| M & S & F & P
+
+    M["Market & Valuation agent<br/>market_sql"]
+    S["Geospatial & Commute agent<br/>spatial"]
+    F["Financial & Grant agent<br/>financial"]
+    P["Policy RAG agent<br/>policy_rag"]
+
+    M & S & F & P --> Join
+
+    Join["Intersect candidates<br/>(code: price ∩ distance ∩ budget)"]
+    Join --> Relax{"No block meets<br/>every limit?"}
+    Relax -->|"yes"| Sweep["Constraint relaxation<br/>sensitivity sweep (E2)"]
+    Relax -->|"no"| Synth
+    Sweep --> Synth
+
+    Synth["Synthesize answer<br/>code writes the facts · model writes the opening<br/>(checked) · follow-up question if facts missing"]
+    Synth --> Audit
+
+    Audit{"Runtime auditor<br/>Member 5 hook · pass-through until delivered"}
+    Audit -->|"rejected: rewrite<br/>(≤ 2 retries)"| Synth
+    Audit -->|"passed"| Final
+
+    Final(["Finalize → answer + map payload<br/>streamed to the chat and map"])
+```
+
+**Inside each specialist:** a ReAct tool loop offered **only the tools this question needs** (`TASK_TOOLS` gating), with a deterministic plan as fallback when the model makes no valid call. Results become evidence only if the plan called for them (`requested_outputs`), and every call is logged (`ToolCallRecord`) for Tool F1.
+
+**Follow-ups:** when facts are missing (money facts, which place, which school), the answer ends with one question; the backend keeps the session's last state, so the reply completes the original request.
+
+### 3. Agents and the tools they can use
+
+All tools are called through the tool registry (argument validation, mock/real switch, call logging) and are also exposed to any MCP client by the FastMCP server. **Core** tools are the proposal's 12; **add-on** tools come from the packs in `agents/addons/` (`research`, `schools`) and are offered to the app and Variant C (switch: `addons.offer_in`, see `docs/INTERFACES.md` §8).
+
+```mermaid
+flowchart LR
+    Sup(["Supervisor"])
+
+    subgraph MKT["Market & Valuation agent · market_sql"]
+        direction TB
+        m1["query_resale_blocks_by_criteria"]
+        m2["compute_town_price_timeseries"]
+        m3["query_comparable_resale_transactions"]
+        m4["compare_bto_launch_vs_resale"]
+        a1["get_market_snapshot ➕"]
+        a2["rank_towns_by_value ➕"]
+        a3["get_block_transaction_history ➕"]
+        a4["assess_resale_price ➕"]
+        a5["compare_resale_options ➕"]
+        a6["find_resale_blocks_near ➕"]
+        a7["get_area_resale_statistics ➕"]
+        a8["get_area_price_trend ➕"]
+    end
+
+    subgraph SPA["Geospatial & Commute agent · spatial"]
+        direction TB
+        s1["filter_blocks_by_amenity_proximity"]
+        s2["verify_primary_school_distance"]
+        s3["compute_dual_transit_commute"]
+        s4["sync_interactive_map_ui"]
+        b1["resolve_location ➕"]
+        b2["get_nearby_amenities ➕"]
+        b3["find_primary_schools_near_address ➕"]
+    end
+
+    subgraph FIN["Financial & Grant agent · financial"]
+        direction TB
+        f1["calculate_cpf_housing_grants"]
+        f2["calculate_maximum_affordability"]
+        f3["calculate_bsd_and_upfront_outlay"]
+    end
+
+    subgraph POL["Policy RAG agent · policy_rag"]
+        direction TB
+        p1["retrieve_hdb_policy_knowledge"]
+    end
+
+    Sup --> MKT & SPA & FIN & POL
+
+    MKT --> Duck[("DuckDB resale<br/>transactions")]
+    m4 --> BTO[("BTO launch<br/>annexes")]
+    SPA --> Idx[("SVY21 spatial index<br/>+ OneMap")]
+    a6 & a7 & a8 --> Idx
+    FIN --> Rules[("CPF / HDB grant<br/>& loan rules (code)")]
+    POL --> Store[("Policy store<br/>6 HDB policy docs")]
+```
+
+➕ = add-on tool. Owners: market and financial tools Member 1, spatial tools Member 2, policy RAG Member 3, orchestration Member 4, guardrail and auditor Member 5.
+
+| Tool | Agent | What it answers |
+|---|---|---|
+| `query_resale_blocks_by_criteria` | market_sql | Blocks with recent sales matching town, flat type, budget and lease |
+| `compute_town_price_timeseries` | market_sql | Town price trends over N years |
+| `query_comparable_resale_transactions` | market_sql | Comparable sales near given coordinates |
+| `compare_bto_launch_vs_resale` | market_sql | A named BTO launch's prices against nearby resale |
+| `get_market_snapshot` ➕ | market_sql | How the resale market stands now (by town and flat type) |
+| `rank_towns_by_value` ➕ | market_sql | Cheapest / best-value towns for a flat type |
+| `get_block_transaction_history` ➕ | market_sql | A block's (or an area's) past sales |
+| `assess_resale_price` ➕ | market_sql | Whether an asking price is in line with nearby sales |
+| `compare_resale_options` ➕ | market_sql | Two or more named blocks side by side |
+| `find_resale_blocks_near` ➕ | market_sql | Blocks around a place, each with its median |
+| `get_area_resale_statistics` ➕ | market_sql | Price distribution around a place |
+| `get_area_price_trend` ➕ | market_sql | How prices around a place changed |
+| `filter_blocks_by_amenity_proximity` | spatial | Blocks within X m of MRT, hawker, supermarket… |
+| `verify_primary_school_distance` | spatial | Blocks within 1 km / 1–2 km of a named primary school |
+| `compute_dual_transit_commute` | spatial | Commute estimate to two workplaces (town-level) |
+| `sync_interactive_map_ui` | spatial | Map markers, buffers and viewport |
+| `resolve_location` ➕ | spatial | Address, postal code or named place → coordinates |
+| `get_nearby_amenities` ➕ | spatial | What is near a place |
+| `find_primary_schools_near_address` ➕ | spatial | Primary schools near a home address |
+| `calculate_cpf_housing_grants` | financial | EHG, Family and Proximity grants |
+| `calculate_maximum_affordability` | financial | Maximum budget (MSR/LTV, CPF, cash) |
+| `calculate_bsd_and_upfront_outlay` | financial | Stamp duty and upfront cash needed |
+| `retrieve_hdb_policy_knowledge` | policy_rag | HDB rules (MOP, eligibility, Prime/Plus, EIP…) with sources |
+
+### 4. Architecture variants (Experiment 1)
+
+The same tools and model are compared in three designs; the app runs Variant C.
+
+| Variant | Graph | Who picks tools |
+|---|---|---|
+| A · Monolith (`arch_1_monolith.py`) | one agent → finalize | one model with all core tools |
+| B · Coarse (`arch_2_coarse.py`) | extract → route → data agent / policy agent → synthesize | a data agent (market, spatial, financial tools) and a policy agent; the writer reconciles results |
+| C · Specialist (`arch_3_specialist_5agent.py`) | diagram 2 | Supervisor routes to 4 specialists, code joins and checks results, auditor reviews |
+
+---
+
+
 ## Member 2 Ownership & Deliverables (Categories B & E)
 
 As specified in the **HDB-Compass Project Proposal** (Pages 8, 13, and 14):
