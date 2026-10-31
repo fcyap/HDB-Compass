@@ -18,7 +18,12 @@
 # (ControlMaster auto, ControlPath ~/.ssh/hdb-cluster.sock, ControlPersist 8h) and this script only reuses it:
 # every ssh call uses BatchMode=yes, so a closed session stops the run with a message instead of a password prompt.
 # KEEP_JOB=1 leaves the GPU job running for a following run (the next run reuses it; the last one must not set it).
+# The job's id is kept in evaluation/results/cluster_job.txt (gitignored) until it is cancelled: a later run that
+# cannot reach the cluster prints the exact  scancel <id>  to run after logging in, and one that can reuses the job.
 # Rows whose model calls could not reach the server are marked model_unreachable and rerun on the next resume.
+# Model calls wait at most LLM_TIMEOUT_S=90 s with LLM_MAX_RETRIES=1 (set either to override): the slowest healthy
+# row on record took 92 s for all its calls together. A lost server is caught before each row by the runner's quick
+# check instead, which stops the run (exit code 3) and with it this script, so no later tag waits on a dead tunnel.
 set -uo pipefail
 TAGS="${1:?usage: run_live_eval.sh TAG[,TAG...] [VARIANTS] [--tool-check]}"
 VARIANTS="${2:-A,B,C}"
@@ -31,25 +36,54 @@ if [[ -z "${CLUSTER_LOGIN:-}" && -f .env ]]; then
   CLUSTER_LOGIN="$(grep -E '^CLUSTER_LOGIN=' .env | tail -1 | cut -d= -f2-)"
 fi
 LOGIN="${CLUSTER_LOGIN:?Set CLUSTER_LOGIN=<your-cluster-id>@<cluster-address> in .env}"
+# The GPU job an earlier run of this script started or reused and did not cancel (KEEP_JOB, or a lost session)
+JOB_FILE="${CLUSTER_JOB_FILE:-$ROOT/evaluation/results/cluster_job.txt}"
+KEPT="$(cat "$JOB_FILE" 2>/dev/null || true)"
+# Printed whenever the cluster cannot be reached before the recorded job is reused or cancelled
+kept_job_hint() {
+  [[ -n "$KEPT" ]] || return 0
+  echo "GPU job $KEPT from an earlier run may still be running: after logging in, run  scancel $KEPT"
+  echo "(or run this script again once logged in: it reuses the job, then cancels it)"
+}
 ssh -o BatchMode=yes -S "$SOCK" -O check "$LOGIN" 2>/dev/null \
-  || { echo "No shared session at $SOCK: on the VPN, log in with  ssh $LOGIN  in your terminal, then run again."; exit 1; }
+  || { echo "No shared session at $SOCK: on the VPN, log in with  ssh $LOGIN  in your terminal, then run again."
+       kept_job_hint; exit 1; }
 SSH=(ssh -o BatchMode=yes -S "$SOCK" "$LOGIN")
 export LLM_PROFILE=vllm
 export CLUSTER_BATCH=1   # tunnel.sh: fail instead of asking for a password
+export LLM_TIMEOUT_S="${LLM_TIMEOUT_S:-90}" LLM_MAX_RETRIES="${LLM_MAX_RETRIES:-1}"
 
-JOB="$("${SSH[@]}" 'squeue --me -h -n hdb-vllm -o %i | head -1')"
-if [[ -z "$JOB" ]]; then
-  JOB="$("${SSH[@]}" 'rm -f ~/vllm_endpoint.txt; sbatch --parsable ~/hdb-cluster/serve_vllm.sbatch')"
-  echo "submitted job $JOB"
+# The session can pass the check above and still be dead (the VPN dropped a moment ago and the shared login has
+# not noticed yet), so a failed listing also names the recorded job
+RUNNING="$("${SSH[@]}" 'squeue --me -h -n hdb-vllm -o %i')" \
+  || { echo "STEP_FAILED could not list the GPU jobs (VPN or session lost? log in with  ssh $LOGIN  again)"
+       kept_job_hint; exit 1; }
+if [[ -n "$KEPT" ]] && grep -qx "$KEPT" <<< "$RUNNING"; then
+  JOB="$KEPT"
+  echo "using job $JOB left running by an earlier run"
 else
-  echo "using running job $JOB"
+  [[ -n "$KEPT" ]] && echo "job $KEPT from an earlier run has ended"
+  rm -f "$JOB_FILE"
+  JOB="$(head -1 <<< "$RUNNING")"
+  if [[ -z "$JOB" ]]; then
+    JOB="$("${SSH[@]}" 'rm -f ~/vllm_endpoint.txt; sbatch --parsable ~/hdb-cluster/serve_vllm.sbatch')"
+    JOB="${JOB%%;*}"   # --parsable prints id;cluster on a multi-cluster setup
+    echo "submitted job $JOB"
+  else
+    echo "using running job $JOB"
+  fi
 fi
+[[ "$JOB" =~ ^[0-9]+$ ]] || { echo "STEP_FAILED no job id from the cluster: $JOB"; exit 1; }
+mkdir -p "$(dirname "$JOB_FILE")" && echo "$JOB" > "$JOB_FILE"   # removed again once the job is cancelled
 cleanup() {
   bash cluster/tunnel.sh --close >/dev/null 2>&1 || true
   if [[ -n "${KEEP_JOB:-}" ]]; then
-    echo "left job $JOB running (KEEP_JOB) for the next run"
+    echo "left job $JOB running (KEEP_JOB) for the next run; cancel it later with: scancel $JOB"
+  elif "${SSH[@]}" "scancel $JOB"; then
+    rm -f "$JOB_FILE"
+    echo "cancelled job $JOB"
   else
-    "${SSH[@]}" "scancel $JOB" && echo "cancelled job $JOB"
+    echo "Could not cancel GPU job $JOB (session closed?). Log in with  ssh $LOGIN  and run: scancel $JOB"
   fi
 }
 trap cleanup EXIT
@@ -81,5 +115,7 @@ fi
 for TAG in ${TAGS//,/ }; do
   .venv/bin/python evaluation/run_category_e_prelim.py ${DATASET:+--dataset "$DATASET"} --tag "$TAG" --variants "$VARIANTS" 2>&1 \
     | grep -E "^\[|already done|ERROR|UNREACHABLE|Traceback|^variant|^[ABC] "
+  # exit code 3: the model server stopped answering; the next tag would only find the same dead tunnel
+  [[ "${PIPESTATUS[0]}" == 3 ]] && { echo "STEP_FAILED $TAG: the model server stopped answering"; exit 1; }
   echo "RUN_DONE $TAG"
 done
