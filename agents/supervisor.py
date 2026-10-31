@@ -3336,6 +3336,18 @@ def place_clarification(state: HDBCompassState) -> Optional[Dict[str, Any]]:
     return {"kind": kind, "needed": [], "question": questions[0]}
 
 
+def _merge_chips(*groups: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Suggestion chips from several sources, in order, without repeating a question."""
+    out, seen = [], set()
+    for group in groups:
+        for chip in group or []:
+            key = (chip.get("text") or chip.get("label") or "").strip().lower()
+            if key and key not in seen:
+                seen.add(key)
+                out.append(chip)
+    return out
+
+
 def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     if state.get("nearby_school_results") is not None:
         text, payload = present_school_result(state["nearby_school_results"])
@@ -3449,7 +3461,8 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     if clar and clar["question"] not in text:
         text = text.rstrip() + "\n\n" + clar["question"]
     return {"draft_response": text, "map_ui_payload": payload, "tool_call_log": log, "errors": errors,
-            "clarification": clar, "suggestions": ri.drilldown_suggestions(state) if not clar else []}
+            # drill-down chips first, then radius chips (both are whole questions, not answers to a pending question)
+            "clarification": clar, "suggestions": [] if clar else _merge_chips(ri.drilldown_suggestions(state), ri.radius_chips(c))}
 
 
 # ---------------------------------------------------------------------------

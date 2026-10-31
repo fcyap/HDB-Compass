@@ -349,7 +349,7 @@ async def websocket_endpoint(websocket: WebSocket):
             query_text = message.get("query", "").strip()
             pinned_lat = message.get("lat")
             pinned_lng = message.get("lng")
-            radius = float(message.get("radius_meters", 1000.0))
+            radius = float(message.get("radius_meters", 500.0))
 
             if not query_text and pinned_lat is None:
                 continue
@@ -400,7 +400,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             if node_output.get("clarification"):
                                 current_clarification = chip_clarification(node_output["clarification"])
                             elif node_output.get("suggestions"):
-                                # drill-down follow-ups are whole questions, not answers to one: they travel in the same
+                                # drill-down and radius chips are whole questions, not answers to one: they travel in the same
                                 # chip field but are no pending clarification, so a click takes the fast path
                                 current_clarification = chip_clarification({"kind": "drilldown", "question": None,
                                                                             "options": node_output["suggestions"]})

@@ -59,6 +59,7 @@ class HDBCompassState(TypedDict, total=False):
     suggestions: Optional[List[Dict[str, str]]]      # drill-down follow-up questions [{label, text}]; NOT a pending clarification
     clarification: Optional[Dict[str, Any]]          # {"needed": [calculator fields], "question": str}
     policy_no_match: Optional[bool]                  # the policy search found no passage that really matches (supervisor.POLICY_SCORE_FLOOR)
+    suggestions: Optional[List[Dict[str, str]]]      # radius chips ({label, text}) for a pin/area answer; not a pending question
     menu_followup: Optional[Dict[str, Any]]          # the answer to a menu choice, set by initial_state (agents/scope.py)
     prior_constraints: Optional[Dict[str, Any]]
     pending_clarification: Optional[Dict[str, Any]]

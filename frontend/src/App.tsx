@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { SplitScreenLayout } from './components/SplitScreenLayout';
 import { AgentChat, ChatMessage, LogMessage, ModelInfo } from './components/AgentChat';
-import { InteractiveMap, MapViewport, FACILITY_RADIUS_METERS } from './components/InteractiveMap';
+import { InteractiveMap, MapViewport, loadSavedRadius } from './components/InteractiveMap';
 
 // One id per page load: the backend keeps this page's conversation under it, so a dropped WebSocket that reconnects
 // does not lose a pending follow-up question. It is deliberately not stored: a reload (which empties the chat on
@@ -36,6 +36,12 @@ export function App() {
   const currentMsgIdRef = useRef<string | null>(null);
   // The user's last map click; sent with each question so "here" / "this block" resolve to it.
   const pinnedRef = useRef<{ lat: number; lng: number } | null>(null);
+  // Radius set on the map (default 500 m, remembered in this browser); sent with each question as radius_meters.
+  const [radiusMeters, setRadiusMeters] = useState<number>(loadSavedRadius);
+  const handleRadiusChange = useCallback((meters: number) => {
+    setRadiusMeters(meters);
+    try { window.localStorage.setItem('hdb-compass-radius-m', String(meters)); } catch (e) { /* storage unavailable */ }
+  }, []);
   const handleMapClick = useCallback((lat: number, lng: number) => {
     pinnedRef.current = { lat, lng };
   }, []);
@@ -255,7 +261,7 @@ export function App() {
       JSON.stringify({
         type: 'RUN_AGENT',
         query: queryText,
-        radius_meters: FACILITY_RADIUS_METERS,
+        radius_meters: radiusMeters,
         ...(pinnedRef.current ? { lat: pinnedRef.current.lat, lng: pinnedRef.current.lng } : {}),
       })
     );
@@ -306,6 +312,8 @@ export function App() {
           selectedBlockHighlight={selectedBlockHighlight}
           clearTrigger={clearTrigger}
           onDrillQuestion={handleSendQuery}
+          radiusMeters={radiusMeters}
+          onRadiusChange={handleRadiusChange}
         />
       }
     />

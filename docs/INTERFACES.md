@@ -431,3 +431,18 @@ click is answered as a fresh question on the fast path.
 **Tests.** `tests/test_analysis_questions.py` (rule shapes, analysis mode with a fake model, negatives, the chip walk);
 the tool's figures are checked against independent SQL. `evaluation/category_a_queries.json` seeds Category A
 questions whose ground truth comes from independent SQL (`evaluation/build_category_a.py`).
+
+## 12. Map pin and radius (Member 1)
+
+The page sends `radius_meters` (default 500, set by the radius control on the map, 100-3000 m, remembered in the
+browser) with each chat message, next to the pin's `lat`/`lng`. The backend puts it in `map_state["radius_meters"]`.
+Precedence for a question about the pin ("what's near here?", "prices around this block"): a distance stated in the
+text ("within 300m") > the map control's radius > the default (500 m for "around", 1 km for nearby amenities when no
+pin radius is sent). Values outside 50-3000 m (area) are clamped and the answer says so. Answers state the radius and,
+when it came from the map, say "within N m of your pin (set on the map)". The pin's border is drawn by the page on its
+own `pin-radius-*` layers (the agent's `agent-buffer-*` layers are unchanged).
+
+Radius chips: an area-statistics or nearby-amenities answer about one place carries `state["suggestions"]`
+(`[{"label": "Within 200 m", "text": "What are resale prices within 200m of <place>?"}]`, the current radius left out).
+The websocket sends them as `clarification = {"kind": "drilldown", "question": null, "options": [...]}` (after any drill-down chips, §11), but they are
+not a pending question: `state["clarification"]` stays empty, so a click is answered as a fresh question on the fast path.

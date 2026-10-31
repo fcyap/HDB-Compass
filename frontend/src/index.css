@@ -1567,3 +1567,34 @@ html, body, #root {
 }
 .option-chip:hover:not(:disabled) { background: #008F8A; color: #fff; }
 .option-chip:disabled { opacity: 0.5; cursor: default; }
+
+/* Pin radius control: presets and slider, bottom-left of the visible map above the cursor readout */
+.radius-control {
+  position: absolute;
+  bottom: 48px;
+  left: calc(var(--map-left-inset) + 4px);
+  z-index: 25;
+  width: min(280px, calc(100% - var(--map-left-inset) - 16px));
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 2px 10px rgba(7, 62, 64, 0.12);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.radius-control-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+.radius-control-head strong { color: #008F8A; font-size: 0.8rem; }
+.radius-presets { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.radius-preset {
+  padding: 3px 9px;
+  border-radius: 9999px;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.radius-preset.active { background: #008F8A; border-color: #008F8A; color: #fff; }
+.radius-preset:focus-visible, .radius-slider:focus-visible { outline: 2px solid #008F8A; outline-offset: 2px; }
+.radius-slider { width: 100%; accent-color: #008F8A; }
