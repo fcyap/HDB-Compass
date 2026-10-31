@@ -103,7 +103,7 @@ def _start_tracing() -> None:
           flush=True)
 
 
-app.add_event_handler("startup", _start_tracing)
+app.router.add_event_handler("startup", _start_tracing)
 
 app.add_middleware(
     CORSMiddleware,
