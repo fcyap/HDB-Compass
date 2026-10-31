@@ -1811,6 +1811,11 @@ def _apply_map_pin(c: Dict[str, Any], query: str, state: HDBCompassState, prior:
     ri.resolve_place(c, query, pin, earlier, pending, radius_meters=map_state.get("radius_meters"))
 
 
+def _station_key(name: Any) -> str:
+    """'Novena MRT Station', 'NOVENA' and 'novena mrt' are the same station."""
+    return " ".join(re.sub(r"\b(?:mrt|lrt|station)\b|[^a-z0-9]+", " ", str(name or "").lower()).split())
+
+
 def _verify_extraction(c: Dict[str, Any], query: str, errors: List[str], from_model: bool = True) -> None:
     """Drop extracted facts the user did not actually supply."""
     comp = c.get("comparable_resale")
@@ -1824,6 +1829,14 @@ def _verify_extraction(c: Dict[str, Any], query: str, errors: List[str], from_mo
         if invented:
             c["towns"] = [t for t in c["towns"] if t in stated]
             errors.append(f"extract_constraints: towns not named in the message were dropped: {invented}")
+    if from_model and c.get("mrt_station") is not None:
+        # "within 400m of an MRT station" in Ang Mo Kio names no station: a model that fills in the town's station
+        # (or "not specified") would measure every block to that one station. Kept only when code reads the same
+        # named station in the user's words ("near Novena MRT").
+        said = ri.named_mrt_station(query)   # the station index's own spelling
+        if str(c["mrt_station"]).strip() and (not said or _station_key(said) != _station_key(c["mrt_station"])):
+            errors.append(f"extract_constraints: MRT station not named in the message was dropped: {c['mrt_station']!r}")
+        c["mrt_station"] = said
     if from_model and c.get("nearby_schools") and school_location_request(query) is None:
         # a school lookup around an address replaces the whole search (decide_routing), so it needs the same words
         # from the user that the code path reads ("schools near Blk 123 Bishan St 12"), not "flats near a school"
@@ -2246,8 +2259,16 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
                         errors.append(f"{label}: rejected unverified coordinates for {name}")
                         msgs.append(ToolMessage(content=json.dumps({"error": rejection}), tool_call_id=tc["id"]))
                         continue
-                    if name == "compute_dual_transit_commute" and not args.get("candidate_blocks"):
-                        args = {**args, "candidate_blocks": _commute_candidates(outputs)}
+                    if name == "compute_dual_transit_commute":
+                        # the blocks to time are the ones the other spatial filters kept: a model that passes a town
+                        # ("QUEENSTOWN") or blocks it made up ("BLK 123") would time nothing, and the empty result
+                        # would empty the whole search
+                        kept = _commute_candidates(outputs)
+                        given = args.get("candidate_blocks") or []
+                        if not given or (kept and not set(given) & set(kept)):
+                            if given:
+                                errors.append(f"{label}: commute blocks that no filter kept were replaced by the filtered blocks")
+                            args = {**args, "candidate_blocks": kept}
                     guarded = guard_financial_args(name, args, c, outputs, runners)   # may run the grant calculator (code)
                     runners[name].source = "model"
                     try:
