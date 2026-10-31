@@ -145,6 +145,7 @@ export function App() {
                             financial_summary: payload.financial_summary,
                             policy_notes: payload.policy_notes,
                             school_lookup: payload.school_lookup,
+                            clarification: payload.clarification,
                           },
                         }
                       : m

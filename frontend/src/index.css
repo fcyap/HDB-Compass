@@ -1526,3 +1526,44 @@ html, body, #root {
   color: var(--text-muted);
   pointer-events: none;
 }
+
+/* Markdown answer text (react-markdown): compact, teal accents, tables scroll sideways */
+.agent-summary-text { font-size: 0.82rem; color: var(--text-muted); line-height: 1.45; overflow-wrap: anywhere; }
+.agent-summary-text > :first-child { margin-top: 0; }
+.agent-summary-text > :last-child { margin-bottom: 0; }
+.agent-summary-text p { margin: 0 0 6px; }
+.agent-summary-text ul, .agent-summary-text ol { margin: 0 0 6px; padding-left: 18px; }
+.agent-summary-text ul ul, .agent-summary-text ol ol, .agent-summary-text ul ol, .agent-summary-text ol ul { margin: 2px 0; }
+.agent-summary-text li { margin-bottom: 3px; }
+.agent-summary-text li > p { margin: 0; }
+.agent-summary-text li::marker { color: #008F8A; }
+.agent-summary-text strong { color: var(--text-main, inherit); font-weight: 650; }
+.agent-summary-text em { font-style: italic; }
+.agent-summary-text a { color: #008F8A; text-decoration: underline; }
+.agent-summary-text h1, .agent-summary-text h2, .agent-summary-text h3, .agent-summary-text h4 {
+  color: #008F8A; margin: 8px 0 4px; line-height: 1.25; font-weight: 650;
+}
+.agent-summary-text h1 { font-size: 1rem; }
+.agent-summary-text h2 { font-size: 0.94rem; }
+.agent-summary-text h3 { font-size: 0.88rem; }
+.agent-summary-text h4 { font-size: 0.86rem; }
+.agent-summary-text code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76rem;
+  background: rgba(0, 143, 138, 0.1); border-radius: 4px; padding: 1px 4px;
+}
+.agent-summary-text pre { overflow-x: auto; margin: 0 0 6px; }
+.agent-summary-text pre code { background: none; padding: 0; }
+.agent-summary-text table {
+  display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 0 0 6px; font-size: 0.76rem;
+}
+.agent-summary-text th, .agent-summary-text td { border: 1px solid rgba(0, 143, 138, 0.3); padding: 3px 6px; white-space: nowrap; text-align: left; }
+.agent-summary-text th { background: rgba(0, 143, 138, 0.1); color: #008F8A; }
+
+/* Option chips under an answer that asks a follow-up question */
+.option-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.option-chip {
+  font-size: 0.76rem; padding: 4px 10px; border-radius: 999px; cursor: pointer;
+  border: 1px solid #008F8A; background: rgba(0, 143, 138, 0.08); color: #008F8A;
+}
+.option-chip:hover:not(:disabled) { background: #008F8A; color: #fff; }
+.option-chip:disabled { opacity: 0.5; cursor: default; }

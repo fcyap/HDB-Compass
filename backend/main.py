@@ -41,6 +41,14 @@ def remember(session_id: Optional[str], state: Optional[Dict[str, Any]]) -> None
         SESSIONS.popitem(last=False)
 
 
+def chip_clarification(c: Dict[str, Any]) -> Dict[str, Any]:
+    """The open follow-up question as the page shows it: kind, question and options that each carry a label to show and
+    the text to send when clicked (menu options have both; location options only a label, which is also what to send)."""
+    options = [{"label": str(o.get("label") or o.get("text") or ""), "text": str(o.get("text") or o.get("label") or "")}
+               for o in c.get("options") or [] if isinstance(o, dict)]
+    return {"kind": c.get("kind"), "question": c.get("question"), "options": [o for o in options if o["label"]]}
+
+
 def log_chat_turn(question: str, state: Dict[str, Any], seconds: float, turn: int) -> None:
     """One JSON line per chat turn, so a wrong answer seen in the UI can be traced: what was asked, how it was read,
     where it was routed, which tools ran and whether they failed, internal errors, and the answer. Never breaks a chat."""
@@ -375,6 +383,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     current_summary = None
                     current_qualifying: List[str] = []
                     current_school_lookup = None
+                    current_clarification = None   # kind, question, options of an open follow-up, for the answer chips
                     active_agents: List[str] = []
 
                     final_state: Optional[Dict[str, Any]] = None
@@ -387,6 +396,9 @@ async def websocket_endpoint(websocket: WebSocket):
                                 node_output = {}      # a pass-through stand-in returns nothing; still show its step
                             if not isinstance(node_output, dict):
                                 continue
+
+                            if node_output.get("clarification"):
+                                current_clarification = chip_clarification(node_output["clarification"])
 
                             node_errors = node_output.get("errors") or []
                             if any(
@@ -487,6 +499,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 "summary": current_summary,
                                 "qualifying_blocks": current_qualifying if current_qualifying else None,
                                 "school_lookup": current_school_lookup,
+                                "clarification": current_clarification,
                             })
                             await asyncio.sleep(0.04)
                     if final_state is not None:

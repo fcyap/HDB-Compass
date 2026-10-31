@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   Compass,
   ChevronDown,
@@ -35,6 +37,7 @@ export interface StructuredAgentData {
   market_summary?: any;
   financial_summary?: any;
   policy_notes?: string[];
+  clarification?: { kind?: string; question?: string; options: { label: string; text: string }[] };
   school_lookup?: { status: string; schools: { name: string; distance_meters: number }[] };
 }
 
@@ -292,29 +295,30 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                 {/* Formatted Content */}
                 <div className="agent-card-body">
                   <div className="agent-summary-text">
-                    {msg.text.split('\n').map((line, idx) => {
-                      if (line.startsWith('**') && line.endsWith('**')) {
-                        return (
-                          <h4 key={idx} className="summary-heading">
-                            {line.replace(/\*\*/g, '')}
-                          </h4>
-                        );
-                      }
-                      if (line.startsWith('- **') || line.startsWith('* ')) {
-                        return (
-                          <p key={idx} className="summary-bullet">
-                            <span className="bullet-dot">•</span>
-                            <span>{line.replace(/^[-*]\s*/, '').replace(/\*\*/g, '')}</span>
-                          </p>
-                        );
-                      }
-                      return line.trim() ? (
-                        <p key={idx} className="summary-paragraph">
-                          {line}
-                        </p>
-                      ) : null;
-                    })}
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{ a: (props) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}
+                    >
+                      {msg.text}
+                    </ReactMarkdown>
                   </div>
+
+                  {/* Option chips for an open follow-up question (latest answer only): a click sends the option's text */}
+                  {msg.id === messages[messages.length - 1]?.id && (msg.structuredData?.clarification?.options?.length ?? 0) > 0 && (
+                    <div className="option-chips">
+                      {msg.structuredData!.clarification!.options.map((o) => (
+                        <button
+                          key={o.label}
+                          type="button"
+                          className="option-chip"
+                          disabled={agentStatus !== 'READY'}
+                          onClick={() => handleQuickPrompt(o.text)}
+                        >
+                          {o.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   {/* Candidate HDB Blocks Cards */}
                   {msg.structuredData?.qualifying_blocks && msg.structuredData.qualifying_blocks.length > 0 && (
