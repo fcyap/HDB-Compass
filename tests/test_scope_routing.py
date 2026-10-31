@@ -11,12 +11,17 @@ from pathlib import Path
 import pytest
 
 os.environ["LLM_PROFILE"] = "none"
-os.environ.setdefault("HDB_ADDONS", "off")
 
 from agents import arch_3_specialist_5agent as variant_c  # noqa: E402
 from agents import supervisor as sv  # noqa: E402
 
 EVAL = Path(__file__).resolve().parent.parent / "evaluation"
+
+
+@pytest.fixture(autouse=True)
+def _no_addons(monkeypatch):
+    """The benchmark runner turns the add-on tools off; so does this table (it checks routes, not research output)."""
+    monkeypatch.setenv("HDB_ADDONS", "off")
 
 
 def _queries(name):
