@@ -73,15 +73,15 @@ Every chat message runs this LangGraph state machine (`agents/arch_3_specialist_
 flowchart TD
     Start(["User message<br/>+ map pin + previous turn"]) --> Guard
 
-    Guard["Input guardrail<br/>Member 5 hook · pass-through until delivered"]
-    Guard -->|"blocked"| Final
+    Guard["Input guardrail<br/>Member 5 hook · until delivered: code scope check<br/>(greeting, off-topic, condo, forecast, prompt injection)"]
+    Guard -->|"out of scope:<br/>fixed reply, no model"| Final
     Guard -->|"ok"| Extract
 
     Extract["Extract constraints<br/>model reads the message (typed schema)<br/>code reads money facts, intents, map pin,<br/>merges follow-up answers"]
     Extract --> Route
 
     Route{"Supervisor router<br/>(code: decide_routing)"}
-    Route -->|"nothing to run:<br/>ask the user"| Synth
+    Route -->|"vague or unsupported:<br/>menu / one follow-up question /<br/>plain 'can't do that yet'"| Synth
     Route -->|"parallel fan-out (Send)"| M & S & F & P
 
     M["Market & Valuation agent<br/>market_sql"]
@@ -109,7 +109,9 @@ flowchart TD
 
 **Inside each specialist:** a ReAct tool loop offered **only the tools this question needs** (`TASK_TOOLS` gating), with a deterministic plan as fallback when the model makes no valid call. Results become evidence only if the plan called for them (`requested_outputs`), and every call is logged (`ToolCallRecord`) for Tool F1.
 
-**Follow-ups:** when facts are missing (money facts, which place, which school), the answer ends with one question; the backend keeps the session's last state, so the reply completes the original request.
+**Follow-ups:** when facts are missing (money facts, which place, which school) or the question is vague, the answer ends with one question or a numbered menu, shown as clickable chips; the backend keeps the session's last state, so the reply completes the original request.
+
+**Never an unrelated answer:** nothing defaults to the policy search any more. Policy passages are shown only for a question that names an HDB rule and only when the search finds a real match (keyword-score floor); price questions get town medians, and unsupported asks (a single-destination commute, price forecasts) are declined plainly. `tests/test_scope_routing.py` locks this, and locks the Category C/E benchmark routes. Details: `docs/INTERFACES.md` §10.
 
 ### 3. Agents and the tools they can use
 
