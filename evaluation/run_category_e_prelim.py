@@ -45,6 +45,7 @@ RESULTS_DIR = PROJECT_ROOT / "evaluation" / "results"
 QUERIES = PROJECT_ROOT / "evaluation" / "category_e_queries.json"
 VARIED = PROJECT_ROOT / "evaluation" / "category_e_varied.json"   # the same questions in four user styles (vary_category_e.py)
 CATEGORY_C = PROJECT_ROOT / "evaluation" / "category_c_queries.json"   # Member 3's 15 policy questions (read only)
+CATEGORY_B = PROJECT_ROOT / "evaluation" / "category_b_queries.json"   # Member 2's 15 spatial & commute questions
 EXTRA = PROJECT_ROOT / "evaluation" / "category_e_extra.json"     # new towns, school, upfront cost (ground_category_e_extra.py)
 
 
@@ -53,6 +54,8 @@ def dataset_path(name: str) -> Path:
         return QUERIES
     if name == "varied":
         return VARIED
+    if name in ("category_b", "b"):
+        return CATEGORY_B
     if name == "category_c":
         return CATEGORY_C
     if name == "extra":

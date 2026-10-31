@@ -1,0 +1,1011 @@
+[
+  {
+    "id": "B1-01",
+    "category": "B",
+    "sub_use_case": "B1",
+    "query": "We want to apply for Primary 1 ballot priority. Find 4-room resale flats in Pasir Ris under $600,000 with at least 60 years of lease left, within 1km of Meridian Primary School. Show the matching blocks on the map.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "PASIR RIS"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 600000.0,
+      "min_remaining_lease_years": 60,
+      "school_name": "Meridian Primary School"
+    },
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "PASIR RIS"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 600000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "verify_primary_school_distance",
+        "required_params": {
+          "school_name": "Meridian Primary School",
+          "bracket": "1km"
+        }
+      }
+    ],
+    "expected_behaviour": "Identify 4-room resale blocks in Pasir Ris under $600k with >=60 years lease within 1km of Meridian Primary School and sync them to the map.",
+    "ground_truth_facts": {
+      "price_query_blocks": 30,
+      "spatial_candidate_blocks": 172,
+      "matching_block_keys": [
+        "774 PASIR RIS ST 71",
+        "639 PASIR RIS DR 1",
+        "745 PASIR RIS ST 71",
+        "637 PASIR RIS DR 1",
+        "773 PASIR RIS ST 71",
+        "747 PASIR RIS ST 71",
+        "760 PASIR RIS ST 71",
+        "767 PASIR RIS ST 71"
+      ]
+    }
+  },
+  {
+    "id": "B1-02",
+    "category": "B",
+    "sub_use_case": "B1",
+    "query": "We are looking for 4-room resale flats in Bishan under $800,000 with at least 55 years of lease left, within 1km of Ai Tong School for P1 registration. Which blocks qualify? Please display them on the map.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "BISHAN"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 800000.0,
+      "min_remaining_lease_years": 55,
+      "school_name": "Ai Tong School"
+    },
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "BISHAN"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 800000.0,
+          "min_lease_years": 55
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "verify_primary_school_distance",
+        "required_params": {
+          "school_name": "Ai Tong School",
+          "bracket": "1km"
+        }
+      }
+    ],
+    "expected_behaviour": "Filter 4-room blocks in Bishan under $800k with >=55 years lease within 1km of Ai Tong School and map the candidate blocks.",
+    "ground_truth_facts": {
+      "price_query_blocks": 57,
+      "spatial_candidate_blocks": 60,
+      "matching_block_keys": [
+        "407 SIN MING AVE",
+        "406 SIN MING AVE",
+        "449 SIN MING AVE",
+        "448 BRIGHT HILL DR",
+        "441 SIN MING AVE"
+      ]
+    }
+  },
+  {
+    "id": "B1-03",
+    "category": "B",
+    "sub_use_case": "B1",
+    "query": "Find 4-room resale flats in Serangoon under $600,000 with at least 60 years of lease left, within 1km of Rosyth School. Map the candidate blocks.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "SERANGOON"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 600000.0,
+      "min_remaining_lease_years": 60,
+      "school_name": "Rosyth School"
+    },
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "SERANGOON"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 600000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "verify_primary_school_distance",
+        "required_params": {
+          "school_name": "Rosyth School",
+          "bracket": "1km"
+        }
+      }
+    ],
+    "expected_behaviour": "Retrieve 4-room blocks in Serangoon under $600k with >=60 years lease within 1km of Rosyth School and map them.",
+    "ground_truth_facts": {
+      "price_query_blocks": 4,
+      "spatial_candidate_blocks": 244,
+      "matching_block_keys": [
+        "147 SERANGOON NTH AVE 1",
+        "143 SERANGOON NTH AVE 1",
+        "536 SERANGOON NTH AVE 4",
+        "535A SERANGOON NTH AVE 4"
+      ]
+    }
+  },
+  {
+    "id": "B1-04",
+    "category": "B",
+    "sub_use_case": "B1",
+    "query": "Which 5-room resale flats in Clementi under $900,000 with at least 50 years of lease left are within 1km of Nan Hua Primary School? Map all qualifying blocks.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "CLEMENTI"
+      ],
+      "flat_types": [
+        "5 ROOM"
+      ],
+      "max_budget_sgd": 900000.0,
+      "min_remaining_lease_years": 50,
+      "school_name": "Nan Hua Primary School"
+    },
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "CLEMENTI"
+          ],
+          "flat_types": [
+            "5 ROOM"
+          ],
+          "max_price": 900000.0,
+          "min_lease_years": 50
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "verify_primary_school_distance",
+        "required_params": {
+          "school_name": "Nan Hua Primary School",
+          "bracket": "1km"
+        }
+      }
+    ],
+    "expected_behaviour": "Locate 5-room Clementi blocks under $900k with >=50 years lease within 1km of Nan Hua Primary School and sync to the interactive map.",
+    "ground_truth_facts": {
+      "price_query_blocks": 15,
+      "spatial_candidate_blocks": 130,
+      "matching_block_keys": [
+        "336 CLEMENTI AVE 2",
+        "204 CLEMENTI AVE 6",
+        "101 CLEMENTI ST 14",
+        "372 CLEMENTI AVE 4",
+        "103 CLEMENTI ST 14"
+      ]
+    }
+  },
+  {
+    "id": "B1-05",
+    "category": "B",
+    "sub_use_case": "B1",
+    "query": "Find 4-room resale flats in Toa Payoh under $750,000 with at least 50 years of lease left, within 1km of Pei Chun Public School. Please map the results.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "TOA PAYOH"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 750000.0,
+      "min_remaining_lease_years": 50,
+      "school_name": "Pei Chun Public School"
+    },
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "TOA PAYOH"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 750000.0,
+          "min_lease_years": 50
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "verify_primary_school_distance",
+        "required_params": {
+          "school_name": "Pei Chun Public School",
+          "bracket": "1km"
+        }
+      }
+    ],
+    "expected_behaviour": "Find 4-room resale flats in Toa Payoh under $750k with >=50 years lease within 1km of Pei Chun Public School and present them on the map.",
+    "ground_truth_facts": {
+      "price_query_blocks": 19,
+      "spatial_candidate_blocks": 271,
+      "matching_block_keys": [
+        "219 LOR 8 TOA PAYOH",
+        "62 LOR 4 TOA PAYOH",
+        "247 KIM KEAT LINK",
+        "249 KIM KEAT LINK",
+        "250 KIM KEAT LINK",
+        "246 KIM KEAT LINK",
+        "259 KIM KEAT AVE",
+        "248 KIM KEAT LINK",
+        "11 LOR 8 TOA PAYOH"
+      ]
+    }
+  },
+  {
+    "id": "B2-01",
+    "category": "B",
+    "sub_use_case": "B2",
+    "query": "Find 4-room resale flats in Ang Mo Kio under $750,000 with at least 65 years of lease left, within 400m of an MRT station and within 500m of a hawker centre. Put them on the map.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "ANG MO KIO"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 750000.0,
+      "min_remaining_lease_years": 65,
+      "amenity_radii_meters": {
+        "mrt": 400,
+        "hawker": 500
+      }
+    },
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "ANG MO KIO"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 750000.0,
+          "min_lease_years": 65
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "ANG MO KIO"
+          ],
+          "amenity_constraints": {
+            "mrt": 400,
+            "hawker": 500
+          }
+        }
+      }
+    ],
+    "expected_behaviour": "Filter 4-room blocks in Ang Mo Kio under $750k with >=65 years lease satisfying both <=400m MRT and <=500m hawker centre proximity constraints.",
+    "ground_truth_facts": {
+      "price_query_blocks": 7,
+      "spatial_candidate_blocks": 153,
+      "matching_block_keys": [
+        "627 ANG MO KIO AVE 9",
+        "102 ANG MO KIO AVE 3"
+      ]
+    }
+  },
+  {
+    "id": "B2-02",
+    "category": "B",
+    "sub_use_case": "B2",
+    "query": "Show me 4-room resale flats in Bishan under $800,000 with at least 60 years of lease left, within 400m of an MRT station and within 300m of a supermarket. Map the matching blocks.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "BISHAN"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 800000.0,
+      "min_remaining_lease_years": 60,
+      "amenity_radii_meters": {
+        "mrt": 400,
+        "supermarket": 300
+      }
+    },
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "BISHAN"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 800000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "BISHAN"
+          ],
+          "amenity_constraints": {
+            "mrt": 400,
+            "supermarket": 300
+          }
+        }
+      }
+    ],
+    "expected_behaviour": "Filter 4-room blocks in Bishan under $800k with >=60 years lease within 400m of MRT and 300m of a supermarket, then sync to map.",
+    "ground_truth_facts": {
+      "price_query_blocks": 32,
+      "spatial_candidate_blocks": 42,
+      "matching_block_keys": [
+        "185 BISHAN ST 13",
+        "184 BISHAN ST 13"
+      ]
+    }
+  },
+  {
+    "id": "B2-03",
+    "category": "B",
+    "sub_use_case": "B2",
+    "query": "We want convenience in Bedok. Find 4-room resale flats under $700,000 with at least 60 years of lease left, within 400m of an MRT station and within 500m of a hawker centre. Display them on the map.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "BEDOK"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 700000.0,
+      "min_remaining_lease_years": 60,
+      "amenity_radii_meters": {
+        "mrt": 400,
+        "hawker": 500
+      }
+    },
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "BEDOK"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 700000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "BEDOK"
+          ],
+          "amenity_constraints": {
+            "mrt": 400,
+            "hawker": 500
+          }
+        }
+      }
+    ],
+    "expected_behaviour": "Retrieve 4-room Bedok blocks under $700k with >=60 years lease within 400m of an MRT and 500m of a hawker centre.",
+    "ground_truth_facts": {
+      "price_query_blocks": 13,
+      "spatial_candidate_blocks": 70,
+      "matching_block_keys": [
+        "151 BEDOK RESERVOIR RD",
+        "613B BEDOK RESERVOIR RD"
+      ]
+    }
+  },
+  {
+    "id": "B2-04",
+    "category": "B",
+    "sub_use_case": "B2",
+    "query": "Find 4-room resale flats in Tampines under $650,000 with at least 60 years of lease left, within 400m of an MRT station and within 300m of a supermarket. Show the results on the map.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "TAMPINES"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 650000.0,
+      "min_remaining_lease_years": 60,
+      "amenity_radii_meters": {
+        "mrt": 400,
+        "supermarket": 300
+      }
+    },
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "TAMPINES"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 650000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "TAMPINES"
+          ],
+          "amenity_constraints": {
+            "mrt": 400,
+            "supermarket": 300
+          }
+        }
+      }
+    ],
+    "expected_behaviour": "Filter 4-room Tampines blocks under $650k with >=60 years lease satisfying MRT <=400m and supermarket <=300m.",
+    "ground_truth_facts": {
+      "price_query_blocks": 100,
+      "spatial_candidate_blocks": 113,
+      "matching_block_keys": [
+        "458 TAMPINES ST 42",
+        "459 TAMPINES ST 42",
+        "235 TAMPINES ST 21"
+      ]
+    }
+  },
+  {
+    "id": "B2-05",
+    "category": "B",
+    "sub_use_case": "B2",
+    "query": "Which 4-room resale flats in Clementi under $800,000 with at least 50 years of lease left are within 400m of an MRT station and within 500m of a hawker centre? Map the matches.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "CLEMENTI"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 800000.0,
+      "min_remaining_lease_years": 50,
+      "amenity_radii_meters": {
+        "mrt": 400,
+        "hawker": 500
+      }
+    },
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "CLEMENTI"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 800000.0,
+          "min_lease_years": 50
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "CLEMENTI"
+          ],
+          "amenity_constraints": {
+            "mrt": 400,
+            "hawker": 500
+          }
+        }
+      }
+    ],
+    "expected_behaviour": "Locate 4-room Clementi blocks under $800k with >=50 years lease within 400m of both an MRT station and a hawker centre.",
+    "ground_truth_facts": {
+      "price_query_blocks": 54,
+      "spatial_candidate_blocks": 45,
+      "matching_block_keys": [
+        "329 CLEMENTI AVE 2",
+        "328 CLEMENTI AVE 2",
+        "432 CLEMENTI AVE 3",
+        "333 CLEMENTI AVE 2",
+        "428 CLEMENTI AVE 3",
+        "332 CLEMENTI AVE 2",
+        "324 CLEMENTI AVE 5"
+      ]
+    }
+  },
+  {
+    "id": "B3-01",
+    "category": "B",
+    "sub_use_case": "B3",
+    "query": "I work at Raffles Place and work at one-north. Find 4-room resale flats in Queenstown under $950,000 with at least 60 years of lease left within 400m of an MRT station, with commute under 25 minutes to each workplace. Map the qualifying blocks.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "QUEENSTOWN"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 950000.0,
+      "min_remaining_lease_years": 60,
+      "amenity_radii_meters": {
+        "mrt": 400
+      },
+      "work_destinations": [
+        "Raffles Place",
+        "one-north"
+      ],
+      "max_commute_minutes": 25
+    },
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "QUEENSTOWN"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 950000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "QUEENSTOWN"
+          ],
+          "amenity_constraints": {
+            "mrt": 400
+          }
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "compute_dual_transit_commute",
+        "required_params": {
+          "work_dest_a": "Raffles Place",
+          "work_dest_b": "one-north",
+          "max_minutes": 25
+        }
+      }
+    ],
+    "expected_behaviour": "Filter 4-room Queenstown blocks under $950k with >=60 years lease near MRT whose public transit commute to both Raffles Place and one-north is under 25 minutes.",
+    "ground_truth_facts": {
+      "price_query_blocks": 25,
+      "spatial_candidate_blocks": 104,
+      "matching_block_keys": [
+        "56 STRATHMORE AVE",
+        "51 STRATHMORE AVE",
+        "55 STRATHMORE AVE",
+        "143 MEI LING ST",
+        "50 STRATHMORE AVE",
+        "52 STRATHMORE AVE",
+        "58 STRATHMORE AVE",
+        "184 STIRLING RD",
+        "89 TANGLIN HALT RD",
+        "83 STRATHMORE AVE"
+      ]
+    }
+  },
+  {
+    "id": "B3-02",
+    "category": "B",
+    "sub_use_case": "B3",
+    "query": "We work at Marina Bay and work at Orchard. Find 4-room resale flats in Toa Payoh under $850,000 with at least 60 years of lease left within 400m of an MRT station, with commute under 25 minutes to each workplace. Show them on the map.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "TOA PAYOH"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 850000.0,
+      "min_remaining_lease_years": 60,
+      "amenity_radii_meters": {
+        "mrt": 400
+      },
+      "work_destinations": [
+        "Marina Bay",
+        "Orchard"
+      ],
+      "max_commute_minutes": 25
+    },
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "TOA PAYOH"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 850000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "TOA PAYOH"
+          ],
+          "amenity_constraints": {
+            "mrt": 400
+          }
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "compute_dual_transit_commute",
+        "required_params": {
+          "work_dest_a": "Marina Bay",
+          "work_dest_b": "Orchard",
+          "max_minutes": 25
+        }
+      }
+    ],
+    "expected_behaviour": "Evaluate 4-room Toa Payoh blocks under $850k with >=60 years lease near MRT and verify joint transit commute under 25 minutes to Marina Bay and Orchard.",
+    "ground_truth_facts": {
+      "price_query_blocks": 20,
+      "spatial_candidate_blocks": 217,
+      "matching_block_keys": [
+        "62 LOR 4 TOA PAYOH",
+        "11 LOR 8 TOA PAYOH",
+        "10 LOR 7 TOA PAYOH",
+        "86 LOR 2 TOA PAYOH",
+        "146 POTONG PASIR AVE 1",
+        "82 LOR 4 TOA PAYOH",
+        "79E TOA PAYOH CTRL",
+        "82B LOR 4 TOA PAYOH"
+      ]
+    }
+  },
+  {
+    "id": "B3-03",
+    "category": "B",
+    "sub_use_case": "B3",
+    "query": "We work at Raffles Place and work at Jurong East. Find 4-room resale flats in Bukit Merah under $850,000 with at least 60 years of lease left within 400m of an MRT station, with commute under 30 minutes to both offices. Map the candidates.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "BUKIT MERAH"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 850000.0,
+      "min_remaining_lease_years": 60,
+      "amenity_radii_meters": {
+        "mrt": 400
+      },
+      "work_destinations": [
+        "Raffles Place",
+        "Jurong East"
+      ],
+      "max_commute_minutes": 30
+    },
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "BUKIT MERAH"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 850000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "BUKIT MERAH"
+          ],
+          "amenity_constraints": {
+            "mrt": 400
+          }
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "compute_dual_transit_commute",
+        "required_params": {
+          "work_dest_a": "Raffles Place",
+          "work_dest_b": "Jurong East",
+          "max_minutes": 30
+        }
+      }
+    ],
+    "expected_behaviour": "Identify 4-room Bukit Merah blocks under $850k with >=60 years lease near MRT with transit commute under 30 minutes to both Raffles Place and Jurong East.",
+    "ground_truth_facts": {
+      "price_query_blocks": 22,
+      "spatial_candidate_blocks": 102,
+      "matching_block_keys": [
+        "14 TELOK BLANGAH CRES",
+        "86 TELOK BLANGAH HTS"
+      ]
+    }
+  },
+  {
+    "id": "B3-04",
+    "category": "B",
+    "sub_use_case": "B3",
+    "query": "We work at City Hall and work at Bugis. Which 4-room resale flats in Kallang/Whampoa under $850,000 with at least 60 years of lease left are within 400m of an MRT station with commute under 25 minutes to both locations? Map the matches.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "KALLANG/WHAMPOA"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 850000.0,
+      "min_remaining_lease_years": 60,
+      "amenity_radii_meters": {
+        "mrt": 400
+      },
+      "work_destinations": [
+        "City Hall",
+        "Bugis"
+      ],
+      "max_commute_minutes": 25
+    },
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "KALLANG/WHAMPOA"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 850000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "KALLANG/WHAMPOA"
+          ],
+          "amenity_constraints": {
+            "mrt": 400
+          }
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "compute_dual_transit_commute",
+        "required_params": {
+          "work_dest_a": "City Hall",
+          "work_dest_b": "Bugis",
+          "max_minutes": 25
+        }
+      }
+    ],
+    "expected_behaviour": "Retrieve 4-room Kallang/Whampoa blocks under $850k with >=60 years lease near MRT with under 25 minutes transit commute to City Hall and Bugis.",
+    "ground_truth_facts": {
+      "price_query_blocks": 20,
+      "spatial_candidate_blocks": 143,
+      "matching_block_keys": [
+        "104 WHAMPOA DR",
+        "37 CAMBRIDGE RD"
+      ]
+    }
+  },
+  {
+    "id": "B3-05",
+    "category": "B",
+    "sub_use_case": "B3",
+    "query": "I work at Raffles Place and work at one-north. Find 4-room resale flats in Bishan under $850,000 with at least 60 years of lease left within 400m of an MRT station, with commute under 35 minutes to both destinations. Map the qualifying blocks.",
+    "initial_map_state": null,
+    "stated_constraints": {
+      "towns": [
+        "BISHAN"
+      ],
+      "flat_types": [
+        "4 ROOM"
+      ],
+      "max_budget_sgd": 850000.0,
+      "min_remaining_lease_years": 60,
+      "amenity_radii_meters": {
+        "mrt": 400
+      },
+      "work_destinations": [
+        "Raffles Place",
+        "one-north"
+      ],
+      "max_commute_minutes": 35
+    },
+    "expected_agents": [
+      "market_sql",
+      "spatial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_blocks_by_criteria",
+        "required_params": {
+          "towns": [
+            "BISHAN"
+          ],
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "max_price": 850000.0,
+          "min_lease_years": 60
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "filter_blocks_by_amenity_proximity",
+        "required_params": {
+          "towns": [
+            "BISHAN"
+          ],
+          "amenity_constraints": {
+            "mrt": 400
+          }
+        }
+      },
+      {
+        "agent": "spatial",
+        "tool": "compute_dual_transit_commute",
+        "required_params": {
+          "work_dest_a": "Raffles Place",
+          "work_dest_b": "one-north",
+          "max_minutes": 35
+        }
+      }
+    ],
+    "expected_behaviour": "Filter 4-room Bishan blocks under $850k with >=60 years lease near MRT with transit commute under 35 minutes to Raffles Place and one-north.",
+    "ground_truth_facts": {
+      "price_query_blocks": 53,
+      "spatial_candidate_blocks": 73,
+      "matching_block_keys": [
+        "185 BISHAN ST 13",
+        "184 BISHAN ST 13",
+        "501 BISHAN ST 11",
+        "193 BISHAN ST 13",
+        "503 BISHAN ST 11"
+      ]
+    }
+  }
+]

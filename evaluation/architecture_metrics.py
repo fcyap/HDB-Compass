@@ -219,9 +219,9 @@ def relaxation_offered(state: Dict[str, Any]) -> bool:
 
 
 def task_success(sub_use_case: str, csr: Dict[str, Any], fabricated: int, relaxed: bool) -> bool:
-    """E1: at least one block recommended, every recommended block satisfies every constraint, none fabricated.
+    """E1/B: at least one block recommended, every recommended block satisfies every constraint, none fabricated.
     E2 (no block can satisfy everything): nothing presented as a match, and a concrete trade-off offered."""
-    if sub_use_case == "E1":
+    if sub_use_case == "E1" or str(sub_use_case).startswith("B"):
         return csr["recommended"] > 0 and csr["satisfying"] == csr["recommended"] and fabricated == 0
     if sub_use_case == "E2":
         return csr["recommended"] == 0 and relaxed
@@ -416,6 +416,14 @@ def ground_truth_scores(item: Dict[str, Any], state: Dict[str, Any]) -> Optional
                 out["success"] = out["success"] and out["upfront_correct"]
     elif sub == "E1":
         out["success"] = out["blocks_exact"]
+    elif str(sub).startswith("B"):
+        # Category B: spatial & commute queries (B1 school boundary, B2 multi-amenity, B3 dual commute).
+        # Responses list up to LISTED_BLOCKS (20) matching blocks; candidates in the draft must be subsets of truth
+        # and non-empty when matching blocks exist.
+        if len(true) <= 20:
+            out["success"] = (rec == true)
+        else:
+            out["success"] = (len(rec) >= min(20, len(true)) and rec <= true)
     elif sub == "E2":
         best = truth.get("best_single_change") or {}
         out["best_change_mentioned"] = mentions_amount(draft, best.get("relaxed"), tol=0.5)

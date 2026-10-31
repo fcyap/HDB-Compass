@@ -37,6 +37,8 @@ EVAL_DIR = PROJECT_ROOT / "evaluation"
 DATASETS: Dict[str, Dict[str, Any]] = {
     "category_a": {"name": "hdb-compass-category-a", "file": "category_a_queries.json", "addons": "app",
                    "description": "Category A: historical resale statistics questions with ground-truth figures"},
+    "category_b": {"name": "hdb-compass-category-b", "file": "category_b_queries.json", "addons": "off",
+                   "description": "Category B: spatial reasoning, primary school boundaries, multi-amenity, and dual-transit commute"},
     "category_c": {"name": "hdb-compass-category-c", "file": "category_c_queries.json", "addons": "off",
                    "description": "Category C: HDB policy questions scored on key clauses"},
     "category_e": {"name": "hdb-compass-category-e", "file": "category_e_queries.json", "addons": "off",

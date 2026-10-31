@@ -300,15 +300,21 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
             radii.setdefault(AMENITY_WORDS[m.group(3).lower()], int(dist))
 
     school = None
-    m = re.search(r"(?:of|near|to)\s+((?:[A-Z][a-zA-Z'’]+\s){1,4}(?:Primary School|School|Primary|High))", q, re.I)
-    if not m:
-        m = re.match(r"\s*([A-Za-z'’ -]+?\b(?:Primary School|School|Primary|High))\s*(?=[12]\s*(?:[-–]\s*2\s*)?km\b|within\b|[.?!]|$)", q, re.I)
-    if m:
+    for m in re.finditer(r"(?:of|near|to)\s+((?:[A-Z][a-zA-Z'’]+\s){1,4}(?:Primary School|School|Primary|High))", q, re.I):
         candidate = m.group(1).strip()
-        if candidate.lower() not in {"primary school", "school", "moe primary school"}:
+        if candidate.lower() not in {"primary school", "school", "moe primary school"} and not candidate.lower().endswith("for primary"):
             school = candidate
             radius = 2000 if re.search(r"\b(?:1\s*[-–]\s*)?2\s*km\b|\b2000\s*m\b", q, re.I) else 1000
             radii.setdefault("school", radius)
+            break
+    if not school:
+        m = re.match(r"\s*([A-Za-z'’ -]+?\b(?:Primary School|School|Primary|High))\s*(?=[12]\s*(?:[-–]\s*2\s*)?km\b|within\b|[.?!]|$)", q, re.I)
+        if m:
+            candidate = m.group(1).strip()
+            if candidate.lower() not in {"primary school", "school", "moe primary school"} and not candidate.lower().endswith("for primary"):
+                school = candidate
+                radius = 2000 if re.search(r"\b(?:1\s*[-–]\s*)?2\s*km\b|\b2000\s*m\b", q, re.I) else 1000
+                radii.setdefault("school", radius)
 
     own = statements(q, own=True)
     income = stated_income(own, is_couple(q))
