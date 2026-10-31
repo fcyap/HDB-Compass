@@ -1,0 +1,384 @@
+[
+  {
+    "id": "A1-01",
+    "category": "A",
+    "sub_use_case": "A1-0",
+    "query": "What are the historical statistics of HDBs sold near MRT stations?",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_statistics",
+        "required_params": {
+          "group_by": [
+            "distance_band"
+          ],
+          "near": "mrt",
+          "lookback_years": 10,
+          "include_trend": true
+        }
+      }
+    ],
+    "ground_truth_facts": {
+      "snapshot_id": "d888eb158ece963898a0",
+      "min_sales_per_group": 10,
+      "period": "2017-01..2026-09",
+      "groups": [
+        {
+          "label": "0-200 m",
+          "count": 10693,
+          "median_price": 515000.0
+        },
+        {
+          "label": "200-500 m",
+          "count": 65309,
+          "median_price": 525000.0
+        },
+        {
+          "label": "500-1,000 m",
+          "count": 103487,
+          "median_price": 492000.0
+        },
+        {
+          "label": ">1,000 m",
+          "count": 39543,
+          "median_price": 488000.0
+        }
+      ]
+    }
+  },
+  {
+    "id": "A1-02",
+    "category": "A",
+    "sub_use_case": "A1-0",
+    "query": "How do resale prices compare for flats near MRT vs far from MRT?",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_statistics",
+        "required_params": {
+          "group_by": [
+            "distance_band"
+          ],
+          "near": "mrt"
+        }
+      }
+    ],
+    "ground_truth_facts": {
+      "snapshot_id": "d888eb158ece963898a0",
+      "min_sales_per_group": 10,
+      "period": "2025-10..2026-09",
+      "groups": [
+        {
+          "label": "0-200 m",
+          "count": 1014,
+          "median_price": 630000.0
+        },
+        {
+          "label": "200-500 m",
+          "count": 6524,
+          "median_price": 650000.0
+        },
+        {
+          "label": "500-1,000 m",
+          "count": 10690,
+          "median_price": 620000.0
+        },
+        {
+          "label": ">1,000 m",
+          "count": 3956,
+          "median_price": 620000.0
+        }
+      ]
+    }
+  },
+  {
+    "id": "A1-03",
+    "category": "A",
+    "sub_use_case": "A1-0",
+    "query": "Resale prices near hawker centres",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_statistics",
+        "required_params": {
+          "group_by": [
+            "distance_band"
+          ],
+          "near": "hawker"
+        }
+      }
+    ],
+    "ground_truth_facts": {
+      "snapshot_id": "d888eb158ece963898a0",
+      "min_sales_per_group": 10,
+      "period": "2025-10..2026-09",
+      "groups": [
+        {
+          "label": "0-200 m",
+          "count": 1151,
+          "median_price": 528000.0
+        },
+        {
+          "label": "200-500 m",
+          "count": 3488,
+          "median_price": 550000.0
+        },
+        {
+          "label": "500-1,000 m",
+          "count": 3150,
+          "median_price": 622250.0
+        },
+        {
+          "label": ">1,000 m",
+          "count": 14395,
+          "median_price": 636888.0
+        }
+      ]
+    }
+  },
+  {
+    "id": "A1-04",
+    "category": "A",
+    "sub_use_case": "A1-0",
+    "query": "Resale prices within 300m of an MRT",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_statistics",
+        "required_params": {
+          "group_by": [
+            "distance_band"
+          ],
+          "near": "mrt",
+          "bands": [
+            300
+          ]
+        }
+      }
+    ],
+    "ground_truth_facts": {
+      "snapshot_id": "d888eb158ece963898a0",
+      "min_sales_per_group": 10,
+      "period": "2025-10..2026-09",
+      "groups": [
+        {
+          "label": "0-300 m",
+          "count": 2658,
+          "median_price": 650000.0
+        },
+        {
+          "label": ">300 m",
+          "count": 19526,
+          "median_price": 625000.0
+        }
+      ]
+    }
+  },
+  {
+    "id": "A2-01",
+    "category": "A",
+    "sub_use_case": "A2-0",
+    "query": "Which MRT stations have the most expensive resale flats nearby?",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_statistics",
+        "required_params": {
+          "group_by": [
+            "station"
+          ],
+          "near": "mrt",
+          "max_distance_m": 500,
+          "sort_by": "median_price",
+          "order": "desc"
+        }
+      }
+    ],
+    "ground_truth_facts": {
+      "snapshot_id": "d888eb158ece963898a0",
+      "min_sales_per_group": 10,
+      "period": "2025-10..2026-09",
+      "groups": [
+        {
+          "label": "Outram Park MRT",
+          "count": 40,
+          "median_price": 1446944.0
+        },
+        {
+          "label": "Havelock MRT",
+          "count": 23,
+          "median_price": 1200000.0
+        },
+        {
+          "label": "Beauty World MRT",
+          "count": 38,
+          "median_price": 1134000.0
+        }
+      ]
+    }
+  },
+  {
+    "id": "A2-02",
+    "category": "A",
+    "sub_use_case": "A2-0",
+    "query": "Show me 4-room resale prices by town near MRT stations over the last 5 years",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_statistics",
+        "required_params": {
+          "group_by": [
+            "town"
+          ],
+          "near": "mrt",
+          "max_distance_m": 500,
+          "flat_types": [
+            "4 ROOM"
+          ],
+          "lookback_years": 5,
+          "include_trend": true,
+          "sort_by": "median_price",
+          "order": "desc"
+        }
+      }
+    ],
+    "ground_truth_facts": {
+      "snapshot_id": "d888eb158ece963898a0",
+      "min_sales_per_group": 10,
+      "period": "2021-10..2026-09",
+      "groups": [
+        {
+          "label": "BUKIT MERAH",
+          "count": 446,
+          "median_price": 900000.0
+        },
+        {
+          "label": "TOA PAYOH",
+          "count": 580,
+          "median_price": 889444.0
+        },
+        {
+          "label": "QUEENSTOWN",
+          "count": 212,
+          "median_price": 859000.0
+        }
+      ]
+    }
+  },
+  {
+    "id": "A2-03",
+    "category": "A",
+    "sub_use_case": "A2-0",
+    "query": "Which towns have the cheapest flats near MRT stations?",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_statistics",
+        "required_params": {
+          "group_by": [
+            "town"
+          ],
+          "near": "mrt",
+          "max_distance_m": 500,
+          "sort_by": "median_price",
+          "order": "asc"
+        }
+      }
+    ],
+    "ground_truth_facts": {
+      "snapshot_id": "d888eb158ece963898a0",
+      "min_sales_per_group": 10,
+      "period": "2025-10..2026-09",
+      "groups": [
+        {
+          "label": "JURONG EAST",
+          "count": 268,
+          "median_price": 514000.0
+        },
+        {
+          "label": "YISHUN",
+          "count": 300,
+          "median_price": 517944.0
+        },
+        {
+          "label": "BEDOK",
+          "count": 408,
+          "median_price": 545000.0
+        }
+      ]
+    }
+  },
+  {
+    "id": "A3-01",
+    "category": "A",
+    "sub_use_case": "A3-0",
+    "query": "Sales statistics across Singapore",
+    "initial_map_state": null,
+    "expected_agents": [
+      "market_sql"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "market_sql",
+        "tool": "query_resale_statistics",
+        "required_params": {
+          "group_by": [
+            "town"
+          ],
+          "sort_by": "median_price",
+          "order": "desc"
+        }
+      }
+    ],
+    "ground_truth_facts": {
+      "snapshot_id": "d888eb158ece963898a0",
+      "min_sales_per_group": 10,
+      "period": "2025-10..2026-09",
+      "groups": [
+        {
+          "label": "BUKIT TIMAH",
+          "count": 58,
+          "median_price": 1010000.0
+        },
+        {
+          "label": "QUEENSTOWN",
+          "count": 751,
+          "median_price": 850000.0
+        },
+        {
+          "label": "BISHAN",
+          "count": 410,
+          "median_price": 848000.0
+        }
+      ]
+    }
+  }
+]

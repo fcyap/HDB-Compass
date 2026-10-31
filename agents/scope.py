@@ -165,7 +165,7 @@ _POLICY_TOPIC = re.compile(
 # A question about figures in the resale data that no specific intent recognised: the market agent chooses how to
 # answer it with the analysis tools (agents/supervisor.py, "analysis mode"). A message without these words gets the menu.
 _DATA_WORDS = re.compile(
-    r"\b(?:prices?|priced|pricey|sold|sales?|transactions?|median|statistics|stats|trends?|expensive|cheap\w*|premium|"
+    r"\b(?:prices?|priced|pricey|sold|sell(?:s|ing)? for|sales?|transactions?|median|statistics|stats|trends?|expensive|cheap\w*|premium|"
     r"compar\w+|breakdown|listings?|average|how much|per sqm|psf|distribution|highest|lowest|costs?|costliest|dearest|"
     r"priciest|affordable|histor\w+|gone up|gone down|appreciat\w+|cheaper|pricier)\b", re.I)
 

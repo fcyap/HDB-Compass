@@ -83,3 +83,262 @@ def test_other_questions_are_not_read_as_grouped_statistics(query, tools):
     c = sv.rule_based_extract(query).model_dump()
     assert not c["wants_group_stats"], query
     assert set(sv.decide_routing(c)) == tools, query
+
+
+# ---------------------------------------------------------------------------
+# Whole-graph answers (Variant C, the app's fast path, the real local database)
+# ---------------------------------------------------------------------------
+import json  # noqa: E402
+
+from langchain_core.messages import AIMessage  # noqa: E402
+
+from agents import addons, scope  # noqa: E402
+from agents.arch_3_specialist_5agent import graph, run  # noqa: E402
+
+
+def ask(query, previous=None, fast=True):
+    return graph.invoke(sv.initial_state(query, "C", None, previous, fast_path=fast))
+
+
+def tools_run(out):
+    return [r["tool"] for r in out["tool_call_log"] if r["tool"] != "sync_interactive_map_ui"]
+
+
+def chips(out):
+    return out.get("suggestions") or []
+
+
+@pytest.fixture(scope="module")
+def answers():
+    """Each rule-shape question answered once on the fast path."""
+    return {q: ask(q) for q, _ in RULE_SHAPES}
+
+
+@pytest.mark.parametrize("query, expected", RULE_SHAPES, ids=[q[:50] for q, _ in RULE_SHAPES])
+def test_rule_shape_answer_is_a_table_of_real_figures_with_chips(answers, query, expected):
+    out = answers[query]
+    assert out["active_subagents"] == ["market_sql"]
+    assert tools_run(out) == ["query_resale_statistics"]
+    call = next(r for r in out["tool_call_log"] if r["tool"] == "query_resale_statistics")
+    for k, v in expected.items():
+        assert call["arguments"][k] == v, (k, call["arguments"])
+    text = out["draft_response"]
+    assert "|---" in text and "Median price" in text and "$" in text
+    assert "Question:" not in text and "could not" not in text.lower()
+    assert out["user_constraints"]["extraction_source"] == sv.FAST_PATH_SOURCE      # code only, no model
+    assert out["clarification"] is None                                             # chips are not a pending question
+    assert len(chips(out)) >= 2 and all(c["label"] and c["text"] for c in chips(out))
+    assert out["errors"] == []
+
+
+def test_listings_question_says_it_is_past_sales(answers):
+    text = answers["HDB listings near MRT"]["draft_response"]
+    assert "Live listings are not available" in text and "past resale sales" in text
+
+
+def test_every_grouped_answer_states_the_distance_it_used(answers):
+    assert "Within 500 m straight-line of an MRT station (LRT stations excluded)" in \
+        answers["Which MRT stations have the most expensive resale flats nearby?"]["draft_response"]
+    assert "Distance bands (0-200 m, 200-500 m, 500-1,000 m, >1,000 m)" in answers["HDB listings near MRT"]["draft_response"]
+    assert "Within 1,000 m" in answers["Resale prices within 1km of MRT stations by town"]["draft_response"]
+    assert "0-300 m, >300 m" in answers["Resale prices within 300m of an MRT"]["draft_response"]
+
+
+def test_stations_map_markers_carry_their_drill_question(answers):
+    payload = answers["Which MRT stations have the most expensive resale flats nearby?"]["map_ui_payload"]
+    feats = payload["markers"]["features"]
+    stations = [f["properties"] for f in feats if f["properties"].get("kind") == "station"]
+    assert stations and all(p["drill_question"].startswith("Resale prices near ") for p in stations)
+    assert all(f["geometry"]["coordinates"][0] > 103 for f in feats)
+
+
+# --- negatives: these must not become grouped statistics --------------------------------------------------------
+def test_a_named_station_goes_to_the_area_tools():
+    out = ask("Resale prices near Bishan MRT, within 500m")
+    assert tools_run(out) == ["find_resale_blocks_near", "get_area_resale_statistics"]
+
+
+def test_a_specific_block_goes_to_block_history():
+    out = ask("What did flats at Blk 105 Bishan St 12 sell for recently?")
+    assert tools_run(out) == ["get_block_transaction_history"]
+
+
+def test_a_policy_question_goes_to_policy_rag():
+    out = ask("What is the minimum occupation period for HDB flats?")
+    assert out["active_subagents"] == ["policy_rag"]
+
+
+def test_a_greeting_gets_the_fixed_reply():
+    assert scope.classify("hi") == scope.GREETING
+    assert sv.rule_based_extract("hi").wants_group_stats is False
+
+
+def test_a_block_search_with_limits_is_not_grouped():
+    out = ask("Find 4-room flats in Tampines under $600k within 400m of an MRT")
+    assert "query_resale_statistics" not in tools_run(out)
+
+
+# ---------------------------------------------------------------------------
+# Analysis mode: wordings no rule covers, with a model choosing the calls
+# ---------------------------------------------------------------------------
+ANALYSIS_NAMES = {"describe_resale_data", "query_resale_statistics", "find_resale_blocks_near", "get_area_resale_statistics",
+                  "get_area_price_trend", "get_block_transaction_history", "get_market_snapshot", "rank_towns_by_value",
+                  "compute_town_price_timeseries"}
+
+
+class ToolModel:
+    """A model that makes one scripted tool call, then stops; it records the tools it was offered."""
+    offered: list = []
+
+    def __init__(self, call):
+        self.call = call
+        self.turn = 0
+
+    def with_structured_output(self, *a, **k):
+        raise RuntimeError("no structured output")        # extraction falls back to code
+
+    def bind_tools(self, tools, tool_choice=None):
+        ToolModel.offered = [t.name for t in tools]
+        return self
+
+    def invoke(self, _messages):
+        self.turn += 1
+        if self.turn == 1:
+            return AIMessage(content="", tool_calls=[{"name": "query_resale_statistics", "id": "c1", "args": self.call}])
+        return AIMessage(content="The figures are below.")
+
+
+LONG_TAIL = [
+    ("Which streets in Bishan have the priciest flats?", {"group_by": ["street"], "towns": ["BISHAN"], "sort_by": "median_price", "top_n": 5}),
+    ("How did 4-room prices change by storey since 2020?", {"group_by": ["year", "storey_band"], "flat_types": ["4 ROOM"], "start_month": "2020-01"}),
+    ("Does remaining lease affect resale prices?", {"group_by": ["lease_band"]}),
+    ("Compare executive and 5-room flat prices", {"group_by": ["flat_type"], "flat_types": ["EXECUTIVE", "5 ROOM"]}),
+    ("What is the price premium for higher floors?", {"group_by": ["storey_band"]}),
+    ("Which flat type is the most expensive?", {"group_by": ["flat_type"], "sort_by": "median_price"}),
+    ("Are prices on the rise?", {"group_by": ["year"], "lookback_years": 5}),
+    ("Average resale price by year", {"group_by": ["year"], "lookback_years": 5}),
+    ("Show the price distribution of 3-room flats", {"group_by": ["town"], "flat_types": ["3 ROOM"], "top_n": 5}),
+    ("What do older flats with short leases sell for?", {"group_by": ["lease_band"], "sort_by": "median_price", "order": "asc"}),
+]
+
+
+@pytest.mark.parametrize("query, call", LONG_TAIL, ids=[q[:45] for q, _ in LONG_TAIL])
+def test_long_tail_question_is_answered_by_the_models_call(monkeypatch, query, call):
+    monkeypatch.setattr(sv, "get_llm", lambda: ToolModel(call))
+    c = sv.rule_based_extract(query).model_dump()
+    assert not c["wants_group_stats"] and not sv.decide_routing({**c, "towns": []})      # no rule recognised it
+    out = ask(query, fast=False)
+    assert out["user_constraints"]["analysis_mode"] is True
+    assert out["active_subagents"] == ["market_sql"]
+    assert set(ToolModel.offered) == ANALYSIS_NAMES                    # the analysis set, not the block search
+    assert tools_run(out) == ["query_resale_statistics"]
+    assert "|---" in out["draft_response"] and "Question:" not in out["draft_response"]
+    assert "Happy to help" not in out["draft_response"]
+
+
+def test_analysis_mode_without_a_valid_call_falls_back_to_an_overview(monkeypatch):
+    class Silent(ToolModel):
+        def invoke(self, _m):
+            return AIMessage(content="I am not sure.")
+    monkeypatch.setattr(sv, "get_llm", lambda: Silent({}))
+    out = ask("Is it pricier around a supermarket?", fast=False)
+    assert tools_run(out) == ["query_resale_statistics"] and "|---" in out["draft_response"]
+    assert any("deterministic plan used" in e for e in out["errors"])
+
+
+def test_analysis_mode_with_nothing_to_go_on_gives_the_menu():
+    out = ask("How much do flats cost these days", fast=False)
+    assert out["clarification"]["kind"] == "menu" and "Happy to help" in out["draft_response"]
+    assert tools_run(out) == []
+
+
+def test_data_words_are_needed_for_analysis_mode_otherwise_the_menu():
+    out = ask("What flat should I buy?", fast=False)
+    assert out["user_constraints"]["analysis_mode"] is False and out["clarification"]["kind"] == "menu"
+
+
+def test_analysis_mode_is_off_when_add_ons_are_off(monkeypatch):
+    monkeypatch.setenv("HDB_ADDONS", "off")
+    out = ask("Which flat type is the most expensive?", fast=False)
+    assert out["user_constraints"]["analysis_mode"] is False
+    assert out["clarification"]["kind"] == "menu" and tools_run(out) == []
+
+
+def test_the_analysis_prompt_has_the_data_guide_and_worked_examples():
+    guide = addons.analysis_section("market_sql")
+    assert "query_resale_statistics(group_by=" in guide and guide.count("->") >= 4 and "describe_resale_data" in guide
+    assert addons.analysis_section("spatial") == ""
+
+
+def test_six_tool_iterations_only_in_analysis_mode():
+    assert ri.ANALYSIS_MAX_ITERATIONS == 6
+
+
+# ---------------------------------------------------------------------------
+# Drill-down walk: island -> distance bands -> town -> station -> area -> block, every chip a fresh fast-path question
+# ---------------------------------------------------------------------------
+def test_chip_walk_from_bands_to_a_blocks_sales():
+    state = ask("What are the historical statistics of HDBs sold near MRT stations?")
+    assert tools_run(state) == ["query_resale_statistics"]
+    by_label = {c["label"]: c["text"] for c in chips(state)}
+    assert {"By town", "By station"} <= set(by_label)
+
+    state = ask(by_label["By town"], state)                                      # L1: towns
+    assert state["user_constraints"]["extraction_source"] == sv.FAST_PATH_SOURCE
+    assert tools_run(state) == ["query_resale_statistics"]
+    assert state["user_constraints"]["stats_group_by"] == ["town"] and "Town" in state["draft_response"]
+    town_chip = chips(state)[0]
+    assert town_chip["text"].startswith("Resale prices by station near MRT stations in ")
+
+    state = ask(town_chip["text"], state)                                        # L2: stations of that town
+    assert state["user_constraints"]["extraction_source"] == sv.FAST_PATH_SOURCE
+    assert state["user_constraints"]["stats_group_by"] == ["station"]
+    assert state["user_constraints"]["towns"] == [town_chip["label"].upper()]
+    assert "Nearest station" in state["draft_response"]
+    station_chip = next(c for c in chips(state) if c["text"].startswith("Resale prices near "))
+
+    state = ask(station_chip["text"], state)                                     # L3: the area around the station
+    assert state["user_constraints"]["extraction_source"] == sv.FAST_PATH_SOURCE
+    assert tools_run(state) == ["find_resale_blocks_near", "get_area_resale_statistics"]
+    block_chip = next(c for c in chips(state) if c["text"].startswith("What did"))
+    assert any(c["label"].startswith("All stations in") for c in chips(state))
+
+    state = ask(block_chip["text"], state)                                       # L4: that block's sales
+    assert tools_run(state) == ["get_block_transaction_history"]
+    assert "Sales history" in state["draft_response"]
+
+
+def test_a_chip_also_works_through_run_with_the_previous_state():
+    first = ask("Which MRT stations have the most expensive resale flats nearby?")
+    follow = run(chips(first)[0]["text"], previous=first)       # the experiment entry point: no fast path, no model
+    assert [r["tool"] for r in follow["tool_call_log"] if r["tool"] != "sync_interactive_map_ui"][:1] == ["find_resale_blocks_near"]
+
+
+# ---------------------------------------------------------------------------
+# Category A seed: the tool agrees with ground truth worked out by independent SQL
+# ---------------------------------------------------------------------------
+CATEGORY_A = json.loads((__import__("pathlib").Path(__file__).resolve().parent.parent / "evaluation" / "category_a_queries.json")
+                        .read_text(encoding="utf-8"))
+
+
+def _snapshot_id():
+    from data.market_database import open_market_database
+    with open_market_database() as con:
+        return con.execute("SELECT snapshot_id FROM source_snapshot").fetchone()[0]
+
+
+@pytest.mark.parametrize("item", CATEGORY_A, ids=[i["id"] for i in CATEGORY_A])
+def test_category_a_question_is_read_and_matches_independent_sql(item):
+    query = item["query"]
+    call = item["expected_mcp_calls"][0]
+    assert call["tool"] == "query_resale_statistics"
+    args = ri.stats_call_args(sv.rule_based_extract(query).model_dump(), [])
+    assert args == call["required_params"]
+    facts = item["ground_truth_facts"]
+    if facts["snapshot_id"] != _snapshot_id():
+        pytest.skip("ground truth was built on another database snapshot; rebuild with evaluation.build_category_a")
+    from mcp_server.aggregate_resale_tools import query_resale_statistics
+    got = query_resale_statistics(**args)
+    expected = [(g["label"], g["count"], round(g["median_price"])) for g in facts["groups"]]
+    assert [(g["label"], g["count"], g["median_price"]) for g in got["groups"]][:len(expected)] == expected
+    assert got["period"]["start_month"] == facts["period"].split("..")[0]

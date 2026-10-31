@@ -107,7 +107,7 @@ class BlockFeatures:
 
 
 def _nan_none(arr: np.ndarray) -> List[Optional[float]]:
-    return [None if np.isnan(v) else round(float(v), 1) for v in arr]
+    return [None if np.isnan(v) else float(v) for v in arr]   # full precision: a band edge must not move by rounding
 
 
 def _fingerprint(payload: Dict[str, Any]) -> Tuple[Any, ...]:
