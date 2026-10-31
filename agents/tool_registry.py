@@ -7,7 +7,9 @@ every call so that:
   * arguments are validated against agents/schemas.TOOL_INPUT_MODEL (strict
     boundary: a malformed LLM tool call never reaches a real tool);
   * a ToolCallRecord is produced for the eval metrics (Tool F1, Param EM);
-  * exceptions become structured errors instead of crashing the graph.
+  * exceptions become structured errors instead of crashing the graph;
+  * a tool module that fails to import gives a runner that answers every call with status "unavailable" (and one
+    loud warning), so one broken module does not stop every question.
 
 Variants A/B/C and the supervisor import from here only — never from
 mcp_server/* directly — so flipping mock->real is a config change.
@@ -56,6 +58,26 @@ def _unwrap(fn: Any) -> Callable[..., Any]:
     return fn
 
 
+def module_for(tool_name: str) -> str:
+    """The module a tool is imported from under the current config (real implementation or the mocks)."""
+    if load_config()["tools"]["use_mock"].get(tool_name, "mock") == "real":
+        return REAL_IMPL[tool_name][0]
+    return "mcp_server.mock_tools"
+
+
+_WARNED: set = set()   # (module, error) pairs already reported, so a broken module is announced once, not per question
+
+
+def warn_unavailable(tool_name: str, error: str) -> None:
+    key = (module_for(tool_name), error)
+    if key in _WARNED:
+        return
+    _WARNED.add(key)
+    print(f"\n{'!' * 78}\nWARNING: {key[0]} failed to import ({error}).\nIts tools (first: {tool_name}) answer "
+          f"every call with status 'unavailable' until it is fixed; the rest of the graph still runs.\n{'!' * 78}\n",
+          file=sys.stderr, flush=True)
+
+
 def resolve_callable(tool_name: str) -> Callable[..., Any]:
     mode = load_config()["tools"]["use_mock"].get(tool_name, "mock")
     if mode == "real":
@@ -72,17 +94,29 @@ class ToolRunner:
         self.name = tool_name
         self.agent = TOOL_OWNER[tool_name]
         self.input_model = TOOL_INPUT_MODEL[tool_name]
-        self.fn = resolve_callable(tool_name)
+        self.import_error: str | None = None
+        try:
+            self.fn: Callable[..., Any] | None = resolve_callable(tool_name)
+        except Exception as e:  # noqa: BLE001 — a broken module makes its tools unavailable, not the whole graph
+            self.fn = None
+            self.import_error = f"{type(e).__name__}: {e}"
+            warn_unavailable(tool_name, self.import_error)
         self.is_mock = load_config()["tools"]["use_mock"].get(tool_name, "mock") != "real"
         self.log: List[ToolCallRecord] = []
+        self.source = "code"   # set to "model" by the tool loop for a call the model chose (ToolCallRecord.source)
 
     def __call__(self, **kwargs: Any) -> Any:
         t0 = time.perf_counter()
+        if self.fn is None:
+            # logged like any failed call, so the call still counts for tool selection and the trace shows why
+            self.log.append(ToolCallRecord(agent=self.agent, tool=self.name, arguments=kwargs, ok=False,
+                                           error=f"unavailable: {self.import_error}", latency_ms=0.0, source=self.source))
+            return {"status": "unavailable", "error": self.import_error, "tool": self.name}
         try:
             validated = self.input_model(**kwargs)
         except ValidationError as e:
             rec = ToolCallRecord(agent=self.agent, tool=self.name, arguments=kwargs, ok=False,
-                                 error=f"invalid arguments: {e.errors()[:3]}", latency_ms=0.0)
+                                 error=f"invalid arguments: {e.errors()[:3]}", latency_ms=0.0, source=self.source)
             self.log.append(rec)
             return {"error": rec.error, "tool": self.name}
         try:
@@ -97,12 +131,13 @@ class ToolRunner:
         except Exception as e:  # noqa: BLE001 — surface tool failures to the LLM, don't crash the graph
             result, ok, err = {"error": str(e), "tool": self.name}, False, str(e)
         self.log.append(ToolCallRecord(agent=self.agent, tool=self.name, arguments=validated.model_dump(),
-                                       ok=ok, error=err, latency_ms=(time.perf_counter() - t0) * 1000))
+                                       ok=ok, error=err, latency_ms=(time.perf_counter() - t0) * 1000,
+                                       source=self.source))
         return result
 
     def as_langchain_tool(self) -> StructuredTool:
         """Expose to LangGraph/LangChain agents with the Pydantic schema as the tool's args schema."""
-        doc = (getattr(self.fn, "__doc__", None) or self.name).strip()
+        doc = ((self.fn.__doc__ if self.fn is not None else None) or self.name).strip()
         return StructuredTool.from_function(
             func=self.__call__, name=self.name, description=doc, args_schema=self.input_model)
 

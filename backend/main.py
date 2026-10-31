@@ -9,6 +9,7 @@ import os
 import sys
 import json
 import asyncio
+from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -18,6 +19,54 @@ from pydantic import BaseModel, Field
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+CHAT_LOG_DIR = PROJECT_ROOT / "data" / "local" / "chat_logs"   # gitignored
+
+# The last finished state per page load (session id from the frontend), so a reply such as "we have $25,000 in cash"
+# completes the earlier request even if the WebSocket dropped and reconnected in between. Held in this process only:
+# a backend restart (including --reload on a file save) forgets every conversation, and a page reload starts a new
+# one. Oldest sessions are dropped beyond SESSION_LIMIT.
+SESSION_LIMIT = 200
+SESSIONS: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+
+
+def remember(session_id: Optional[str], state: Optional[Dict[str, Any]]) -> None:
+    if not session_id:
+        return
+    if state is None:
+        SESSIONS.pop(session_id, None)
+        return
+    SESSIONS[session_id] = state
+    SESSIONS.move_to_end(session_id)
+    while len(SESSIONS) > SESSION_LIMIT:
+        SESSIONS.popitem(last=False)
+
+
+def log_chat_turn(question: str, state: Dict[str, Any], seconds: float, turn: int) -> None:
+    """One JSON line per chat turn, so a wrong answer seen in the UI can be traced: what was asked, how it was read,
+    where it was routed, which tools ran and whether they failed, internal errors, and the answer. Never breaks a chat."""
+    import time
+    try:
+        CHAT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        record = {
+            "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "model_profile": os.getenv("LLM_PROFILE", ""),
+            "turn": turn,
+            "question": question,
+            "constraints": state.get("user_constraints"),
+            "routing": state.get("active_subagents"),
+            "tool_calls": [{"agent": t.get("agent"), "tool": t.get("tool"), "ok": t.get("ok", True),
+                            "arguments": t.get("arguments")} for t in state.get("tool_call_log") or []],
+            "errors": state.get("errors") or [],
+            "clarification": state.get("clarification"),
+            "matching_blocks": [f"{b.get('block')} {b.get('street')}" for b in state.get("candidate_blocks_intersection") or []
+                                if isinstance(b, dict)],
+            "answer": state.get("draft_response"),
+            "seconds": round(seconds, 1),
+        }
+        with (CHAT_LOG_DIR / f"{time.strftime('%Y-%m-%d')}.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, default=str) + "\n")
+    except Exception as e:  # noqa: BLE001
+        print(f"[chat log] not written: {e}")
 
 from mcp_server.spatial_onemap_tools import (
     create_buffer_geojson,
@@ -65,6 +114,24 @@ NODE_INFO = {
     "runtime_auditor": ("Runtime Auditor (Member 5)", "Auditing draft response against evidence to prevent hallucinations"),
     "finalize": ("Completed", "Multi-agent decision support results finalized."),
 }
+
+
+def honest_step(node_name: str, node_output: Dict[str, Any], desc: str) -> str:
+    """The trace must not claim a check that never ran. Member 5's guardrail and auditor fall back to pass-throughs
+    until agents/guardrails.py exists, and the policy search is a stand-in while it is mocked; say so."""
+    if node_name == "input_guardrail" and sv._INPUT_GUARDRAIL is None:
+        return "Not installed yet (pass-through): the message is not safety-checked."
+    if node_name == "runtime_auditor":
+        if sv._AUDITOR is None:
+            return "Not installed yet (pass-through): the answer is not independently checked."
+        verdict = node_output.get("auditor_verdict") or {}
+        if verdict.get("passed", True):
+            return "Answer check passed."
+        return f"Answer check asked for a rewrite: {verdict.get('critique') or 'no reason given'}"
+    if node_name == "policy_rag_agent" and \
+            sv.load_config().get("tools", {}).get("use_mock", {}).get("retrieve_hdb_policy_knowledge") == "mock":
+        return "Stand-in only (the real policy search is not built yet); no rules are quoted."
+    return desc
 
 
 @app.get("/")
@@ -253,15 +320,17 @@ def inspect_point(lat: float, lng: float):
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     print("[WebSocket] Client connected to HDB-Compass Live Sync.")
-    # The last finished state on this connection, passed back on the next message so a reply such as
-    # "we have $25,000 in cash" completes the earlier request (docs/INTERFACES.md §7). Clear resets it.
-    previous: Optional[Dict[str, Any]] = None
+    # The last finished state, passed back on the next message so a reply completes the earlier request
+    # (docs/INTERFACES.md §7). Kept per browser tab (?session=), so it survives a reconnect; Clear resets it.
+    session_id = websocket.query_params.get("session")
+    previous: Optional[Dict[str, Any]] = SESSIONS.get(session_id) if session_id else None
     try:
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
             if message.get("reset"):
                 previous = None
+                remember(session_id, None)
                 continue
             query_text = message.get("query", "").strip()
             pinned_lat = message.get("lat")
@@ -284,6 +353,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         map_state["radius_meters"] = radius
 
                     st = sv.initial_state(query=query_text, variant="C", map_state=map_state, previous=previous)
+                    started = asyncio.get_event_loop().time()
 
                     current_buffer = None
                     current_markers = None
@@ -298,12 +368,15 @@ async def websocket_endpoint(websocket: WebSocket):
                             final_state = chunk  # the full state after each step; the last one is the answer's
                             continue
                         for node_name, node_output in chunk.items():
+                            if node_output is None and node_name in ("input_guardrail", "runtime_auditor"):
+                                node_output = {}      # a pass-through stand-in returns nothing; still show its step
                             if not isinstance(node_output, dict):
                                 continue
 
                             step_title, step_desc = NODE_INFO.get(
                                 node_name, (node_name, f"Completed {node_name}")
                             )
+                            step_desc = honest_step(node_name, node_output, step_desc)
 
                             if node_name == "extract_constraints":
                                 c = node_output.get("user_constraints", {})
@@ -359,9 +432,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                     step_desc = f"Cross-agent synthesis complete with {n_markers} synchronized map markers and buffer."
 
                             elif node_name == "runtime_auditor":
-                                verdict = node_output.get("auditor_verdict", {})
-                                passed = verdict.get("passed", True)
-                                step_desc = f"Runtime audit completed: {'Verified (zero hallucinations)' if passed else 'Audit refinement required.'}"
+                                step_desc = honest_step(node_name, node_output, step_desc)
 
                             elif node_name == "finalize":
                                 msgs = node_output.get("messages", [])
@@ -386,6 +457,9 @@ async def websocket_endpoint(websocket: WebSocket):
                             await asyncio.sleep(0.04)
                     if final_state is not None:
                         previous = final_state
+                        remember(session_id, final_state)
+                        turn = sum(1 for m in final_state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user")
+                        log_chat_turn(query_text, final_state, asyncio.get_event_loop().time() - started, turn)
 
                 # -------------------------------------------------------------
                 # 2. Solo Spatial Fallback (Direct Map Click / Pin)

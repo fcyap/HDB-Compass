@@ -94,6 +94,23 @@ LLM-callable tool, so it is not counted.
 Until then the orchestration layer runs against `mcp_server/mock_tools.py`,
 which returns deterministic fixtures with the same shapes.
 
+If a tool module fails to import (a missing package, a syntax error), only its own tools are affected: the registry
+prints one loud warning and every call to those tools returns `{"status": "unavailable", "error": "<import error>"}`
+(logged as a failed call), while the rest of the graph keeps answering. The answer says what could not be checked
+(`supervisor.NOT_CHECKED`, e.g. "Prices, remaining leases and flat types could not be checked"), and when a block
+search could not run, the blocks are said to match only "the constraints that could be checked".
+
+**Tools that run only when asked.** `calculate_bsd_and_upfront_outlay` and `query_comparable_resale_transactions`
+run only when the user's own words ask for them (`supervisor.requested_tools`, read sentence by sentence: upfront or
+initial costs, stamp duty or BSD, cash or CPF needed, a down payment or a price they are buying for; comparables,
+recent or nearby transactions, similar flats, or what flats sold or went for). Coordinates the user typed, read into
+`comparable_resale` and checked against their words, are an ask for comparable sales too. A refusal ("we don't care
+about stamp duty") or a rules question ("the ABSD rules") is not an ask. Code records the asks in
+`user_constraints["requested_tools"]`; the no-model plans, the financial sequence and the evidence gate follow it,
+and Variant C's specialists are offered those two tools only when asked. `requested_tools` is never shown to a model
+(`supervisor.constraints_for_model`), and Variants A and B keep the full tool list, so their models' unasked calls
+still count against Tool F1.
+
 ### Block identity
 
 Every tool that returns blocks includes `block`, `street`, `town` (plus
@@ -120,17 +137,63 @@ and `map_ui_payload`. Only the auditor writes `auditor_verdict`.
 
 ## 3. Guardrail and auditor nodes (Member 5)
 
-Both are plain LangGraph nodes `(HDBCompassState) -> dict` that Member 4 wires in.
+Put both functions in **`agents/guardrails.py`**. `agents/supervisor.py` imports that
+module once, at import time, and wires whichever of the two names it finds; a missing
+name, or a module that fails to import, leaves that node as a pass-through, and the app's
+trace then says "Not installed yet (pass-through)". Check the wiring with
+`python -c "from agents import supervisor as sv; print(sv._INPUT_GUARDRAIL, sv._AUDITOR)"`.
+Tests can inject either node without the module: `sv.set_hooks(input_guardrail=..., auditor=...)`.
+Both nodes run in **Variant C and the app only**; Variants A and B have neither (by design).
 
-- **Input guardrail** runs first. Return `{"messages": [...]}` unchanged to pass,
-  or `{"draft_response": "<refusal text>", "auditor_verdict": {"passed": True, "critique": "blocked_by_input_guardrail", "retry_count": 0}}`
-  to short-circuit to the end. PII redaction rewrites the last user message in place.
-- **Auditor** runs after synthesis. It reads `draft_response`, `sql_market_results`,
-  `spatial_block_candidates`, `financial_breakdown`, `rag_policy_passages` and returns
-  `{"auditor_verdict": AuditorVerdict(...).model_dump()}`. The graph loops back to
-  synthesis while `passed is False and retry_count < architecture.auditor_max_retries` (2),
-  passing `critique` into the synthesis prompt. Set `retry_count` = number of rejections so far (previous value + 1 on each rejection); the draft is rewritten after rejections 1 and 2 and the third rejection ends the loop (3 auditor calls max).
-- Both nodes must get their LLM from `agents.llm.get_llm()` so the benchmark uses one model.
+**`input_guardrail_node(state) -> dict`** runs first, before constraint extraction.
+- Read the user's new message with `sv.last_user_query(state)`. `state["messages"]` is a list
+  of `{"role", "content"}` dicts and also holds the earlier turns of the same conversation.
+- To pass, return `{}`. Do not return `messages`: that key appends, so returning it adds copies
+  of the conversation instead of replacing it. The node therefore cannot rewrite or redact the
+  user's text; agree a new state key with Member 4 first if redaction is needed.
+- To block, return `{"draft_response": "<refusal text>", "auditor_verdict": {"passed": True, "critique": "blocked_by_input_guardrail", "retry_count": 0}}`.
+  A non-empty `draft_response` sends the graph straight to `finalize`, which shows that text as the answer.
+- Optionally add `"errors": ["input_guardrail: <reason>"]` (also appends) so the evaluation sees why.
+
+**`runtime_auditor_node(state) -> {"auditor_verdict": dict}`** runs after `synthesize`.
+- Return `{"auditor_verdict": AuditorVerdict(...).model_dump()}` (`agents/schemas.py`), a plain
+  dict, not the model object: `passed: bool`, `critique: str`, `retry_count: int`,
+  `ungrounded_claims: List[str]`.
+- Evidence to judge against: `candidate_blocks_intersection`, `relaxation`, `sql_market_results`,
+  `spatial_block_candidates`, `financial_breakdown`, `rag_policy_passages`, `user_constraints`.
+- **What to judge in Variant C.** The answer's facts section (blocks, prices, leases, distances,
+  relaxations, grants, budget) is written by code from the tool results, and code has already
+  removed every opening sentence that states a figure. Only the opening before it is written by
+  the model, so judge only that part (claims, contradictions with the facts, invented rules),
+  never the facts section:
+
+  ```python
+  facts = sv.template_response(state) if sv.writes_facts_in_code(state) else ""
+  draft = state["draft_response"]
+  opening = draft.split(facts, 1)[0].strip() if facts and facts in draft else draft
+  ```
+
+  `template_response(state)` is the exact text the synthesis appended, and it is the same on
+  every retry. Text after the facts (the HFE disclaimer, a follow-up question) is code-written
+  too. An empty opening means the model wrote nothing (it failed or was off): pass. A rejection
+  only rewrites the opening, so rejecting because of the facts section cannot change anything.
+  When `architecture.code_written_facts` is off, `writes_facts_in_code` is false and the whole
+  draft is the model's.
+- On rejection the graph loops back to `synthesize` with `critique` in the prompt. Set
+  `retry_count` = number of rejections so far (previous value + 1 on each rejection; keep the
+  previous value on a pass). With `architecture.auditor_max_retries` = 2 the draft is rewritten
+  after rejections 1 and 2 and the third rejection ends the loop (3 auditor calls at most).
+
+**Both nodes:**
+- Get the model only from `agents.llm.get_llm()`, so the benchmark uses one model. It returns
+  `None` under `LLM_PROFILE=none`; the node must then fall back to rules or pass, so the
+  no-model tests and evaluation still run.
+- Never raise: an exception stops the whole answer. Catch it, pass, and add
+  `"errors": ["<node>: <ExceptionType>"]` so the failure is visible.
+- Put them in `agents/guardrails.py` as `input_guardrail_node` and `runtime_auditor_node`. While that file does not
+  exist both run as pass-throughs, quietly. If it exists but fails to import or lacks a node, the Supervisor prints a
+  loud warning, keeps the problem in `supervisor.HOOK_LOAD_PROBLEMS`, adds a note to every answer's `errors`, and the
+  evaluation records it in its run settings (`hook_load_problems`).
 
 ## 4. Frontend ↔ backend (Member 2) — WebSocket `/ws`
 
@@ -167,6 +230,15 @@ Experiment 1.
   `ground_truth_facts` (matching block keys, grant total, maximum purchase price, relaxations, snapshot and rule
   version) and, for the two deliberately incomplete questions, a `follow_up` turn with its own ground truth.
   `evaluation/architecture_metrics.ground_truth_scores(item, state)` scores an answer against it.
+- Category C (Member 3's `evaluation/category_c_queries.json`) goes through the same runner with
+  `--dataset category_c`. `ground_truth_scores` returns `{"kind": "policy", "clauses_found", "clauses_total",
+  "clause_coverage", "clauses_missing", "known_wrong_clauses", "success"}`: fully right when every `key_clauses` entry
+  appears in the answer, matched by Member 3's rule from `run_rag_ablation.is_clause_in_passage` (copied as
+  `clause_in_answer`; a test keeps the two in step). Clauses known to be wrong are listed in
+  `architecture_metrics.KNOWN_WRONG_CLAUSES` and shown as a caveat in the analysis; correcting them is Member 3's call.
+- Every task-success rate in the analysis carries a Wilson 95% interval (`architecture_metrics.wilson_interval`), and
+  A and B are each compared with C question by question (exact McNemar test). Tokens and latency are reported as a
+  cost proxy: no paid API is used and GPU time is not billed per query.
 - Predicted tool calls = `state["tool_call_log"]` (tool name + arguments). Compare against
   `expected_mcp_calls` in `evaluation/golden_dataset_90.json`.
 - Routing trajectory = `state["active_subagents"]`.

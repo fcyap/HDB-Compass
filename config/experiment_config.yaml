@@ -4,8 +4,7 @@
 global:
   seed: 42
   temperature: 0.0
-  embedding_model: "text-embedding-3-small"
-  llm_model: "gpt-4o-mini"
+  # No paid model: the chat model is set per profile under llm.profiles, the policy embeddings under policy_rag.
 
 # Member 2: Geospatial & Commute Engine Settings
 spatial:
@@ -89,3 +88,12 @@ architecture:
     amenity_radius_meters: 150
     min_remaining_lease_years: 5
   variants: ["A", "B", "C"]
+  # While a tool is still mocked (tools.use_mock), say "cannot check this yet" instead of answering from its
+  # sample data (policy rules, BTO launch prices). See supervisor.UNBUILT_NOTES.
+  disclose_unbuilt_tools: true
+  # Variant C / the app: code writes the answer's facts section; the model writes the opening and trade-offs.
+  # HDB_CODE_WRITTEN_FACTS=0 or 1 overrides it for one run (the live ablation); the run settings record which.
+  code_written_facts: true
+  # Optional first pass that lists the stated facts in plain words before the structured constraint reading.
+  # Off by default: it adds a model call; switch on only if the varied-phrasing test shows it helps.
+  extraction_reasoning: false

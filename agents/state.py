@@ -19,6 +19,7 @@ class UserConstraints(TypedDict, total=False):
     citizenship_scheme: Optional[str]      # e.g. "SC_SC_FirstTimer", "SC_Single_35"
     financial_inputs: Optional[Dict[str, Any]]
     comparable_resale: Optional[Dict[str, Any]]
+    requested_tools: List[str]             # optional tools the user asked for (supervisor.OPTIONAL_TOOLS), read by code
 
 
 class HDBCompassState(TypedDict, total=False):
@@ -54,3 +55,6 @@ class HDBCompassState(TypedDict, total=False):
     clarification: Optional[Dict[str, Any]]          # {"needed": [calculator fields], "question": str}
     prior_constraints: Optional[Dict[str, Any]]
     pending_clarification: Optional[Dict[str, Any]]
+    # The model's own constraint reading before code fills gaps or overrides money facts (None without a model).
+    # Scored separately, so a result shows how much the model read and how much code supplied.
+    model_constraints: Optional[Dict[str, Any]]

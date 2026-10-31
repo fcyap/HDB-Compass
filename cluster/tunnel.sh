@@ -4,8 +4,10 @@
 # hdb-vllm job is RUNNING.  Member 4.
 #   bash cluster/tunnel.sh          # then:  LLM_PROFILE=vllm .venv/bin/python cluster/smoke_test.py
 #   bash cluster/tunnel.sh --close  # remove the forward
-# Uses the shared session ~/.ssh/hdb-cluster.sock if it is open (no password); otherwise
-# plain ssh, which asks for your password.
+# Log in first with  ssh $CLUSTER_LOGIN  in your terminal: ~/.ssh/config keeps that login open as the
+# shared session ~/.ssh/hdb-cluster.sock, which this script reuses without a password (BatchMode=yes).
+# Without it, plain ssh asks for your password, unless CLUSTER_BATCH is set (demo_start.sh and
+# run_live_eval.sh set it): then it stops with a message instead.
 set -euo pipefail
 SOCK="${CLUSTER_SOCK:-$HOME/.ssh/hdb-cluster.sock}"
 LOCAL_PORT="${LOCAL_PORT:-8001}"
@@ -16,7 +18,13 @@ if [[ -z "${CLUSTER_LOGIN:-}" && -f "$ENV_FILE" ]]; then
 fi
 LOGIN="${CLUSTER_LOGIN:?Set CLUSTER_LOGIN=<your-cluster-id>@<cluster-address> in .env or your shell}"
 SSH=(ssh)
-if [[ -S "$SOCK" ]] && ssh -S "$SOCK" -O check "$LOGIN" 2>/dev/null; then SSH=(ssh -S "$SOCK"); fi
+if [[ -S "$SOCK" ]] && ssh -o BatchMode=yes -S "$SOCK" -O check "$LOGIN" 2>/dev/null; then
+  SSH=(ssh -o BatchMode=yes -S "$SOCK")
+elif [[ "${1:-}" == "--close" ]]; then
+  echo "No shared session: no forward to close."; exit 0   # forwards live in the shared session and end with it
+elif [[ -n "${CLUSTER_BATCH:-}" ]]; then
+  echo "No shared session at $SOCK: log in with  ssh $LOGIN  in your terminal."; exit 1
+fi
 
 ENDPOINT="$("${SSH[@]}" "$LOGIN" 'cat ~/vllm_endpoint.txt 2>/dev/null' || true)"
 read -r NODE PORT JOB <<< "$ENDPOINT"
