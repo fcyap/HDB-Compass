@@ -800,10 +800,10 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       source.setData(wrapFeatureCollection(bufferGeoJSON));
     }
 
-    // Render prominent Gold Target Center Marker
+    // Render target marker only when an explicit target_name or pinned location is designated
     if (bufferGeoJSON && bufferGeoJSON.properties) {
       const { center_lat, center_lng, target_name } = bufferGeoJSON.properties;
-      if (center_lat && center_lng) {
+      if (center_lat && center_lng && target_name) {
         if (centerMarkerRef.current) {
           centerMarkerRef.current.remove();
         }
@@ -813,12 +813,17 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         el.innerHTML = `
           <div class="target-pin-pulse"></div>
           <div class="target-pin-core">★</div>
-          <div class="target-pin-label">${target_name || 'Target'}</div>
+          <div class="target-pin-label">${target_name}</div>
         `;
 
         centerMarkerRef.current = new maplibregl.Marker({ element: el })
           .setLngLat([center_lng, center_lat])
           .addTo(mapRef.current);
+      } else {
+        if (centerMarkerRef.current) {
+          centerMarkerRef.current.remove();
+          centerMarkerRef.current = null;
+        }
       }
     } else {
       if (centerMarkerRef.current) {
