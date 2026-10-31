@@ -49,7 +49,8 @@ from agents.schemas import (
     block_key,
 )
 from agents.state import HDBCompassState
-from agents.school_queries import guard_school_request, present_school_result, school_location_request
+from agents.school_queries import (SCHOOL_NAME_QUESTION, guard_school_request, present_school_result,
+                                   school_location_request)
 from agents.tool_registry import ToolRunner, build_runners, tools_for_agent
 
 SPECIALISTS = ["market_sql", "spatial", "financial", "policy_rag"]
@@ -1838,6 +1839,25 @@ CORE_AGENT_SYSTEM = dict(AGENT_SYSTEM)
 AGENT_SYSTEM = {agent: text + addons.prompt_section(agent) for agent, text in AGENT_SYSTEM.items()}
 
 
+def addon_prompt(agents: List[str], variant: Optional[str], fast_path: bool = False) -> str:
+    """The add-on tools' prompt lines for an agent holding these owners' tools, when this run is offered the add-ons
+    ("" otherwise). C's specialists get their own owner's lines (AGENT_SYSTEM); A's monolith and B's data agent hold
+    several owners' tools, so they get all of those owners' lines. Under addons.offer_in: all each variant's model is
+    then told the same about the same tools (Experiment 1 compares architectures, not prompts about tools)."""
+    if not addons.offered_in(variant, fast_path):
+        return ""
+    return "".join(addons.prompt_section(agent) for agent in agents)
+
+
+def analysis_prompt(c: Dict[str, Any], variant: Optional[str], fast_path: bool = False) -> str:
+    """The data guide C's market agent gets in analysis mode (a data question no specific intent covers), for any
+    variant whose extraction set analysis_mode: C's market agent and B's data agent. Variant A has no extraction
+    step, so it never gets one (see arch_1_monolith)."""
+    if not (c.get("analysis_mode") and addons.offered_in(variant, fast_path)):
+        return ""
+    return "\n\n" + addons.analysis_section("market_sql")
+
+
 # Tools that run only when the user asks for them in so many words. The plans used to cost the budget for stamp duty
 # whenever a budget or income was given, and to pull comparable sales whenever comparable_resale was filled, so a
 # search-and-budget question got an upfront-costs section nobody asked for (and lost Tool F1 precision: no Category E
@@ -2042,6 +2062,34 @@ def _commute_candidates(outputs: Dict[str, Any]) -> List[str]:
     return [f"Blk {b['block']} {b['street']}" for b in blocks]
 
 
+_DECIMAL = re.compile(r"(?<![\d.])-?\d{1,3}\.\d{2,}(?![\d.])")
+
+
+def typed_points(text: str) -> List[Tuple[float, float]]:
+    """Coordinate pairs the user typed ("latitude 1.3521, longitude 103.9440", "1.3521, 103.944"): a Singapore
+    latitude (1.1 to 1.5) followed by a Singapore longitude (103.5 to 104.1), read in the order they were written."""
+    points: List[Tuple[float, float]] = []
+    lat: Optional[float] = None
+    for m in _DECIMAL.finditer(text or ""):
+        x = float(m.group())
+        if 1.1 <= x <= 1.5:
+            lat = x
+        elif 103.5 <= x <= 104.1 and lat is not None:
+            points.append((lat, x))
+            lat = None
+    return points
+
+
+def trusted_points(state: HDBCompassState) -> List[Tuple[float, float]]:
+    """The coordinates a model's tool call may use without a tool having produced them (run_react's known_points): the
+    user's map pin and any coordinates the user typed. Every variant passes the same, so a coordinate tool is refused
+    or allowed the same way in A, B and C."""
+    pin = (state.get("map_ui_payload") or {}).get("center")
+    points = [tuple(pin)] if isinstance(pin, (list, tuple)) and len(pin) == 2 else []
+    users = " ".join(m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user")
+    return points + typed_points(users)
+
+
 def run_react(label: str, tool_names: List[str], system_prompt: str, query: str, c: Dict[str, Any],
               max_iter: Optional[int] = None, plan_agents: Optional[List[str]] = None,
               known_points: Optional[List[Tuple[float, float]]] = None,
@@ -2225,6 +2273,10 @@ def slot_outputs(outputs: Dict[str, Any], towns: List[str]) -> Dict[str, Any]:
     update: Dict[str, Any] = {}
     sql, fin = {}, {}
     spatial: List[Dict[str, Any]] = []
+    # Whether a block filter has run yet. An empty list from one means no block met its limit, so later filters keep
+    # the set empty: the commute check's [] once kept every block the amenity filter found, and its island-wide
+    # results replaced the amenity filter's [] (the commute then ran on all blocks), dropping the MRT limit.
+    filtered = False
     for name, out in outputs.items():
         owner = TOOL_OWNER[name]
         if name == "find_primary_schools_near_address":
@@ -2245,15 +2297,21 @@ def slot_outputs(outputs: Dict[str, Any], towns: List[str]) -> Dict[str, Any]:
                 update["rag_policy_passages"] = []
                 update["policy_no_match"] = True
         elif name == "filter_blocks_by_amenity_proximity":
-            spatial = out if not spatial else [b for b in spatial if block_key(b["block"], b["street"]) in
-                                               {block_key(x["block"], x["street"]) for x in out}]
+            spatial = out if not filtered else [b for b in spatial if block_key(b["block"], b["street"]) in
+                                                {block_key(x["block"], x["street"]) for x in out}]
+            filtered = True
         elif name == "verify_primary_school_distance":
             sb = _normalise_school_blocks(out, towns)
-            spatial = sb if not spatial else [b for b in spatial if block_key(b["block"], b["street"]) in
-                                              {block_key(x["block"], x["street"]) for x in sb}]
-        elif name == "compute_dual_transit_commute" and isinstance(out, list) and out:
-            keep = {str(b.get("block", "")).upper() for b in out if isinstance(b, dict)}
-            spatial = [b for b in spatial if str(b.get("block", "")).upper() in keep] if spatial else out
+            spatial = sb if not filtered else [b for b in spatial if block_key(b["block"], b["street"]) in
+                                               {block_key(x["block"], x["street"]) for x in sb}]
+            filtered = True
+        elif name == "compute_dual_transit_commute" and isinstance(out, list):
+            rows = [b for b in out if isinstance(b, dict)]
+            # by block and street, so a block passes only if it met the limit itself, not a namesake on another street
+            keep = {block_key(str(b.get("block", "")), str(b.get("street", ""))) for b in rows}
+            spatial = [b for b in spatial if block_key(str(b.get("block", "")), str(b.get("street", ""))) in keep] \
+                if filtered else rows
+            filtered = True
     if sql:
         update["sql_market_results"] = sql
     if fin:
@@ -2284,20 +2342,16 @@ def make_specialist_node(agent: str) -> Callable[[HDBCompassState], Dict[str, An
     def node(state: HDBCompassState) -> Dict[str, Any]:
         c = state.get("user_constraints", {})
         query = last_user_query(state)
-        pin = (state.get("map_ui_payload") or {}).get("center")
-        known = [tuple(pin)] if isinstance(pin, (list, tuple)) and len(pin) == 2 else []
         # only the tools this task needs (needed_for_task); Variants A and B keep the full list, so their models'
         # unasked calls still show in Tool F1
         visible = addons.visible_tools(tools_for_agent(agent), state.get("variant"), bool(state.get("fast_path")))
         tools = [name for name in visible if needed_for_task(name, c, query)]
         system = AGENT_SYSTEM[agent] if addons.offered_in(state.get("variant"), bool(state.get("fast_path"))) \
             else CORE_AGENT_SYSTEM[agent]
-        analysis = bool(c.get("analysis_mode")) and agent == "market_sql" and addons.offered_in(state.get("variant"), bool(state.get("fast_path")))
-        if analysis:
-            system = system + "\n\n" + addons.analysis_section(agent)
-        outputs, log, errors, final = run_react(agent, tools, system, query, c,
-                                                max_iter=ri.ANALYSIS_MAX_ITERATIONS if analysis else None,
-                                                known_points=known, use_model=c.get("extraction_source") != FAST_PATH_SOURCE,
+        guide = analysis_prompt(c, state.get("variant"), bool(state.get("fast_path"))) if agent == "market_sql" else ""
+        outputs, log, errors, final = run_react(agent, tools, system + guide, query, c,
+                                                max_iter=ri.ANALYSIS_MAX_ITERATIONS if guide else None,
+                                                known_points=trusted_points(state), use_model=c.get("extraction_source") != FAST_PATH_SOURCE,
                                                 stop_when_covered=bool(state.get("fast_path")))
         update = slot_outputs(requested_outputs(agent, outputs, c, query), c.get("towns") or [])
         update.update({"tool_call_log": log, "errors": errors,
@@ -2427,8 +2481,13 @@ def _candidates_for(c: Dict[str, Any], query: str, runners: Dict[str, ToolRunner
     outputs: Dict[str, Any] = {}
     for agent in ("market_sql", "spatial"):
         for name, args in deterministic_plan(agent, c, query):
-            if name in runners and name in ("query_resale_blocks_by_criteria", "filter_blocks_by_amenity_proximity",
-                                            "verify_primary_school_distance"):
+            if name in runners and name in ("query_resale_blocks_by_criteria",) + SPATIAL_BLOCK_TOOLS:
+                if name == "compute_dual_transit_commute":
+                    # the commute limit still holds while another limit is relaxed, so an unlocked block must meet it too
+                    blocks = _commute_candidates(outputs)
+                    if not blocks and any(k in outputs for k in SPATIAL_BLOCK_TOOLS[:2]):
+                        continue   # the other spatial filters kept no block: nothing to time
+                    args = {**args, "candidate_blocks": blocks}
                 outputs[name] = runners[name](**args)
     slots = slot_outputs(outputs, c.get("towns") or [])
     sql = (slots.get("sql_market_results") or {}).get("query_resale_blocks_by_criteria", {}).get("blocks") \
@@ -2441,7 +2500,7 @@ def relax_node(state: HDBCompassState) -> Dict[str, Any]:
     steps = load_config()["architecture"]["relaxation_steps"]
     c = dict(state.get("user_constraints", {}))
     query = last_user_query(state)
-    runners = build_runners(["query_resale_blocks_by_criteria", "filter_blocks_by_amenity_proximity", "verify_primary_school_distance"])
+    runners = build_runners(["query_resale_blocks_by_criteria", *SPATIAL_BLOCK_TOOLS])
     for r in runners.values():
         r.agent = "supervisor"
     suggestions: List[RelaxationSuggestion] = []
@@ -2728,8 +2787,9 @@ def template_response(state: HDBCompassState) -> str:
         blocks or _sql_blocks(state) is not None
         or state.get("spatial_block_candidates") is not None
     )
-    # a search tool that could not be loaded checked nothing, so the blocks meet only the constraints that were checked
-    partial = any(t in BLOCK_FILTERS for t in unavailable_tools(state))
+    # a search tool that could not be loaded checked nothing (nor did a commute limit with one workplace), so the
+    # blocks meet only the constraints that were checked
+    partial = partly_checked(state)
     if searched:
         if blocks:
             lines.append(f"**{len(blocks)} candidate block(s)** match "
@@ -2941,8 +3001,62 @@ def has_research_evidence(state: HDBCompassState) -> bool:
     return bool(state.get("location_results")) or any(name in sql for name in RESEARCH_TOOLS)
 
 
+# Why a commute limit was not checked, by what code knows: the workplaces it read (never "you did not name two", which
+# may contradict the user's words when the reading missed one), or no reason when two were read but no check ran.
+UNCHECKED_COMMUTE = "- Your commute limit was not checked."
+UNCHECKED_COMMUTE_READ = {0: ("- Your commute limit was not checked: the commute check works out travel times to two "
+                              "workplaces, and I could not read a workplace in your message."),
+                          1: ("- Your commute limit was not checked: the commute check works out travel times to two "
+                              "workplaces, and I could read only one in your message.")}
+UNCHECKED_SCHOOL = ("- Your school distance limit was not checked: I could not tell which school you meant. "
+                    "Please give the school's full name.")
+
+
+def unchecked_commute_line(state: HDBCompassState) -> str:
+    """The line not_checked_lines adds for commute_unchecked: the reason only when fewer than two workplaces were read."""
+    read = len((state.get("user_constraints") or {}).get("work_destinations") or [])
+    return UNCHECKED_COMMUTE_READ.get(read, UNCHECKED_COMMUTE)
+
+
+def school_unchecked(state: HDBCompassState) -> bool:
+    """Whether a block search ran for a message that asks for blocks near a school but no school name reached the
+    constraints. C's guard asks "Which primary school?" when no school is named; when the guard read a name that
+    extraction could not ("St. Hilda's Primary School" with no model), or in A and B, which have no guard, the search
+    runs without the school check, and the answer must say so rather than claim every limit was met."""
+    if (state.get("user_constraints") or {}).get("school_name"):
+        return False
+    searched = (state.get("candidate_blocks_intersection") or _sql_blocks(state) is not None
+                or state.get("spatial_block_candidates") is not None)
+    # the guard with "no school named" says whether the words ask for a distance to a school (school_queries)
+    return bool(searched) and guard_school_request(last_user_query(state), lambda q: False) == SCHOOL_NAME_QUESTION
+
+
+def commute_unchecked(state: HDBCompassState) -> bool:
+    """Whether a block search ran with a commute limit that no commute check applied. The commute check needs two
+    workplaces, so a search with one ("under 30 min to Raffles Place") runs without it; the answer must then not say
+    the blocks meet every limit (a fact code is unsure of is said to be unchecked). A commute tool that could not load
+    is already reported by not_checked_lines."""
+    c = state.get("user_constraints") or {}
+    searched = (state.get("candidate_blocks_intersection") or _sql_blocks(state) is not None
+                or state.get("spatial_block_candidates") is not None)
+    if not (searched and c.get("max_commute_minutes")) or "compute_dual_transit_commute" in unavailable_tools(state):
+        return False
+    ran = any(t.get("tool") == "compute_dual_transit_commute" and t.get("ok", True) and not t.get("error")
+              for t in state.get("tool_call_log") or [])
+    return not (ran and len(c.get("work_destinations") or []) >= 2)
+
+
+def partly_checked(state: HDBCompassState) -> bool:
+    """Whether the blocks were checked against only some of the limits the user set: a block filter could not load,
+    or a commute or school limit was never checked (commute_unchecked, school_unchecked)."""
+    return (any(t in BLOCK_FILTERS for t in unavailable_tools(state)) or commute_unchecked(state)
+            or school_unchecked(state))
+
+
 def not_checked_lines(state: HDBCompassState) -> List[str]:
-    return [f"- {NOT_CHECKED[t]} could not be checked: that tool is unavailable right now." for t in unavailable_tools(state)]
+    lines = [f"- {NOT_CHECKED[t]} could not be checked: that tool is unavailable right now." for t in unavailable_tools(state)]
+    lines += [unchecked_commute_line(state)] if commute_unchecked(state) else []
+    return lines + ([UNCHECKED_SCHOOL] if school_unchecked(state) else [])
 
 
 def synthesis_evidence(state: HDBCompassState) -> Tuple[Dict[str, Any], str]:
@@ -2958,7 +3072,7 @@ def synthesis_evidence(state: HDBCompassState) -> Tuple[Dict[str, Any], str]:
             "location_results": state.get("location_results")}
     if unbuilt:
         base["not_available_yet"] = [UNBUILT_NOTES[t] for t in unbuilt]
-    if unavailable_tools(state):   # only then, so every other prompt stays as it was
+    if not_checked_lines(state):   # only then, so every other prompt stays as it was
         base["could_not_check"] = [line[2:] for line in not_checked_lines(state)]
     sql ={k: v for k, v in (state.get("sql_market_results") or {}).items() if k not in unbuilt}
     if state.get("variant") == "B":
@@ -2971,7 +3085,7 @@ def synthesis_evidence(state: HDBCompassState) -> Tuple[Dict[str, Any], str]:
     counts = {"price_and_lease_matches": len(sql_rows) if sql_rows is not None else None,
               "distance_matches": len(spatial) if spatial is not None else None,
               "blocks_meeting_every_constraint": len(matches)}
-    if any(t in BLOCK_FILTERS for t in unavailable_tools(state)):   # a search that could not run checked nothing
+    if partly_checked(state):   # a search that could not run, or a limit never checked: not every constraint was met
         counts["blocks_meeting_the_constraints_that_could_be_checked"] = counts.pop("blocks_meeting_every_constraint")
     market_context = {k: v for k, v in sql.items() if k != "query_resale_blocks_by_criteria"}
     if sql_rows is None and spatial is None and has_research_evidence(state):
@@ -3239,8 +3353,11 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
     c = state.get("user_constraints") or {}
     blocks = state.get("candidate_blocks_intersection") or []
     searched = blocks or _sql_blocks(state) is not None or state.get("spatial_block_candidates") is not None
-    partial = any(t in BLOCK_FILTERS for t in unavailable_tools(state))
+    partial = partly_checked(state)
     limits = "the limits that could be checked" if partial else "every limit you set"
+    # the limits the blocks were checked against: a commute limit no check applied is not one (commute_unchecked)
+    checked = ({k: v for k, v in c.items() if k not in ("max_commute_minutes", "work_destinations")}
+               if commute_unchecked(state) else c)
     fin = state.get("financial_breakdown") or {}
     fin_ok = [n for n, v in fin.items() if isinstance(v, dict) and "error" not in v and v.get("status", "ok") == "ok"]
     done = [ESTIMATE_WORDS.get(n, ("estimate", False)) for n in fin_ok]
@@ -3265,7 +3382,7 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
                         "asked for at the end")
         elif len(fin_ok) < len(fin):
             follows += f"; {'part of y' if done else 'y'}our estimate could not be worked out, as said below"
-        if c and not stated_limits(c):   # (a state with no constraints at all is test data, not a real run)
+        if c and not stated_limits(checked):   # (a state with no constraints at all is test data, not a real run)
             # nothing was asked of the blocks, so "they meet every limit you set" would promise a check that never happened
             sentences.append(f"{unlimited_search_phrase(c)}{follows}.")
         elif len(blocks) == 1:
@@ -3279,7 +3396,7 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
             trade = trade_off_sentence(listed, c, more_than_listed=len(blocks) > LISTED_BLOCKS)
     elif searched:
         sentences.append("No block meets all the limits that could be checked." if partial
-                         else "No block meets every limit you set at once." if stated_limits(c) or not c
+                         else "No block meets every limit you set at once." if stated_limits(checked) or not c
                          else "I found no blocks with recent sales for that search.")
         rel = state.get("relaxation") or {}
         best = rel.get("best_single_change") or {}
@@ -3563,6 +3680,9 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     evidence, rule = synthesis_evidence(state)
     unchecked = (" Some tools could not run: say plainly what could_not_check lists, and never say the blocks meet "
                  "every constraint or give a figure those tools would have produced.") if evidence.get("could_not_check") else ""
+    if unchecked and not unavailable_tools(state):   # every tool ran, but a stated limit was never checked
+        unchecked = (" A limit was not checked: say plainly what could_not_check lists, and never say the blocks meet "
+                     "every constraint.")
     rule += unchecked
     clar = clarification_needed(state) or place_clarification(state)
     if clar and clar.get("kind", "financial") == "financial":
@@ -3731,15 +3851,55 @@ def input_guardrail_node(state: HDBCompassState) -> Dict[str, Any]:
         if stray:
             return {**update, "draft_response": stray}
     if state.get("menu_followup"):    # the user picked a menu option: ask its follow-up question, nothing to search yet
-        ask = state["menu_followup"]
-        return {**update, "draft_response": ask["question"], "clarification": ask}
+        return {**update, **menu_pick_reply(state)}
     query = last_user_query(state)
     unsupported = scope.unsupported_reply(query, len(rule_based_extract(query).work_destinations))
     if unsupported:
         return {**update, "draft_response": unsupported}
     # school questions the lookup cannot answer are stopped here, after Member 5's own check
-    reply = guard_school_request(last_user_query(state), lambda q: bool(rule_based_extract(q).school_name))
+    reply = guard_school_request(last_user_query(state), lambda q: bool(rule_based_extract(q).school_name) or names_a_school(q))
     return {**update, "draft_response": reply} if reply else update
+
+
+def menu_pick_reply(state: HDBCompassState) -> Dict[str, Any]:
+    """The answer to a menu pick (initial_state resolved it into menu_followup): the option's own follow-up question,
+    with nothing searched yet. Read by C's input_guardrail_node and by B, whose graph has no guardrail node, so a pick
+    in B is answered too instead of showing the menu again."""
+    ask = state.get("menu_followup")
+    return {"draft_response": ask["question"], "clarification": ask} if ask else {}
+
+
+# A school's name as people write it, for the school guard only: capitalised words ending in School, Primary or High,
+# with "St." abbreviations, hyphens ("Anglo-Chinese"), initials ("CHIJ"), apostrophes and a campus in brackets. The
+# extraction regex needs every word to be letters only, so the guard asked "Which primary school?" for "St. Hilda's
+# Primary School" although the message named it. Case-sensitive: "a primary school" names no school. "High" is not a
+# school when a floor follows it ("Tampines High floor flat").
+_SCHOOL_NAME = re.compile(r"(?<![\w'’.-])((?:[A-Z][A-Za-z'’]*\.?(?:-[A-Z][A-Za-z'’]*)*\s+){1,5})"
+                          r"(?:Primary School|School|Primary|High(?![\s-]*(?:[Ff]loors?|[Ss]tor(?:e)?ys?|[Ll]evels?|[Rr]ise)\b))"
+                          r"\b(?:\s*\([A-Z][A-Za-z ]*\))?")
+# Words that describe a kind of school or belong to the sentence, not to a name: a match made only of these (and of
+# research_intents' generic school words: "SAP", "Elite", "Reputable"...) names no school, so the guard still asks.
+# "Catholic High School" and "Methodist Girls' School" keep a name word ("high", "methodist").
+_NOT_A_NAME = frozenset({"a", "an", "the", "any", "my", "our", "her", "his", "their", "your", "which", "what", "moe",
+                         "primary", "secondary", "good", "best", "top", "popular", "nearby", "near", "nearest",
+                         "closest", "find", "show", "list", "looking", "is", "are", "of", "to", "from", "for", "at",
+                         "by", "with", "around", "within", "in", "and", "or", "hdb", "flat", "flats", "block", "blocks",
+                         "school", "schools", "catholic", "christian", "gep", "ip", "girls", "boys", "girl", "boy",
+                         "chinese", "english", "malay", "tamil", "mission", "international", "private", "government",
+                         "aided", "autonomous", "independent", "integrated", "special", "neighbourhood", "neighborhood",
+                         "co", "ed", "mixed", "single", "sex", "same", "new", "kid", "kids", "child", "children", "son",
+                         "daughter"})
+
+
+def names_a_school(text: str) -> bool:
+    """Whether the message names a specific school (_SCHOOL_NAME): at least one word of the name is not a generic or
+    descriptive word such as "The", "Primary", "MOE", "Catholic" or "SAP"."""
+    for m in _SCHOOL_NAME.finditer(text or ""):
+        words = [re.sub(r"['’]s?$", "", w.strip(".")).lower() for w in re.split(r"[\s-]+", m.group(1)) if w]
+        name = [w for w in words if w and w not in _NOT_A_NAME]
+        if name and not ri.generic_school_phrase(" ".join(name)):
+            return True
+    return False
 
 
 def guardrail_gate(state: HDBCompassState) -> str:

@@ -14,6 +14,13 @@ Deterministic mode (LLM_PROFILE=none): runs every specialist's plan in one loop
 (what an ideal monolith would call) and a template answer, so the eval pipeline
 can be exercised without a model. Routing metrics for A are therefore trivial in
 that mode — the LLM run is the one that matters.
+
+Add-on tools (agents/addons): under addons.offer_in: all, A gets the same tools as B and C and the same "when to use"
+line for each (supervisor.addon_prompt). It does not get the analysis-mode data guide that C's market agent and B's
+data agent get for a data question no specific intent covers: that mode is set by the extraction step, which A does
+not have by design, and the guide tells the model to end with one sentence and no numbers because code writes the
+figures, whereas A's model writes its own answer. Giving it to A would either need an extraction step or cost A its
+figures, so the difference is part of the architecture being measured.
 """
 from __future__ import annotations
 
@@ -50,10 +57,13 @@ def monolith_node(state: HDBCompassState) -> Dict[str, Any]:
     users = " ".join(m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user")
     c = sv.rule_based_extract(users).model_dump()
     c["requested_tools"] = sv.requested_tools(users)   # the fallback plan runs upfront costs and comparables only when asked
+    # Same tools as B and C (add-on tools only under addons.offer_in: all), with the same "when to use" lines C's
+    # specialists get for them, and the same coordinates a tool call may use (the map pin and the user's own).
     outputs, log, errors, final_text = sv.run_react(
-        "monolith", addons.visible_tools(list(TOOL_OWNER), VARIANT), MONOLITH_SYSTEM, query, c,
+        "monolith", addons.visible_tools(list(TOOL_OWNER), VARIANT),
+        MONOLITH_SYSTEM + sv.addon_prompt(sv.SPECIALISTS, VARIANT), query, c,
         max_iter=sv.load_config()["architecture"]["subagent_max_tool_iterations"] * 2,
-        plan_agents=sv.SPECIALISTS)
+        plan_agents=sv.SPECIALISTS, known_points=sv.trusted_points(state))
     update = sv.slot_outputs(outputs, c.get("towns") or [])
     update["user_constraints"] = c
     update["active_subagents"] = ["monolith"]
