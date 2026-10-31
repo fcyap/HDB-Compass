@@ -26,8 +26,39 @@ export interface MapViewport {
   zoom: number;
 }
 
-// Radius of the facility panel; chat questions about the pin use the same circle.
-export const FACILITY_RADIUS_METERS = 1500;
+// Default radius of the pin circle and facility panel; chat questions about the pin use the same circle.
+export const FACILITY_RADIUS_METERS = 500;
+export const RADIUS_PRESETS: { meters: number; label: string }[] = [
+  { meters: 200, label: '200 m' },
+  { meters: 500, label: '500 m' },
+  { meters: 1000, label: '1 km' },
+  { meters: 1500, label: '1.5 km' },
+  { meters: 2000, label: '2 km' },
+];
+const RADIUS_MIN = 100;
+const RADIUS_MAX = 3000;
+const RADIUS_STORAGE_KEY = 'hdb-compass-radius-m';
+
+export const loadSavedRadius = (): number => {
+  try {
+    const v = Number(window.localStorage.getItem(RADIUS_STORAGE_KEY));
+    if (Number.isFinite(v) && v >= RADIUS_MIN && v <= RADIUS_MAX) return v;
+  } catch (e) { /* storage unavailable: use the default */ }
+  return FACILITY_RADIUS_METERS;
+};
+
+// The pin's border: a 64-point circle computed in the browser (metres to degrees at the pin's latitude), so the
+// border follows the slider instantly with no request per step. Singapore-sized radii make this accurate to <0.1%.
+const circlePolygon = (lat: number, lng: number, radiusM: number): GeoJSON.Feature => {
+  const dLat = radiusM / 111320;
+  const dLng = radiusM / (111320 * Math.cos((lat * Math.PI) / 180));
+  const ring: [number, number][] = [];
+  for (let i = 0; i <= 64; i++) {
+    const a = (2 * Math.PI * (i % 64)) / 64;
+    ring.push([lng + dLng * Math.cos(a), lat + dLat * Math.sin(a)]);
+  }
+  return { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [ring] } };
+};
 
 interface InteractiveMapProps {
   bufferGeoJSON: GeoJSON.Feature | null;
@@ -38,6 +69,8 @@ interface InteractiveMapProps {
   onThemeChange?: (theme: string) => void;
   selectedBlockHighlight?: string | null;
   clearTrigger?: number;
+  radiusMeters?: number;
+  onRadiusChange?: (meters: number) => void;
 }
 
 export const ONEMAP_THEMES: Record<string, string> = {
@@ -87,6 +120,8 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   onThemeChange,
   selectedBlockHighlight,
   clearTrigger,
+  radiusMeters = FACILITY_RADIUS_METERS,
+  onRadiusChange,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -96,6 +131,13 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   const facilityMarkerRef = useRef<maplibregl.Marker | null>(null);
 
   const [mapLoaded, setMapLoaded] = useState(false);
+  // The clicked pin and its radius border ('pin-radius-source'), separate from the agent's buffer layers
+  const [pinCenter, setPinCenter] = useState<{ lat: number; lng: number } | null>(null);
+  const pinCenterRef = useRef(pinCenter);
+  pinCenterRef.current = pinCenter;
+  const radiusLabel = radiusMeters >= 1000 ? `${radiusMeters / 1000} km` : `${radiusMeters} m`;
+  const radiusRef = useRef(radiusMeters);
+  radiusRef.current = radiusMeters;
   const [cursorCoords, setCursorCoords] = useState<{ lat: number; lng: number } | null>(null);
 
   // PropertyGuru-style Facility Drawer state
@@ -186,7 +228,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       body: JSON.stringify({
         lat,
         lng,
-        radius_meters: FACILITY_RADIUS_METERS,
+        radius_meters: radiusRef.current,
         include_buffer_polygon: false,
       }),
     })
@@ -208,6 +250,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       setSelectedBlock(null);
       setDrawerOpen(false);
       setAllNearbyFacilities([]);
+      setPinCenter(null);
       if (clickMarkerRef.current) {
         clickMarkerRef.current.remove();
         clickMarkerRef.current = null;
@@ -229,6 +272,8 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         if (src1) src1.setData({ type: 'FeatureCollection', features: [] });
         const src2 = mapRef.current.getSource('agent-pois-source') as maplibregl.GeoJSONSource;
         if (src2) src2.setData({ type: 'FeatureCollection', features: [] });
+        const src4 = mapRef.current.getSource('pin-radius-source') as maplibregl.GeoJSONSource;
+        if (src4) src4.setData({ type: 'FeatureCollection', features: [] });
         const src3 = mapRef.current.getSource('agent-buffer-source') as maplibregl.GeoJSONSource;
         if (src3) src3.setData({ type: 'FeatureCollection', features: [] });
       }
@@ -299,6 +344,28 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
 
   // Reusable helper to attach all custom analysis layers & interactions
   const setupLayers = useCallback((map: maplibregl.Map) => {
+    // 0. Pin radius border (the circle around the user's clicked pin), under the agent's buffer
+    const pinCircle = pinCenterRef.current
+      ? wrapFeatureCollection(circlePolygon(pinCenterRef.current.lat, pinCenterRef.current.lng, radiusRef.current))
+      : wrapFeatureCollection(null);
+    if (!map.getSource('pin-radius-source')) {
+      map.addSource('pin-radius-source', { type: 'geojson', data: pinCircle });
+      map.addLayer({
+        id: 'pin-radius-fill',
+        type: 'fill',
+        source: 'pin-radius-source',
+        paint: { 'fill-color': '#008F8A', 'fill-opacity': 0.1 },
+      });
+      map.addLayer({
+        id: 'pin-radius-line',
+        type: 'line',
+        source: 'pin-radius-source',
+        paint: { 'line-color': '#008F8A', 'line-width': 2, 'line-dasharray': [2, 2] },
+      });
+    } else {
+      (map.getSource('pin-radius-source') as maplibregl.GeoJSONSource).setData(pinCircle);
+    }
+
     // 1. Buffer Polygon Layer
     if (!map.getSource('agent-buffer-source')) {
       map.addSource('agent-buffer-source', {
@@ -656,6 +723,8 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
           .addTo(map);
 
         setDrawerOpen(true);
+        pinCenterRef.current = { lat: targetLat, lng: targetLng };
+        setPinCenter({ lat: targetLat, lng: targetLng });
         fetchFacilitiesForLocation(targetLat, targetLng);
       } catch (err) {
         console.error('[Map Click Error]', err);
@@ -680,6 +749,28 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       setupLayers(map);
     });
   }, [theme, mapLoaded, setupLayers]);
+
+  // Redraw the pin's radius border when the pin or the radius changes
+  useEffect(() => {
+    if (!mapRef.current || !mapLoaded) return;
+    const source = mapRef.current.getSource('pin-radius-source') as maplibregl.GeoJSONSource;
+    if (source) {
+      source.setData(wrapFeatureCollection(pinCenter ? circlePolygon(pinCenter.lat, pinCenter.lng, radiusMeters) : null));
+    }
+  }, [pinCenter, radiusMeters, mapLoaded]);
+
+  // A new radius re-fetches the facilities around the pin (after a short pause while the slider is dragged)
+  const firstRadiusRun = useRef(true);
+  useEffect(() => {
+    if (firstRadiusRun.current) {
+      firstRadiusRun.current = false;
+      return;
+    }
+    const pin = pinCenterRef.current;
+    if (!pin) return;
+    const t = window.setTimeout(() => fetchFacilitiesForLocation(pin.lat, pin.lng), 250);
+    return () => window.clearTimeout(t);
+  }, [radiusMeters, fetchFacilitiesForLocation]);
 
   // Update Buffer Polygon Layer
   useEffect(() => {
@@ -875,6 +966,39 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     <div className="map-canvas-container">
       <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
 
+      {/* Radius control: presets and a slider for the pin's radius (also used by chat questions about the pin) */}
+      <div className="radius-control" role="group" aria-label="Pin radius">
+        <div className="radius-control-head">
+          <span>Pin radius</span>
+          <strong aria-live="polite">{radiusLabel}</strong>
+        </div>
+        <div className="radius-presets">
+          {RADIUS_PRESETS.map((p) => (
+            <button
+              key={p.meters}
+              type="button"
+              className={`radius-preset ${radiusMeters === p.meters ? 'active' : ''}`}
+              aria-label={`Set pin radius to ${p.label}`}
+              aria-pressed={radiusMeters === p.meters}
+              onClick={() => onRadiusChange?.(p.meters)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <input
+          type="range"
+          className="radius-slider"
+          min={RADIUS_MIN}
+          max={RADIUS_MAX}
+          step={50}
+          value={radiusMeters}
+          aria-label="Pin radius in metres"
+          aria-valuetext={`${radiusMeters} metres`}
+          onChange={(e) => onRadiusChange?.(Number(e.target.value))}
+        />
+      </div>
+
       {/* ------------------------------------------------------------------ */}
       {/* PropertyGuru-Style Category Filter Pill Bar (Top Left)             */}
       {/* ------------------------------------------------------------------ */}
@@ -934,7 +1058,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
               <p className="pg-drawer-meta">
                 {selectedBlock.price
                   ? `Median $${Number(selectedBlock.price).toLocaleString()} · ${Math.round(selectedBlock.lease || 60)} yrs lease`
-                  : 'Proximity Scan (1.5km Radius)'}
+                  : `Proximity Scan (${radiusLabel} Radius)`}
               </p>
             </div>
             <button className="pg-close-btn" onClick={() => setDrawerOpen(false)} title="Close panel">
@@ -946,11 +1070,11 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
             {loadingFacilities ? (
               <div className="pg-empty-state">
                 <Clock size={18} style={{ animation: 'spin 1.5s linear infinite', margin: '0 auto 6px' }} />
-                <span>Scanning 1.5km radius around block...</span>
+                <span>Scanning {radiusLabel} radius around block...</span>
               </div>
             ) : filteredFacilities.length === 0 ? (
               <div className="pg-empty-state">
-                <span>No facilities found in this category within 1.5km.</span>
+                <span>No facilities found in this category within {radiusLabel}.</span>
               </div>
             ) : (
               filteredFacilities.map((f, i) => (

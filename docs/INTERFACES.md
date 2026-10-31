@@ -386,3 +386,18 @@ flat" stays a budget. A block list says "meet every limit you set" only if the u
 **Routing lock.** `tests/test_scope_routing.py` holds a table of questions with the route and tools each must take. It
 locks Category C (15 policy questions all go to `['policy_rag']` by regex) and the Category E routes, so a routing change
 that moves either fails the test. It runs with `HDB_ADDONS=off` set inside the test module only.
+
+## 11. Map pin and radius
+
+The page sends `radius_meters` (default 500, set by the radius control on the map, 100-3000 m, remembered in the
+browser) with each chat message, next to the pin's `lat`/`lng`. The backend puts it in `map_state["radius_meters"]`.
+Precedence for a question about the pin ("what's near here?", "prices around this block"): a distance stated in the
+text ("within 300m") > the map control's radius > the default (500 m for "around", 1 km for nearby amenities when no
+pin radius is sent). Values outside 50-3000 m (area) are clamped and the answer says so. Answers state the radius and,
+when it came from the map, say "within N m of your pin (set on the map)". The pin's border is drawn by the page on its
+own `pin-radius-*` layers (the agent's `agent-buffer-*` layers are unchanged).
+
+Radius chips: an area-statistics or nearby-amenities answer about one place carries `state["suggestions"]`
+(`[{"label": "Within 200 m", "text": "What are resale prices within 200m of <place>?"}]`, the current radius left out).
+The websocket sends them as `clarification = {"kind": "suggestion", "question": null, "options": [...]}`, but they are
+not a pending question: `state["clarification"]` stays empty, so a click is answered as a fresh question on the fast path.
