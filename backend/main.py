@@ -238,12 +238,22 @@ def query_radius(req: RadiusQueryRequest):
     cat_lower = (req.category or "all").lower()
 
     # 1. Query Official Singapore Public Amenities (MRT / LRT, Hawkers, Supermarkets)
-    if cat_lower in ("all", "mrt", "hawker", "supermarket") and amenity_tree:
+    if cat_lower in ("all", "mrt", "mrt_only", "lrt", "mrt_lrt", "hawker", "supermarket") and amenity_tree:
         idxs = amenity_tree.query_ball_point([cx, cy], r=req.radius_meters)
         for i in idxs:
             a = dict(amenities[i])
             item_cat = a.get("category", "").lower()
-            if cat_lower != "all" and item_cat != cat_lower:
+            raw_upper = f" {a.get('name', '').upper()} "
+            is_lrt = str(a.get("rail_type") or "").upper() == "LRT" or " LRT " in raw_upper
+            if item_cat in ("mrt", "lrt"):
+                a["rail_type"] = "LRT" if is_lrt else "MRT"
+            if cat_lower == "lrt" and not (item_cat in ("mrt", "lrt") and is_lrt):
+                continue
+            elif cat_lower == "mrt_only" and not (item_cat in ("mrt", "lrt") and not is_lrt):
+                continue
+            elif cat_lower in ("mrt", "mrt_lrt") and item_cat not in ("mrt", "lrt"):
+                continue
+            elif cat_lower not in ("all", "mrt", "mrt_only", "lrt", "mrt_lrt") and item_cat != cat_lower:
                 continue
             dist = float(np.hypot(a["x"] - cx, a["y"] - cy))
             a["distance_meters"] = round(dist, 1)

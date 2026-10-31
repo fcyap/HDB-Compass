@@ -356,10 +356,12 @@ def build_and_save_index() -> None:
             lng, lat = centroid.x, centroid.y
             x, y = transformer.transform(lng, lat)
             stn_name = props.get("NAME", "STATION").strip()
-            rail_type = props.get("RAIL_TYPE", "MRT").strip()
+            rail_type = props.get("RAIL_TYPE", "MRT").strip().upper()
+            is_lrt = "LRT" in rail_type or "LRT" in stn_name.upper()
             amenity_entry = {
                 "name": f"{stn_name} {rail_type} STATION",
                 "category": "mrt",
+                "rail_type": "LRT" if is_lrt else "MRT",
                 "lat": round(lat, 6),
                 "lng": round(lng, 6),
                 "x": round(float(x), 2),

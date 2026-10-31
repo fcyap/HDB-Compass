@@ -63,7 +63,7 @@ def create_buffer_geojson(
     """Generate exact metric boundary polygon in SVY21, exported as GeoJSON (WGS84)."""
     cx, cy = wgs84_to_svy21(lat, lng)
     metric_point = Point(cx, cy)
-    metric_poly = metric_point.buffer(radius_meters, resolution=resolution)
+    metric_poly = metric_point.buffer(radius_meters, quad_segs=resolution)
 
     wgs84_poly = transform(lambda x, y: _TO_WGS84.transform(x, y), metric_poly)
 
@@ -341,6 +341,14 @@ def verify_primary_school_distance(
     return qualifying_blocks
 
 
+def _is_lrt_station(record: Dict[str, Any]) -> bool:
+    """True when a rail station record is an LRT stop rather than a heavy-rail MRT station."""
+    if str(record.get("rail_type") or "").upper() == "LRT":
+        return True
+    name_upper = f" {str(record.get('name') or '').upper()} "
+    return " LRT " in name_upper
+
+
 @mcp.tool()
 def filter_blocks_by_amenity_proximity(
     towns: List[str],
@@ -348,7 +356,7 @@ def filter_blocks_by_amenity_proximity(
 ) -> List[Dict[str, Any]]:
     """
     Filters HDB blocks across specified towns where walking distance to EVERY requested
-    amenity (mrt, hawker, supermarket) is strictly <= the threshold in metres.
+    amenity (mrt, mrt_only, lrt, mrt_lrt, hawker, supermarket) is strictly <= the threshold in metres.
     """
     index_data = get_spatial_index()
     blocks = index_data["payload"]["blocks"]
@@ -360,7 +368,20 @@ def filter_blocks_by_amenity_proximity(
     category_amenities: Dict[str, List[Dict[str, Any]]] = {}
     for cat in amenity_constraints.keys():
         cat_lower = cat.lower()
-        category_amenities[cat_lower] = [a for a in amenities if a["category"].lower() == cat_lower]
+        if cat_lower == "lrt":
+            category_amenities[cat_lower] = [
+                a for a in amenities if a["category"].lower() in ("mrt", "lrt") and _is_lrt_station(a)
+            ]
+        elif cat_lower == "mrt_only":
+            category_amenities[cat_lower] = [
+                a for a in amenities if a["category"].lower() == "mrt" and not _is_lrt_station(a)
+            ]
+        elif cat_lower in ("mrt", "mrt_lrt"):
+            category_amenities[cat_lower] = [
+                a for a in amenities if a["category"].lower() in ("mrt", "lrt")
+            ]
+        else:
+            category_amenities[cat_lower] = [a for a in amenities if a["category"].lower() == cat_lower]
 
     matched_results = []
     for b in candidate_blocks:
