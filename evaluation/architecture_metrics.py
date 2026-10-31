@@ -390,7 +390,10 @@ def asked_for_missing(draft: str, missing: List[str]) -> bool:
 #   - the median price of every group always; the sales count when the question asks for statistics or a number of
 #     sales; the price per sqm when the question asks per square metre;
 #   - a figure belongs to a group when it sits in that group's table row (the column header says which figure it is),
-#     on a line naming only that group, or, on a line naming several, in the clause naming the group;
+#     on a line naming only that group, or, on a line naming several, in the clause naming the group ("$525,000 in
+#     2021" and "$525,000 (2022)" go to the label right after them); a comparison ("(vs $650,000 for >300 m)",
+#     "compared with $650,000 further out") is not the line's group's figure, and a figure only another group's
+#     comparison gives counts only when the group's own line states none;
 #   - a figure is right within $1 (count: exactly; per sqm: within the truth's 0.1 rounding) or within the rounding
 #     the answer itself uses ("$515k", "$1.45M", "about $1,450,000"); a figure with fewer than three significant
 #     digits ("$1.4M") is too vague to count either way;
@@ -407,11 +410,24 @@ _ASKS_PSM = _re.compile(_PSM_WORDS + r"|\bpsf\b", _re.I)
 _DASH = r"\s*(?:-|–|—|to)\s*"
 _M_UNIT = r"\s*(?:m\b|metres?\b|meters?\b)"
 _YEARS_UNIT = r"\s*(?:years?|yrs?)\b"
-# lines about money the buyer has or borrows, not about past sales (a grant amount beside "4-room" is no median)
-_OFF_TOPIC = _re.compile(r"\b(?:grants?|loans?|cpf|income|afford\w*|stamp duty|levy|subsid\w*|ceiling|eligib\w*|"
-                         r"down ?payment|mortgage)\b", _re.I)
-_CLAUSE_SPLIT = _re.compile(r"(?<=[.!?;])\s+|,\s+|;\s*|\s+[–—-]\s+|\s+(?:and|while|whereas|but|compared (?:with|to)|"
-                            r"versus|vs\.?|than)\s+", _re.I)
+# lines about money the buyer has or borrows, not about past sales (a grant amount beside "4-room" is no median);
+# "affordable" is no such word: the cheapest town is "the most affordable" in a statistics answer
+_OFF_TOPIC = _re.compile(r"\b(?:grants?|loans?|cpf|stamp duty|levy|subsid\w*|down ?payment|mortgage)\b", _re.I)
+# words that only make the figures in their own clause off-topic ("Jurong East, the cheapest at $514,000, though the
+# income ceiling applies" keeps its median)
+_OFF_TOPIC_CLAUSE = _re.compile(r"\b(?:income|ceilings?|eligib\w*)\b", _re.I)
+_COMPARE_WORDS = r"(?:compared (?:with|to)|versus|vs\.?|against|(?:up|down|rising|falling) from)"
+_CLAUSE_SPLIT = _re.compile(r"(?<=[.!?;])\s+|,\s+|;\s*|\s+[–—-]\s+|\s+(?:and|while|whereas|but|than|" + _COMPARE_WORDS +
+                            r")\s+|\s*\(\s*(?=" + _COMPARE_WORDS + r"\s)", _re.I)
+# a clause opened by a comparison ("(vs $650,000 for >300 m)", ", compared with $650,000 further out", "(up from
+# $525,000 in 2021)") is about something other than the line's group; "more than 10,000 sales" is no comparison
+_COMPARE_OPEN = _re.compile(r"[\s(,;:–—-]*(?:" + _COMPARE_WORDS + r"|than(?!\s+(?:S\$|SGD\s?|\$)?\s?\d))(?!\w)", _re.I)
+# a figure followed directly by a label belongs to that label: "$650,000 for >300 m", "$525,000 in 2021", "$525,000
+# (2022)", "$488,000 for flats over 1 km" ...
+_TO_LABEL_AFTER = _re.compile(r"\s*(?:\(\s*|(?:for|in|at|among)\s+(?:the\s+)?(?:(?:resale\s+)?(?:flats?|units?|homes?)\s+)?)",
+                              _re.I)
+# ... unless that label opens its own figure ("$525,000 (2021: $500,000)")
+_LABEL_THEN_FIGURE = _re.compile(r"\s*[:=–—-]?\s*(?:~|≈)?\s*(?:S\$|SGD\s?|\$)?\s?\d", _re.I)
 _FIGURE_RE = _re.compile(r"(?<![\w.,])(?P<cur>S\$|SGD\s?|\$)?\s?(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
                          r"(?:\s?(?P<suf>k|thousand|million|mil|mn|m)\b)?", _re.I)
 _APPROX_BEFORE = _re.compile(r"(?:about|around|approximately|approx\.?|roughly|nearly|almost|~|≈)\s*(?:S\$|SGD\s?|\$)?\s*$", _re.I)
@@ -424,9 +440,16 @@ _PSM_AFTER = _re.compile(r"\s*" + _PSM_WORDS, _re.I)
 _PSM_BEFORE = _re.compile(_PSM_WORDS + r"\s*(?:of|is|was|at|:|=|-|–|—)?\s*(?:S\$|SGD\s?|\$)?\s*$", _re.I)
 _COL_PSM = _re.compile(_PSM_WORDS + r"|\bpsf\b|\bsqm\b", _re.I)
 _COL_PRICE = _re.compile(r"median|price|typical|\bavg\b|average|\bmean\b", _re.I)
-_COL_COUNT = _re.compile(r"\b(?:sales|transactions|count|volume|number|no\.|n|units|deals|resales)\b", _re.I)
-_COL_OTHER = _re.compile(r"middle|range|iqr|percentile|\bp\d|25|75|change|\bvs\b|%|growth|premium|diff|\bmin|\bmax|lowest|"
-                         r"highest|trend|year|since|from|first", _re.I)
+_COL_COUNT = _re.compile(r"\b(?:sales|transactions|count|volume|number|no\.|n|units|deals|resales|sold)\b", _re.I)
+# columns holding something other than the group's figure: quartiles, changes, extremes
+_COL_OTHER = _re.compile(r"middle|range|iqr|percentile|quartile|\bq[13]\b|\bp\d|\b(?:25|75)th\b|change|\bvs\b|%|growth|"
+                         r"premium|diff|\bmin|\bmax|lowest|highest|trend", _re.I)
+# a column for one part of the period ("Median (first year)", "Median 2021"); the whole period is fine: "Median price
+# (Oct 2025 - Sep 2026)", "(past year)", "(last 5 years)", "Resales (2025-26)", "(since 2021)"
+_COL_PART_PERIOD = _re.compile(r"\bfirst\b|\blatest\b|\bstart\w*|\bend\b|\bbefore\b|\bprevious\b|\bprior\b|"
+                               r"\bin\s+(?:19|20)\d\d\b", _re.I)
+_COL_ONE_YEAR = _re.compile(r"(?<![\d\w])(?:19|20)\d\d(?!\d)")
+_COL_YEAR_SPAN = _re.compile(r"\b(?:since|from)\s+(?:\w+\s+)?(?:19|20)\d\d|(?:19|20)\d\d\s*(?:-|–|—|to|onwards?|\+)", _re.I)
 
 
 def stat_measures_asked(query: str) -> List[str]:
@@ -480,7 +503,10 @@ def _label_patterns(label: str) -> tuple:
         lo, hi = (f"0?{int(x)}" for x in m.groups())
         pats.append(r"\b(?:storeys?|floors?|levels?)\s*" + lo + _DASH + hi + r"\b")
         pats.append(r"(?<![\d.])" + lo + _DASH + hi + r"\s*(?:storeys?|floors?)\b")
-        cell = lo + _DASH + hi
+        # the band on its own, "(1-5)", "1st-5th", "1st to 5th floor" (never a price, distance, lease or room range)
+        pats.append(r"(?<![\w$.,/-])" + lo + r"(?:st|nd|rd|th)?" + _DASH + hi + r"(?:st|nd|rd|th)?(?![\w%.,/-]|\s*(?:"
+                    r"m\b|km\b|years?\b|yrs?\b|months?\b|mths?\b|k\b|-?\s*rooms?\b|%))")
+        cell = lo + r"(?:st|nd|rd|th)?" + _DASH + hi + r"(?:st|nd|rd|th)?"
     m = _re.fullmatch(r"storey (\d+)\+", lab, _re.I)
     if m:
         pats.append(r"\b(?:storeys?|floors?|levels?)\s*" + m.group(1) + r"\s*(?:\+|and above)")
@@ -495,6 +521,7 @@ def _label_patterns(label: str) -> tuple:
     if m:
         pats.append(r"(?<![\d.])" + m.group(1) + r"\s*\+")
         pats.append(r"(?:\bover|\babove|\bmore than|\bat least|≥|>=)\s*" + m.group(1) + _YEARS_UNIT)
+        pats.append(r"(?<![\d.])" + m.group(1) + _YEARS_UNIT + r"\s*(?:and (?:above|over|more|longer)|or (?:more|longer)|plus)\b")
     if _re.fullmatch(r"(?:19|20)\d\d", lab):              # a year (never "2021-10", a month)
         pats = [r"(?<![\w$,./-])" + lab + r"(?![\d]|-\d|/\d)"]
     m = _re.fullmatch(r"(\d) ROOM", lab, _re.I)
@@ -557,7 +584,8 @@ def _figures(text: str, blank: List[tuple]) -> List[Dict[str, Any]]:
             kind = "count"
         else:
             kind = None
-        out.append({"pos": m.start("cur") if cur else m.start("num"), "value": value, "unit": unit, "kind": kind})
+        out.append({"pos": m.start("cur") if cur else m.start("num"), "end": m.end(), "value": value, "unit": unit,
+                    "kind": kind})
     return out
 
 
@@ -571,8 +599,10 @@ def _column_kind(header: str) -> Optional[str]:
     h = (header or "").strip()
     if _COL_PSM.search(h):
         return "median_psm"
-    if _COL_OTHER.search(h):
+    if _COL_OTHER.search(h) or _COL_PART_PERIOD.search(h):
         return None
+    if len(_COL_ONE_YEAR.findall(h)) == 1 and not _COL_YEAR_SPAN.search(h):
+        return None                                         # "Median 2021": one year of the period
     if _COL_PRICE.search(h):
         return "median_price"
     if _COL_COUNT.search(h):
@@ -587,11 +617,12 @@ def _cell_groups(cell: str, matchers: List[tuple]) -> set:
     return found
 
 
-def _attach(claims: Dict[int, Dict[str, List[tuple]]], g: int, figs: List[Dict[str, Any]], kind: Optional[str] = None) -> None:
+def _attach(claims: Dict[int, Dict[str, List[tuple]]], g: int, figs: List[Dict[str, Any]], kind: Optional[str] = None,
+            aside: bool = False) -> None:
     for f in figs:
         k = kind or f["kind"]
         if k:
-            claims[g][k].append((f["value"], f["unit"]))
+            claims[g][k].append((f["value"], f["unit"], aside))
 
 
 def _table_claims(lines: List[str], matchers: List[tuple], claims: Dict[int, Dict[str, List[tuple]]]) -> None:
@@ -618,6 +649,7 @@ def _table_claims(lines: List[str], matchers: List[tuple], claims: Dict[int, Dic
         if len(groups) != 1 or any(_OFF_TOPIC.search(c) for c in r):
             continue
         g = next(iter(groups))
+        r = [("" if _OFF_TOPIC_CLAUSE.search(c) else c) for c in r]
         if any(kinds):
             for c, k in enumerate(kinds):
                 if k and c < len(r):
@@ -627,23 +659,41 @@ def _table_claims(lines: List[str], matchers: List[tuple], claims: Dict[int, Dic
             _attach(claims, g, _figures(text, _label_spans(text, matchers)))
 
 
-def _line_claims(text: str, spans: List[tuple], claims: Dict[int, Dict[str, List[tuple]]]) -> None:
-    """Figures on a line naming several groups: split into clauses (never inside a label); a figure goes to the
-    group named before it in its clause, else the one after it; a clause naming none goes to the last one named."""
-    bounds, start = [], 0
+def _clauses(text: str, spans: List[tuple]) -> List[tuple]:
+    """(opening, start, end) of each clause of a line, split never inside a label; text[opening:start] is the
+    separator that opens it ('', ', ', ' vs ', ' (' ...)."""
+    bounds, opening, start = [], 0, 0
     for m in _CLAUSE_SPLIT.finditer(text):
         if any(a < m.end() and m.start() < b for a, b, _ in spans):
             continue
-        bounds.append((start, m.start()))
-        start = m.end()
-    bounds.append((start, len(text)))
+        bounds.append((opening, start, m.start()))
+        opening, start = m.start(), m.end()
+    bounds.append((opening, start, len(text)))
+    return bounds
+
+
+def _context_figures(text: str) -> List[Dict[str, Any]]:
+    """Figures on a line under a group's heading that are about that group: not in a comparison or an income clause."""
+    figs = _figures(text, [])
+    return [f for o, a, b in _clauses(text, []) if not _COMPARE_OPEN.match(text[o:b]) and not _OFF_TOPIC_CLAUSE.search(text[o:b])
+            for f in figs if a <= f["pos"] < b]
+
+
+def _line_claims(text: str, spans: List[tuple], claims: Dict[int, Dict[str, List[tuple]]]) -> None:
+    """Figures on a line naming groups: split into clauses (never inside a label); a figure followed directly by a
+    label ("$650,000 for >300 m", "$525,000 (2022)") goes to that label, else to the group named before it in its
+    clause, else the one after it; a clause naming none goes to the last one named. A comparison clause naming no
+    group ("(vs $505,000 island-wide)", ", compared with $650,000 further out") gives its figures to none."""
     figs = _figures(text, spans)
     last: Optional[int] = None
     pending: List[Dict[str, Any]] = []                         # figures in a clause before any group is named
-    for a, b in bounds:
+    for o, a, b in _clauses(text, spans):
         own = [s for s in spans if a <= s[0] < b]
-        fs = [f for f in figs if a <= f["pos"] < b]
+        compare = bool(_COMPARE_OPEN.match(text[o:b]))
+        fs = [f for f in figs if a <= f["pos"] < b] if not _OFF_TOPIC_CLAUSE.search(text[o:b]) else []
         if not own:
+            if compare:
+                continue
             if last is None:
                 pending += fs
             else:
@@ -653,13 +703,18 @@ def _line_claims(text: str, spans: List[tuple], claims: Dict[int, Dict[str, List
             _attach(claims, own[0][2], pending)
             pending = []
         for f in fs:
+            nxt = next((s for s in own if s[0] >= f["end"]), None)
+            if nxt and _TO_LABEL_AFTER.fullmatch(text[f["end"]:nxt[0]]) and not _LABEL_THEN_FIGURE.match(text, nxt[1]):
+                _attach(claims, nxt[2], [f], aside=compare)
+                continue
             before = [s for s in own if s[1] <= f["pos"]]
-            _attach(claims, (before[-1] if before else own[0])[2], [f])
+            _attach(claims, (before[-1] if before else own[0])[2], [f], aside=compare)
         last = own[-1][2]
 
 
 def statistic_claims(draft: str, labels: List[str]) -> Dict[int, Dict[str, List[tuple]]]:
-    """Every (value, rounding unit) the answer gives for each group (by index into labels) and figure."""
+    """Every (value, rounding unit, aside) the answer gives for each group (by index into labels) and figure; aside
+    marks a figure given in a comparison on another group's line ("(vs $545,000 in Bedok)")."""
     matchers = [_label_patterns(lab) for lab in labels]
     claims: Dict[int, Dict[str, List[tuple]]] = {gi: {k: [] for k in STAT_MEASURES} for gi in range(len(labels))}
     lines = (draft or "").splitlines()
@@ -689,17 +744,13 @@ def statistic_claims(draft: str, labels: List[str]) -> Dict[int, Dict[str, List[
             if heading:
                 context = None
             elif context is not None:
-                _attach(claims, context, _figures(text, []))
+                _attach(claims, context, _context_figures(text))
             continue
-        if len(groups) == 1:
-            g = next(iter(groups))
-            figs = _figures(text, spans)
-            _attach(claims, g, figs)
-            if not any(f["kind"] for f in figs):
-                context, sticky = g, raw.lstrip().startswith("#")
-            continue
-        context = None
         _line_claims(text, spans, claims)
+        if len(groups) > 1:
+            context = None
+        elif not any(f["kind"] for f in _figures(text, spans)):
+            context, sticky = next(iter(groups)), raw.lstrip().startswith("#")
     return claims
 
 
@@ -742,8 +793,10 @@ def statistics_scores(item: Dict[str, Any], state: Dict[str, Any]) -> Optional[D
         for k in STAT_MEASURES:
             if g.get(k) is None:
                 continue
-            said = claims[gi][k]
-            status = ("right" if any(_figure_right(v, u, g[k], k) for v, u in said) else "wrong") if said else "missing"
+            # a figure the group's own line states is its figure; one from another group's comparison counts only
+            # when the answer states none itself (else a swapped answer is rescued by its own asides)
+            said = [c for c in claims[gi][k] if not c[2]] or claims[gi][k]
+            status = ("right" if any(_figure_right(v, u, g[k], k) for v, u, _ in said) else "wrong") if said else "missing"
             row[k] = status
             wrong += status == "wrong"
             if k in asked:
