@@ -132,7 +132,9 @@ def test_zero_distance_limits_are_not_constraints():
             return {"parsed": ExtractedConstraints(amenity_radii_meters={"mrt": 0, "hawker": 0, "park": 400})}
 
     with patch.object(sv, "get_llm", return_value=Stub()):
-        out = sv.extract_constraints_node({"messages": [{"role": "user", "content": "Can we apply for a BTO?"}]})
+        # the message mentions a park, so the model's park limit is one the user asked for (a limit for an amenity the
+        # message never mentions is dropped: tests/test_live_1nov_fixes.py)
+        out = sv.extract_constraints_node({"messages": [{"role": "user", "content": "Can we apply for a BTO near a park?"}]})
     assert out["user_constraints"]["amenity_radii_meters"] == {"park": 400}
 
 

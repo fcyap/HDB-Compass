@@ -120,3 +120,54 @@ def test_a_commute_call_with_filtered_blocks_is_left_alone():
     commute = [r for r in out["tool_call_log"] if r["tool"] == "compute_dual_transit_commute" and r["source"] == "model"]
     assert commute[0]["arguments"]["candidate_blocks"] == kept[:3]
     assert not [e for e in out["errors"] if "commute blocks" in e]
+
+
+# --- 3. distance limits the user did not ask for (live34/live35: E1-X02, B1-01, B1-03, B1-05) --------------------
+CAT_EX = {q["id"]: q["query"] for q in json.load(open(EVAL / "category_e_extra.json"))}
+EVERYTHING_1KM = {"mrt": 1000, "hawker": 1000, "supermarket": 1000, "school": 1000, "bus_stop": 1000, "park": 1000}
+
+
+@pytest.mark.parametrize("query", [CAT_EX["E1-X02"], CAT_B["B1-01"], CAT_B["B1-03"], CAT_B["B1-05"]])
+def test_a_school_question_keeps_only_the_school_limit(query):
+    c, errors = model_path(query, amenity_radii_meters=dict(EVERYTHING_1KM))
+    assert c["amenity_radii_meters"] == {"school": 1000}
+    assert [e for e in errors if "amenities not in the message were dropped" in e]
+    plan = dict(sv.deterministic_plan("spatial", c, query))
+    assert "filter_blocks_by_amenity_proximity" not in plan or \
+        set(plan["filter_blocks_by_amenity_proximity"]["amenity_constraints"]) <= {"school"}
+
+
+@pytest.mark.parametrize("query,reading,kept", [
+    (CAT_E["E1-03"], {"mrt": 400, "hawker": 500}, {"mrt": 400, "hawker": 500}),
+    ("4-room in Bedok within 300m of a food centre and near a station", {"hawker": 300, "mrt": 500}, {"hawker": 300, "mrt": 500}),
+    ("5rm in Tampines, walk to NTUC and bus stop", {"supermarket": 500, "bus_stop": 300}, {"supermarket": 500, "bus_stop": 300}),
+    ("4-room near Sengkang LRT under 550k", {"mrt": 500}, {"mrt": 500}),
+])
+def test_limits_the_user_mentioned_are_kept(query, reading, kept):
+    c, errors = model_path(query, amenity_radii_meters=dict(reading))
+    assert c["amenity_radii_meters"] == kept
+    assert not [e for e in errors if "amenities not in the message" in e]
+
+
+def test_henry_park_primary_school_is_not_a_park():
+    q = "4-room in Bukit Timah within 1km of Henry Park Primary School"
+    assert "park" not in {k for k, pat in sv._AMENITY_MENTION.items() if __import__("re").search(pat, q, __import__("re").I)}
+
+
+# --- 4. a town the model split or wrote differently (live34/live35: B3-04) ---------------------------------------
+def test_kallang_whampoa_split_by_the_model_is_one_town():
+    c, errors = model_path(CAT_B["B3-04"], towns=["KALLANG", "WHAMPOA"])
+    assert c["towns"] == ["KALLANG/WHAMPOA"]
+    assert not [e for e in errors if "towns not named" in e]
+    assert "market_sql" in sv.decide_routing(c)
+
+
+@pytest.mark.parametrize("query,reading,kept", [
+    ("4rm in tiong bahru under 900k", ["TIONG BAHRU"], ["BUKIT MERAH"]),
+    ("4-room in Bt Batok under 500k", ["BT BATOK"], ["BUKIT BATOK"]),
+    ("4-room in Tampines under 600k", ["TAMPINES", "BEDOK"], ["TAMPINES"]),
+])
+def test_model_towns_go_through_the_alias_table_and_invented_ones_still_go(query, reading, kept):
+    c, errors = model_path(query, towns=reading)
+    assert c["towns"] == kept
+    assert bool([e for e in errors if "towns not named" in e]) == ("BEDOK" in reading)
