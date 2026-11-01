@@ -1,9 +1,10 @@
 # Hosted LLM profiles for the app (Member 1). Kept out of experiment_config.yaml, which names local models only so
 # the architecture study is reproducible on open weights (proposal §6.2, tests/test_demo_scripts.py).
-# Select with LLM_PROFILE=groq|openai|compatible, or LLM_PROFILE=auto (llm.auto_profiles in experiment_config.yaml).
+# Select with LLM_PROFILE=groq|openai|gemini|compatible, or LLM_PROFILE=auto (llm.auto_profiles in experiment_config.yaml).
 # Keys come from .env (see .env.example); a profile here never overrides one of the same name in experiment_config.
 profiles:
     groq:
+      provider: groq                 # Groq's own SDK (langchain-groq); base_url below is only for the model check
       base_url: "https://api.groq.com/openai/v1"
       model: "openai/gpt-oss-20b"
       model_env: "GROQ_MODEL"
@@ -11,7 +12,21 @@ profiles:
       requires_api_key: true
       timeout_s: 60
       max_tokens: 2048
+      # Client-side limits (agents/rate_limit.py). Free-tier limits belong to a MODEL: the model in use picks its
+      # entry from model_rate_limits; any model not listed there uses rate_limits. LLM_RPM / LLM_TPM / LLM_RPD in
+      # .env override both for the active model (0 = unlimited). Limits are per organisation and change - check
+      # console.groq.com/docs/rate-limits for your account.
+      model_rate_limits:
+        "openai/gpt-oss-20b":         # 30 RPM confirmed by the team; TPM and RPD from third-party summaries
+          requests_per_minute: 30
+          tokens_per_minute: 8000
+          requests_per_day: 1000
+      rate_limits:                    # used for a GROQ_MODEL not listed above (unverified: edit or override in .env)
+        requests_per_minute: 30
+        tokens_per_minute: 8000
+        requests_per_day: 1000
     openai:
+      provider: openai               # OpenAI's own SDK (langchain-openai)
       base_url: "https://api.openai.com/v1"
       model: "gpt-4.1-mini"
       model_env: "OPENAI_MODEL"
@@ -26,3 +41,33 @@ profiles:
       requires_api_key: true
       timeout_s: 60
       max_tokens: 2048
+    # Google AI Studio (free tier) through Google's own SDK. Get a key at https://aistudio.google.com.
+    # (Google's OpenAI-compatibility endpoint was tried and dropped: it rejects Gemini 3 multi-step tool calls
+    # with "missing a thought_signature".)
+    # Select with LLM_PROFILE=gemini. Not in llm.auto_profiles (that list lives in the local-only experiment config;
+    # use LLM_AUTO_PROFILES=ollama,gemini,groq to include it in auto).
+    gemini:
+      provider: google               # Google's own SDK (langchain-google-genai / google-genai), not the OpenAI layer
+      base_url: "https://generativelanguage.googleapis.com/v1beta/openai"   # only used by the model check (/models)
+      model: "gemini-3.5-flash-lite"
+      model_env: "GEMINI_MODEL"
+      api_key_env: "GEMINI_API_KEY"
+      api_key_env_fallbacks: ["GOOGLE_API_KEY"]
+      requires_api_key: true
+      timeout_s: 60
+      max_tokens: 2048
+      # Thinking: mapped to Gemini's thinking_level on 3.x models and to a token budget on 2.5 ("none" = 0 there; on
+      # 3.x it becomes "minimal", which cannot be fully off). "low" keeps tool calls fast.
+      reasoning_effort: "low"
+      # Free-tier limits belong to a MODEL (see the groq profile): the model in use picks its entry from
+      # model_rate_limits, any other uses rate_limits. LLM_RPM / LLM_TPM / LLM_RPD in .env override both.
+      # Google changes these often - check AI Studio (aistudio.google.com/usage).
+      model_rate_limits:
+        "gemini-3.5-flash-lite":      # 15 RPM confirmed by the team; TPM and RPD not yet confirmed
+          requests_per_minute: 15
+          tokens_per_minute: 250000
+          requests_per_day: 250
+      rate_limits:                    # used for a GEMINI_MODEL not listed above (unverified: edit or override in .env)
+        requests_per_minute: 10
+        tokens_per_minute: 250000
+        requests_per_day: 250

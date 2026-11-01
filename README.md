@@ -562,6 +562,7 @@ All agent variants share the selected model and the same tools.
 | `vllm` | Running cluster endpoint/tunnel; existing `VLLM_API_KEY` setup |
 | `groq` | `GROQ_API_KEY`; optional `GROQ_MODEL` (default `openai/gpt-oss-20b`) |
 | `openai` | `OPENAI_API_KEY`; optional `OPENAI_MODEL` (default `gpt-4.1-mini`) |
+| `gemini` | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`); optional `GEMINI_MODEL` (default `gemini-3.5-flash-lite`) |
 | `compatible` | `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` for an OpenAI-compatible Chat Completions service supporting tools |
 | `auto` | Try available Ollama, then configured Groq, then configured OpenAI; select once until restart |
 | `none` | Rule-based processing without a model or key |
@@ -573,6 +574,46 @@ LLM_PROFILE=groq
 GROQ_API_KEY=your-key-here
 GROQ_MODEL=openai/gpt-oss-20b
 ```
+
+To use Google Gemini's free tier, create a key at <https://aistudio.google.com>
+and set:
+
+```dotenv
+LLM_PROFILE=gemini
+GEMINI_API_KEY=your-key-here
+GEMINI_MODEL=gemini-3.5-flash-lite
+```
+
+Each hosted provider is called through **its own SDK**, not an OpenAI-compatibility
+layer: `gemini` uses `langchain-google-genai` (Google's `google-genai`), `groq` uses
+`langchain-groq`, `openai` uses `langchain-openai`. This matters: Google's
+OpenAI-compatible endpoint rejected Gemini 3 multi-step tool calls ("missing a
+thought_signature"). The `provider:` key of a profile in `config/hosted_models.yaml`
+(`openai`, `groq` or `google`) picks the SDK; Ollama, vLLM and `compatible` serve the
+OpenAI protocol and stay on `langchain-openai`. Install with
+`pip install -r requirements.txt`. Gemini is not in the `auto` list; add it with
+`LLM_AUTO_PROFILES=ollama,gemini,groq` if wanted.
+
+**Rate limits.** Free APIs cap requests per minute/day and tokens per minute, so
+`gemini` and `groq` ship with client-side limits in `config/hosted_models.yaml`
+(local profiles are unlimited). Limits follow the **model**: each profile lists
+per-model numbers under `model_rate_limits` (`openai/gpt-oss-20b` on Groq,
+`gemini-3.5-flash-lite` on Gemini) and falls back to its `rate_limits` for any
+other `GROQ_MODEL` / `GEMINI_MODEL`; add a model by adding an entry. Calls wait for a free
+slot up to `LLM_RATE_LIMIT_MAX_WAIT_S` (default 60) and then fail with an error
+naming the limit; an exhausted daily quota fails immediately. Override the active
+model's limits in `.env` (empty = the YAML value, `0` = unlimited):
+
+```dotenv
+LLM_RPM=15        # requests per minute
+LLM_TPM=250000    # tokens per minute (estimated before the call, corrected from reported usage)
+LLM_RPD=250       # requests per day
+LLM_RATE_LIMIT_MAX_WAIT_S=60
+```
+
+The published free-tier numbers change often; check your quota in AI Studio / the
+Groq console. Counters are in memory: the daily count resets on restart and is
+not shared between worker processes. `python -m agents.llm` prints the limits.
 
 Check configuration/model discovery, then optionally make two small inference
 requests to verify the model can request a tool and consume its result:

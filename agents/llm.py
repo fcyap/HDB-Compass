@@ -59,7 +59,7 @@ def _configured_profile(name: str) -> Dict[str, Any]:
     profiles = all_profiles()
     if name not in profiles:
         raise ModelConfigurationError(
-            "Unknown LLM_PROFILE. Choose ollama, vllm, groq, openai, compatible, auto or none."
+            "Unknown LLM_PROFILE. Choose ollama, vllm, groq, openai, gemini, compatible, auto or none."
         )
     p = dict(profiles[name])
     p["base_url"] = (
@@ -71,8 +71,16 @@ def _configured_profile(name: str) -> Dict[str, Any]:
         or p.get("model")
         or ""
     ).strip()
+    # free-tier limits belong to a model, not a provider: a model listed under model_rate_limits uses its own numbers,
+    # any other model uses the profile's rate_limits (LLM_RPM / LLM_TPM / LLM_RPD override either, see rate_limit.py)
+    per_model = p.get("model_rate_limits") or {}
+    p["rate_limits"] = per_model.get(p["model"]) or p.get("rate_limits")
+    p["limiter_key"] = f"{name}:{p['model']}"
     key_env = p.get("api_key_env", "LLM_API_KEY")
     p["api_key"] = (os.getenv(key_env) or p.get("api_key") or "").strip()
+    for fallback in p.get("api_key_env_fallbacks") or []:
+        if not p["api_key"]:
+            p["api_key"] = (os.getenv(fallback) or "").strip()
     if p.get("requires_api_key") and not p["api_key"]:
         raise ModelConfigurationError(f"Set {key_env} in .env for the {name} profile.")
     if not p["api_key"]:
@@ -219,7 +227,136 @@ def model_status(check: bool = False) -> Dict[str, Any]:
         "mode": "model",
         "status": ("available" if ok else "unavailable") if check else "configured",
         "message": detail,
+        "rate_limits": _rate_limit_status(p),
     }
+
+
+def _rate_limit_status(p: Dict[str, Any]) -> Dict[str, Any]:
+    """Configured limits plus live in-memory counters (no secrets)."""
+    from agents import rate_limit as rl
+
+    limits = rl.resolve_limits(p.get("rate_limits"))
+    if limits.unlimited:
+        return {"enabled": False}
+    live = rl.limiter_status(p.get("limiter_key", p["name"])) or {}
+    return {
+        "enabled": True,
+        "requests_per_minute": limits.requests_per_minute or None,
+        "tokens_per_minute": limits.tokens_per_minute or None,
+        "requests_per_day": limits.requests_per_day or None,
+        "max_wait_s": rl.max_wait_s(),
+        **{k: v for k, v in live.items() if k.startswith(("requests_last", "tokens_last", "requests_today", "requests_left"))},
+    }
+
+
+# Which SDK talks to which provider. Hosted providers use their own SDK (through its LangChain wrapper), so a model
+# a provider lists works the way the provider documents it; a compatibility layer (e.g. Gemini's OpenAI endpoint)
+# drops features such as Gemini 3's thought signatures, which broke multi-step tool calls. "openai" is also the
+# protocol vLLM, Ollama and the "compatible" profile serve, so those stay on ChatOpenAI.
+PROVIDERS = ("openai", "groq", "google")
+
+
+def provider_of(p: Dict[str, Any]) -> str:
+    provider = (p.get("provider") or "openai").strip().lower()
+    if provider not in PROVIDERS:
+        raise ModelConfigurationError(f"Unknown provider '{provider}' for the {p.get('name')} profile. Choose {', '.join(PROVIDERS)}.")
+    return provider
+
+
+def _google_thinking(effort: Any, model: str) -> Dict[str, Any]:
+    """The profile's reasoning_effort as Gemini's own thinking setting: a level on Gemini 3.x, a token budget on 2.5."""
+    if effort is None:
+        return {}
+    effort = str(effort).lower()
+    if model.startswith("gemini-2.5"):
+        return {"thinking_budget": {"none": 0, "minimal": 128, "low": 1024, "medium": 8192, "high": 24576}.get(effort, -1)}
+    return {"thinking_level": "minimal" if effort == "none" else effort}
+
+
+def _plain_text(content: Any) -> Any:
+    """Gemini 3 returns a reply as signed content blocks; the rest of the app reads message.content as text."""
+    if not isinstance(content, list):
+        return content
+    return "".join(b if isinstance(b, str) else (b.get("text") or "") for b in content
+                   if isinstance(b, str) or (isinstance(b, dict) and b.get("type") == "text"))
+
+
+_GOOGLE_CLASS: Any = None
+
+
+def _google_chat_class():
+    """ChatGoogleGenerativeAI whose replies carry plain-string content. Tool calls and the function-call thought
+    signatures Gemini 3 needs on the next step stay as they are (they live on tool_calls / additional_kwargs)."""
+    global _GOOGLE_CLASS
+    if _GOOGLE_CLASS is None:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        class PlainTextChatGoogle(ChatGoogleGenerativeAI):
+            def _generate(self, *args, **kwargs):
+                result = super()._generate(*args, **kwargs)
+                for g in result.generations:
+                    g.message.content = _plain_text(g.message.content)
+                    g.text = g.message.content if isinstance(g.message.content, str) else g.text
+                return result
+
+            async def _agenerate(self, *args, **kwargs):
+                result = await super()._agenerate(*args, **kwargs)
+                for g in result.generations:
+                    g.message.content = _plain_text(g.message.content)
+                    g.text = g.message.content if isinstance(g.message.content, str) else g.text
+                return result
+
+        _GOOGLE_CLASS = PlainTextChatGoogle
+    return _GOOGLE_CLASS
+
+
+def _build_client(p: Dict[str, Any], common: Dict[str, Any], cfg: Dict[str, Any], overrides: Dict[str, Any]):
+    """The provider's own chat client. `common`: model, max_tokens, timeout, max_retries, callbacks."""
+    provider = provider_of(p)
+    temperature = cfg["global"]["temperature"] if p.get("supports_temperature", True) else None
+    seed = cfg["global"]["seed"] if p.get("supports_seed", True) else None
+    explicit_base = (os.getenv("LLM_BASE_URL") or "").strip().rstrip("/")
+    if provider == "groq":
+        from langchain_groq import ChatGroq
+        kwargs: Dict[str, Any] = dict(model=common["model"], api_key=p["api_key"], max_tokens=common["max_tokens"],
+                                      timeout=common["timeout"], max_retries=common["max_retries"],
+                                      callbacks=common.get("callbacks"))
+        if explicit_base:
+            kwargs["base_url"] = explicit_base          # otherwise the SDK's own endpoint
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if seed is not None:
+            kwargs["model_kwargs"] = {"seed": seed}
+        if p.get("reasoning_effort") is not None:
+            kwargs["reasoning_effort"] = p["reasoning_effort"]
+        kwargs.update(overrides)
+        return ChatGroq(**kwargs)
+    if provider == "google":
+        kwargs = dict(model=common["model"], api_key=p["api_key"], max_tokens=common["max_tokens"],
+                      timeout=common["timeout"], max_retries=common["max_retries"], callbacks=common.get("callbacks"))
+        if explicit_base:
+            kwargs["base_url"] = explicit_base
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if seed is not None:
+            kwargs["seed"] = seed
+        kwargs.update(_google_thinking(p.get("reasoning_effort"), common["model"]))
+        kwargs.update(overrides)
+        return _google_chat_class()(**kwargs)
+    from langchain_openai import ChatOpenAI
+    kwargs = dict(model=common["model"], base_url=p["base_url"], api_key=p["api_key"], max_tokens=common["max_tokens"],
+                  timeout=common["timeout"], max_retries=common["max_retries"], stream_usage=False,
+                  callbacks=common.get("callbacks"))
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    if seed is not None:
+        kwargs["seed"] = seed
+    if p.get("extra_body"):
+        kwargs["extra_body"] = p["extra_body"]
+    if p.get("reasoning_effort") is not None:
+        kwargs["reasoning_effort"] = p["reasoning_effort"]
+    kwargs.update(overrides)
+    return ChatOpenAI(**kwargs)
 
 
 def get_llm(**overrides: Any):
@@ -227,29 +364,25 @@ def get_llm(**overrides: Any):
     p = active_profile()
     if p["name"] == "none":
         return None
-    from langchain_openai import ChatOpenAI
+    from agents import rate_limit as rl
 
     cfg = load_config()
-    kwargs: Dict[str, Any] = dict(
+    common: Dict[str, Any] = dict(
         model=p["model"],
-        base_url=p["base_url"],
-        api_key=p["api_key"],
-        max_tokens=p.get("max_tokens", 2048),
+        max_tokens=int(overrides.get("max_tokens") or p.get("max_tokens", 2048)),
         # LLM_TIMEOUT_S / LLM_MAX_RETRIES: the live demo lowers these so a stalled server fails over in seconds
         timeout=float(os.getenv("LLM_TIMEOUT_S", p.get("timeout_s", 120))),
         max_retries=int(os.getenv("LLM_MAX_RETRIES", 2)),
-        stream_usage=False,
     )
-    if p.get("supports_temperature", True):
-        kwargs["temperature"] = cfg["global"]["temperature"]
-    if p.get("supports_seed", True):
-        kwargs["seed"] = cfg["global"]["seed"]
-    if p.get("extra_body"):
-        kwargs["extra_body"] = p["extra_body"]
-    if p.get("reasoning_effort") is not None:
-        kwargs["reasoning_effort"] = p["reasoning_effort"]
-    kwargs.update(overrides)
-    return ChatOpenAI(**kwargs)
+    overrides = dict(overrides)
+    cbs = list(overrides.pop("callbacks", None) or [])
+    limiter = rl.get_limiter(
+        p.get("limiter_key", p["name"]), rl.resolve_limits(p.get("rate_limits")), rl.max_wait_s()
+    )
+    if limiter is not None:
+        cbs.append(rl.RateLimitCallback(limiter, common["max_tokens"]))
+    common["callbacks"] = cbs or None
+    return _build_client(p, common, cfg, overrides)
 
 
 def main(argv=None) -> int:

@@ -57,7 +57,11 @@ def test_hosted_profile_requires_its_own_key(monkeypatch, profile, key_env, mode
     assert p["api_key"] == "test-secret" and p["model"] == model
     assert "test-secret" not in json.dumps(L.model_status())
     client = L.get_llm()
-    assert client.model_name == model and client.stream_usage is False
+    assert client.model_name == model
+    # each hosted provider uses its own SDK client; only OpenAI's has stream_usage
+    assert type(client).__name__ == {"groq": "ChatGroq", "openai": "ChatOpenAI"}[profile]
+    if profile == "openai":
+        assert client.stream_usage is False
 
 
 def test_explicit_profile_does_not_probe_or_switch(monkeypatch):
