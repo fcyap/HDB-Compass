@@ -45,6 +45,13 @@ export CLUSTER_BATCH=1   # tunnel.sh: fail instead of asking for a password
 SOCK="${CLUSTER_SOCK:-$HOME/.ssh/hdb-cluster.sock}"
 TIMEOUT_S="${LLM_TIMEOUT_S:-25}"
 
+# The frontend's packages need installing when there are none yet, or when frontend/package.json changed after the last
+# install (on 2 Nov a teammate added react-markdown, and the page stayed blank until npm install ran).
+frontend_packages_stale() {
+  [[ ! -d frontend/node_modules ]] || [[ ! -f frontend/node_modules/.package-lock.json ]] \
+    || [[ frontend/package.json -nt frontend/node_modules/.package-lock.json ]]
+}
+
 # A dry run reports every problem and carries on to the plan; a real start stops at the first one.
 BLOCKED=0
 blocked() {
@@ -98,7 +105,7 @@ fi
 if [[ "$DRY_RUN" == 1 ]]; then
   echo
   echo "== dry run: nothing started, no ssh. A real start would:"
-  [[ -d frontend/node_modules ]] || echo "   install the frontend packages (npm install)"
+  frontend_packages_stale && echo "   install the frontend packages (npm install; package.json lists packages not installed yet)"
   [[ "$PREVIEW" == 1 ]] && echo "   build the frontend into $DIST (vite build)"
   command -v caffeinate >/dev/null 2>&1 && echo "   keep the laptop awake while it runs (caffeinate)"
   if [[ "$MODE" == cluster ]]; then
@@ -122,7 +129,12 @@ if [[ "$DRY_RUN" == 1 ]]; then
   exit 0
 fi
 
-[[ -d frontend/node_modules ]] || { echo "== installing frontend packages"; (cd frontend && npm install --no-audit --no-fund) || exit 1; }
+if frontend_packages_stale; then
+  echo "== installing frontend packages (package.json lists packages not installed yet)"
+  (cd frontend && npm install --no-audit --no-fund) || exit 1
+  # npm may rewrite the lock file; it is a teammate's file, so it is put back as committed
+  git diff --quiet -- frontend/package-lock.json 2>/dev/null || git checkout -- frontend/package-lock.json 2>/dev/null || true
+fi
 if [[ "$PREVIEW" == 1 ]]; then
   # Built before the cluster wait, so a build error shows now and not after the model has loaded
   echo "== building the frontend, log: $LOGS/frontend.log"

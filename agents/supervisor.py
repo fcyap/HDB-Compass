@@ -1725,6 +1725,8 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         constraints = merge_constraints(carried, constraints)
     if pending and pending.get("kind") == "place":
         answer_place_question(constraints, query)
+    elif prior and not pending:
+        narrow_block_question(constraints, prior, query)
     # a fact a later message changed in a way code could not read is asked again, not carried over from the last turn
     for vals in (constraints.get("financial_inputs") or {}).values():
         for k in unsure:
@@ -1766,6 +1768,35 @@ _PLACE_REPLY = (
     ("wants_block_history", r"\bpast\s+sales\b|\bsales\b|\bsold\b|\bhistory\b|\btransactions?\b|\bresale\s+pric|\bprices?\b"),
 )
 _TOWN_FIRST_BLOCK = re.compile(r"^\s*(.+?)\s+(?:blk|block)\.?\s*(\d{1,4}[a-z]?)\s*$", re.I)
+
+
+# A question about one block whose answer a short follow-up can narrow ("4 room" after "Resale price for Blk 884?").
+_BLOCK_INTENTS = ("wants_block_history", "wants_price_assessment")
+
+
+def narrow_block_question(c: Dict[str, Any], prior: Dict[str, Any], query: str) -> None:
+    """'4 room' straight after a question about one block narrows that block's answer to 4-room flats, instead of
+    starting a town-wide search with the town the last turn named. Only a short message that states a flat type and
+    nothing else new (no other town, place, budget, lease, distance or question) does this; '4 room in Bedok under
+    600k' is a new search, as before. The block and its question are turn-only keys, so they are carried here."""
+    asked = [k for k in _BLOCK_INTENTS if prior.get(k)]
+    if not (asked and prior.get("addresses")) or len(query.split()) > 6:
+        return
+    said = rule_based_extract(query).model_dump()
+    new_facts = (said.get("addresses") or said.get("max_budget_sgd") or said.get("min_remaining_lease_years")
+                 or said.get("amenity_radii_meters") or said.get("school_name") or said.get("work_destinations")
+                 or said.get("household_income") or said.get("policy_question")
+                 or any(v for k, v in said.items() if k.startswith("wants_") and v)
+                 or set(said.get("towns") or []) - set(prior.get("towns") or []))
+    if not said.get("flat_types") or new_facts:
+        return
+    c["addresses"] = list(prior["addresses"])
+    for k in asked:
+        c[k] = True
+    if prior.get("asking_price_sgd"):
+        c["asking_price_sgd"] = prior["asking_price_sgd"]
+    c["flat_types"] = said["flat_types"]
+    c["towns"] = []   # the block is the place; a town would start a town-wide block search
 
 
 PLACE_QUESTION = "What would you like to know about"   # research_intents.place_clarification

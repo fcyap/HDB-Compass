@@ -164,6 +164,7 @@ def test_node_range_comes_from_package_json_before_npm_install(tmp_path):
 def test_no_shared_session_stops_with_the_login_hint_and_no_password_prompt(tmp_path):
     env = sandbox(tmp_path, fake_node=True)
     (tmp_path / "frontend" / "node_modules").mkdir()
+    (tmp_path / "frontend" / "node_modules" / ".package-lock.json").write_text("{}")   # installed by npm, up to date
     out = run(tmp_path, env, "demo_start.sh")
     assert out.returncode == 1
     assert f"log in with  ssh {LOGIN}  in your terminal" in out.stdout

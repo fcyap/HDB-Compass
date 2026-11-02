@@ -17,7 +17,8 @@
 # in your terminal first (it asks for your password there). ~/.ssh/config keeps that login open for 8 h
 # (ControlMaster auto, ControlPath ~/.ssh/hdb-cluster.sock, ControlPersist 8h) and this script only reuses it:
 # every ssh call uses BatchMode=yes, so a closed session stops the run with a message instead of a password prompt.
-# KEEP_JOB=1 leaves the GPU job running for a following run (the next run reuses it; the last one must not set it).
+# KEEP_JOB=1 leaves the GPU job running for a following run (the next run reuses it); KEEP_JOB=0, or no KEEP_JOB,
+# cancels it at the end.
 # The job's id is kept in evaluation/results/cluster_job.txt (gitignored) until it is cancelled: a later run that
 # cannot reach the cluster prints the exact  scancel <id>  to run after logging in, and one that can reuses the job.
 # Rows whose model calls could not reach the server are marked model_unreachable and rerun on the next resume.
@@ -75,9 +76,11 @@ else
 fi
 [[ "$JOB" =~ ^[0-9]+$ ]] || { echo "STEP_FAILED no job id from the cluster: $JOB"; exit 1; }
 mkdir -p "$(dirname "$JOB_FILE")" && echo "$JOB" > "$JOB_FILE"   # removed again once the job is cancelled
+# KEEP_JOB=1 (or true / yes) keeps the job; anything else, 0 included, cancels it (KEEP_JOB=0 kept job 347095 on 1 Nov)
+keep_job() { [[ "$(printf '%s' "${KEEP_JOB:-}" | tr '[:upper:]' '[:lower:]')" =~ ^(1|true|yes)$ ]]; }
 cleanup() {
   bash cluster/tunnel.sh --close >/dev/null 2>&1 || true
-  if [[ -n "${KEEP_JOB:-}" ]]; then
+  if keep_job; then
     echo "left job $JOB running (KEEP_JOB) for the next run; cancel it later with: scancel $JOB"
   elif "${SSH[@]}" "scancel $JOB"; then
     rm -f "$JOB_FILE"
