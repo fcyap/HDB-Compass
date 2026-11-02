@@ -820,6 +820,50 @@ def statistics_scores(item: Dict[str, Any], state: Dict[str, Any]) -> Optional[D
     }
 
 
+# Category D (financial, evaluation/category_d_queries.json, built by build_category_d.py): the answer states the figures the
+# calculators returned, or, where the calculator could not answer, says so and asks for the missing fact or declines.
+_FIGURE_CLAIM = {
+    "calculate_cpf_housing_grants": _re.compile(r"\bEHG\s*\$|\btotal grants?\b[^.\n]{0,20}\$", _re.I),
+    "calculate_maximum_affordability": _re.compile(r"\bmax(?:imum)?\s+(?:purchase\s+)?(?:price|budget)\b[^.\n]{0,40}?\$\s?\d", _re.I),
+    "calculate_bsd_and_upfront_outlay": _re.compile(r"\bcash required\b[^.\n]{0,10}\$|\bupfront[^.\n]{0,40}\btotal\s*\$", _re.I),
+}
+_DECLINED = _re.compile(r"scenario unavailable|not supported|unsupported|cannot be (?:worked out|calculated)|"
+                        r"require[sd]? (?:a |the )?(?:separate|actual|HFE|HDB)", _re.I)
+_KEY_AMOUNTS = {
+    "calculate_cpf_housing_grants": ("total_grants",),
+    "calculate_maximum_affordability": ("max_purchase_price",),
+    "calculate_bsd_and_upfront_outlay": ("buyer_stamp_duty", "cash_required"),
+}
+
+
+def financial_scores(item: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+    """Score a Category D answer. status ok: every key amount of the target calculator appears (and the cash shortfall
+    when there is one). needs_information: each missing fact is named and no figure is given for the target. unsupported:
+    the answer says the case is outside the model and gives no figure for the target."""
+    truth = item["ground_truth_facts"]
+    tool, status = truth["target_tool"], truth["expected_status"]
+    want = truth.get(tool) or {}
+    draft = state.get("draft_response") or ""
+    out: Dict[str, Any] = {"kind": "financial", "expected_status": status}
+    gave_figure = bool(_FIGURE_CLAIM[tool].search(draft))
+    if status == "ok":
+        keys = list(_KEY_AMOUNTS[tool]) + (["cash_shortfall"] if (want.get("cash_shortfall") or 0) > 0 else [])
+        out["amounts"] = {k: mentions_amount(draft, want.get(k)) for k in keys}
+        out["success"] = all(out["amounts"].values())
+    elif status == "needs_information":
+        missing = want.get("missing_inputs") or []
+        low = draft.lower()
+        out["names_missing"] = all(any(w in low for w in _MISSING_WORDS.get(m, (m.replace("_", " "),))) for m in missing)
+        out["asked_for_missing"] = asked_for_missing(draft, missing)
+        out["invented_figure"] = gave_figure
+        out["success"] = out["names_missing"] and not gave_figure
+    else:
+        out["said_unsupported"] = bool(_DECLINED.search(draft))
+        out["invented_figure"] = gave_figure
+        out["success"] = out["said_unsupported"] and not gave_figure
+    return out
+
+
 def ground_truth_scores(item: Dict[str, Any], state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Compare an answer with the question's stored ground truth. None for questions without ground truth."""
     truth = item.get("ground_truth_facts")
@@ -827,6 +871,8 @@ def ground_truth_scores(item: Dict[str, Any], state: Dict[str, Any]) -> Optional
         return policy_clause_scores(item, state)
     if truth and "groups" in truth:                   # a Category A statistics question
         return statistics_scores(item, state)
+    if truth and "target_tool" in truth:              # a Category D financial question
+        return financial_scores(item, state)
     if not truth or "matching_block_keys" not in truth:
         return None
     draft = state.get("draft_response") or ""

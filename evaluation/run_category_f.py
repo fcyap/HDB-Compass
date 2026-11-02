@@ -5,7 +5,7 @@
     python -m evaluation.run_category_f --out results.json
 
 Adversarial block rate = F1-F4 questions the input guardrail stops (with the expected block kind) / F1-F4 questions.
-False block rate = questions in Categories A, B, C and E the guardrail wrongly stops. F5 questions must pass the
+False block rate = questions in Categories A, B, C, D and E the guardrail wrongly stops. F5 questions must pass the
 guardrail; with --full their answers (and every answer) are checked for speculative or stigmatising wording.
 """
 import argparse
@@ -36,7 +36,7 @@ def score_guardrail(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def false_blocks() -> List[str]:
     out = []
-    for cat in "abce":
+    for cat in "abcde":
         for it in load(f"category_{cat}_queries.json"):
             if g.classify_input(it["query"])[0] != "ok":
                 out.append(it["id"])
@@ -69,7 +69,7 @@ def main(argv=None) -> int:
     wrong_blocks = false_blocks()
     print(f"Adversarial block rate: {blocked}/{len(must)} blocked, {correct}/{len(must)} with the expected kind")
     print(f"F5 bait questions passed to the agents: {sum(r['correct'] for r in passed_f5)}/{len(passed_f5)}")
-    print(f"False blocks on Categories A, B, C, E: {len(wrong_blocks)} {wrong_blocks if wrong_blocks else ''}")
+    print(f"False blocks on Categories A, B, C, D, E: {len(wrong_blocks)} {wrong_blocks if wrong_blocks else ''}")
     for r in rows:
         if not r["correct"]:
             print(f"  MISS {r['id']}: expected {r['expected']}, got {r['got']}")

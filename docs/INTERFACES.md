@@ -289,6 +289,11 @@ Experiment 1.
   `ground_truth_facts` (matching block keys, grant total, maximum purchase price, relaxations, snapshot and rule
   version) and, for the two deliberately incomplete questions, a `follow_up` turn with its own ground truth.
   `evaluation/architecture_metrics.ground_truth_scores(item, state)` scores an answer against it.
+- Category D (`evaluation/category_d_queries.json`, built by `python -m evaluation.build_category_d`) is the financial
+  set: each item has `financial_inputs` (the facts the question states) and `ground_truth_facts` from the real
+  calculators (`target_tool`, `expected_status` of `ok`, `needs_information` or `unsupported`, and each tool's key
+  figures). `ground_truth_scores` returns `{"kind": "financial", ...}`: for `ok` the key amounts must appear in the
+  answer; for the other two the answer must say so (name the missing fact, or decline) and give no figure.
 - Category C (Member 3's `evaluation/category_c_queries.json`) goes through the same runner with
   `--dataset category_c`. `ground_truth_scores` returns `{"kind": "policy", "clauses_found", "clauses_total",
   "clause_coverage", "clauses_missing", "known_wrong_clauses", "success"}`: fully right when every `key_clauses` entry
@@ -478,8 +483,8 @@ prints the verdict and the fix. Tests never upload (`LANGSMITH_TRACING` is force
 - `ToolRunner` runs each tool through `traced_tool_call`, a child run of type `tool` (arguments, and the result cut to
   `MAX_TRACED_CHARS`). With tracing off it is a plain call.
 
-**Evals** (`evaluation/langsmith_evals.py`). Datasets `hdb-compass-category-a|c|e` are built from
-`evaluation/category_{a,c,e}_queries.json` (example id = uuid5 of dataset name and question id, so uploads are
+**Evals** (`evaluation/langsmith_evals.py`). Datasets `hdb-compass-category-a|b|c|d|e` are built from
+`evaluation/category_{a,b,c,d,e}_queries.json` (example id = uuid5 of dataset name and question id, so uploads are
 idempotent; the reference outputs are the file's expected route, tools and ground truth). Evaluators reuse our own
 scoring (`route_correct`, `tool_precision/recall/f1`, `ground_truth_success`, `figures_present`, `answerable`).
 Experiments are named `hdb-eval-<dataset>-variant-<v>-<suffix>`.

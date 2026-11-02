@@ -9,6 +9,8 @@ These are the drawings for the Lesson 12 whiteboard: Variant C is the one to rep
 
 Parallel `Send` fan-out from `route` to the four specialists; `intersect_candidates` joins SQL ∩ spatial on block key; `relax_constraints` runs only on an empty intersection (E2); `runtime_auditor` → `synthesize` is the self-correction cycle (≤2 retries).
 
+`input_guardrail` and `runtime_auditor` are Member 5's delivered nodes from `agents/guardrails.py` (`docs/INTERFACES.md` section 3). The input guardrail is rule-based with no model: it refuses SQL and prompt injection, identifiers, requests for guaranteed or speculative profit, and out-of-scope asks, and routes straight to `finalize` with a fixed reply. The runtime auditor checks that the model's own sentences (`model_opening`) only state figures found in the tool results and say nothing speculative or stigmatising, then asks an LLM judge when a model is configured; a rejection loops back to `synthesize`.
+
 ```mermaid
 ---
 config:
@@ -44,6 +46,7 @@ graph TD;
 	route -.-> market_sql_agent;
 	route -.-> policy_rag_agent;
 	route -.-> spatial_agent;
+	route -.-> synthesize;
 	runtime_auditor -.-> finalize;
 	runtime_auditor -.-> synthesize;
 	spatial_agent --> intersect_candidates;
@@ -56,7 +59,7 @@ graph TD;
 
 ## Variant B — coarse 2-agent split (baseline)
 
-One combined Data/Spatial/Finance agent (10 tools) and one Policy agent (1 tool); no intersection node, no auditor.
+One combined Data/Spatial/Finance agent (11 core tools) and one Policy agent (1 tool); no intersection node, no auditor.
 
 ```mermaid
 ---
@@ -66,6 +69,7 @@ config:
 ---
 graph TD;
 	__start__([<p>__start__</p>]):::first
+	menu_pick(menu_pick)
 	extract_constraints(extract_constraints)
 	route_coarse(route_coarse)
 	data_agent(data_agent)
@@ -73,12 +77,15 @@ graph TD;
 	synthesize(synthesize)
 	finalize(finalize)
 	__end__([<p>__end__</p>]):::last
-	__start__ --> extract_constraints;
+	__start__ -.-> extract_constraints;
+	__start__ -.-> menu_pick;
 	data_agent --> synthesize;
 	extract_constraints --> route_coarse;
+	menu_pick --> finalize;
 	policy_agent --> synthesize;
 	route_coarse -.-> data_agent;
 	route_coarse -.-> policy_agent;
+	route_coarse -.-> synthesize;
 	synthesize --> finalize;
 	finalize --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2
@@ -88,7 +95,7 @@ graph TD;
 
 ## Variant A — monolithic ReAct agent (baseline)
 
-One agent, all 11 tools, no supervisor, no auditor.
+One agent, the 12 core tools, no supervisor, no auditor.
 
 ```mermaid
 ---

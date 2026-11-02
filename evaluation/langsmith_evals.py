@@ -6,7 +6,7 @@ LangSmith datasets and experiments for the HDB-Compass question sets (evaluation
     python -m evaluation.langsmith_evals --dataset category_e --variant C
 
 What it does
-  * Datasets  hdb-compass-category-a / -c / -e are built from evaluation/category_{a,c,e}_queries.json. Idempotent:
+  * Datasets  hdb-compass-category-a / -b / -c / -d / -e are built from evaluation/category_{a,b,c,d,e}_queries.json. Idempotent:
     a dataset is looked up by name, and every example has a stable id (uuid5 of dataset name + question id), so a
     second upload updates the examples in place instead of duplicating them.
   * Experiments  run the chosen variant (A, B or C; default C) over the examples with langsmith's `evaluate` and score
@@ -41,6 +41,8 @@ DATASETS: Dict[str, Dict[str, Any]] = {
                    "description": "Category B: spatial reasoning, primary school boundaries, multi-amenity, and dual-transit commute"},
     "category_c": {"name": "hdb-compass-category-c", "file": "category_c_queries.json", "addons": "off",
                    "description": "Category C: HDB policy questions scored on key clauses"},
+    "category_d": {"name": "hdb-compass-category-d", "file": "category_d_queries.json", "addons": "off",
+                   "description": "Category D: financial questions (grants, affordability, BSD and upfront) with calculator ground truth"},
     "category_e": {"name": "hdb-compass-category-e", "file": "category_e_queries.json", "addons": "off",
                    "description": "Category E: multi-constraint search, grants and affordability with ground truth"},
 }

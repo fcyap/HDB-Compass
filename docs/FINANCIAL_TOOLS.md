@@ -129,8 +129,10 @@ illustrative financial formulas are not the real calculators.
 Run `python -m pytest tests/test_financial_tools.py -q` for independent official
 examples, income boundaries, amortisation checks, BSD reference values, funding
 conservation, missing inputs, and registry/agent/in-memory MCP integration.
-These tests are not a Category D benchmark accuracy claim. That requires the
-agreed evaluation dataset and Member 5's scoring under fixed rule/data versions.
+These tests are not a Category D benchmark accuracy claim. The 15-question
+dataset (`evaluation/category_d_queries.json`, built by
+`python -m evaluation.build_category_d` from these calculators) and its scorer
+exist; an accuracy result still requires a run under fixed rule/data versions.
 
 For policy changes: review the linked primary documentation, update the rule
 snapshot and verification date, assign a new version, add independent cases for

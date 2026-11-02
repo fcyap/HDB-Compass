@@ -34,7 +34,7 @@ flowchart LR
     subgraph AG["Multi-agent system · LangGraph · agents/"]
         AGraph["Variant C graph<br/>Supervisor + 4 specialists<br/>(see diagram 2)"]
         Registry["Tool registry<br/>agents/tool_registry.py<br/>validate · mock/real · log"]
-        LLM["LLM gateway agents/llm.py<br/>ollama · vllm · groq · openai · none"]
+        LLM["LLM gateway agents/llm.py<br/>ollama · vllm · groq · openai · gemini · none"]
     end
 
     subgraph TOOLS["Tools · mcp_server/ (25 = 12 core + 13 add-on)"]
@@ -57,13 +57,87 @@ flowchart LR
     WS <--> Sessions
     WS --> AGraph
     AGraph --> Registry --> T
-    AGraph -.->|"extraction, tool choice,<br/>opening sentence"| LLM
+    AGraph -.->|"reads unrecognised wording,<br/>picks tools, writes the opening<br/>(code first; see 1b)"| LLM
     MCP --- T
     T --> Duck
     T --> Spatial
     T --> BTO
     T --> Policy
 ```
+
+### 1b. How one message is handled, end to end
+
+The app is **code-first with a model behind it**, not a model that calls tools freely. Code reads, routes, calls the tools,
+joins the results and writes the facts; the model is used only where code cannot decide, and its output is always checked by code.
+
+```mermaid
+flowchart TD
+    U(["Chat message + map pin + last turn<br/>(browser → WebSocket /ws → backend/main.py, fast_path=True)"])
+    U --> San["1 · Sanitiser (code)<br/>NRIC / phone / card / bank values → placeholders"]
+    San --> Guard["2 · Input guardrail (code, no model)<br/>injection, identifiers, speculative profit,<br/>greeting, off-topic, condo, forecast"]
+    Guard -->|"blocked / out of scope"| Fixed(["Fixed reply or menu, no model, no tools"])
+    Guard -->|"in scope"| Reply{"3 · Is it a reply to an open question<br/>or a menu choice? (code)"}
+    Reply -->|"yes"| Merge["Complete the earlier request<br/>from the stored session state"]
+    Reply -->|"no"| Regex
+    Merge --> Regex
+
+    Regex["4 · Regex reading (code)<br/>rule_based_extract: towns, flat types, budget,<br/>distances, named MRT station, school address, money facts"]
+    Regex --> Q{"5 · answerable_without_model?<br/>every needed tool fixed by the<br/>recognised intent"}
+    Q -->|"yes: price stats, rankings, snapshots,<br/>amenity and area questions"| Fast["Fast path: no model call<br/>deterministic tool plan"]
+    Q -->|"no: financial facts, policy, commutes,<br/>school names, comparables, block searches,<br/>unrecognised wording"| Model["Model reads the message<br/>(typed schema); regex is the fallback<br/>if the model is off or fails"]
+    Model --> Fix["Code validates and corrects the reading<br/>(_finalize_constraints: drop invented values,<br/>keep only what the user said)"]
+    Fast --> Route
+    Fix --> Route
+
+    Route{"6 · Router (code: decide_routing)"}
+    Route -->|"vague / unsupported"| Ask(["One follow-up question, a menu,<br/>or a plain 'can't do that'"])
+    Route -->|"parallel fan-out"| Spec["7 · Specialists: market · spatial · financial · policy<br/>fast path runs code's plan; otherwise the model picks<br/>tools from a gated list and code fills/repairs the arguments,<br/>falling back to code's plan if no valid call"]
+    Spec --> Reg["Tool registry: validate arguments → call → log<br/>(agents/tool_registry.py)"]
+    Reg --> MCP["MCP tools (mcp_server/, 25)<br/>DuckDB resale · SVY21 spatial index · OneMap ·<br/>financial calculators · policy RAG"]
+    MCP --> Join["8 · Join (code): intersect price ∩ distance ∩ budget;<br/>relax limits if nothing fits"]
+    Join --> Syn["9 · Synthesise: code writes the facts;<br/>the model (when set) writes only the opening sentences"]
+    Syn --> Aud["10 · Auditor: rules, then an LLM judge,<br/>checks the model's own sentences only;<br/>a failed opening is dropped or rewritten (≤ 2 tries)"]
+    Aud --> Out(["Answer + chips + map payload → streamed back<br/>to the chat and the MapLibre map; state saved per session"])
+```
+
+| Step | Who decides | What can go wrong → what catches it |
+|---|---|---|
+| Reading the question | Regex first; the model only when the patterns do not recognise everything | Unusual wording is misread → code validates the model's reading; unrecognised questions go to the model |
+| Choosing tools | Code's plan on the fast path; the model otherwise, from only the tools the question needs | Invented tool name or empty arguments → code repairs the call or runs its own plan |
+| Numbers and block lists | Tools, joined by code | Figures come only from tool output; a model opening that contradicts the facts is dropped |
+| Wording of the opening | Model (when a profile is set), else a template | Contradicts the facts → the auditor drops it |
+
+Two modes share this graph. The **app** runs with `fast_path=True`, so recognised self-contained questions skip the model. The
+**experiments** (Categories C and E, `evaluation/`) run with it off, so every architecture variant is measured on its own model's
+choices. Benchmark numbers therefore describe the model-driven path; users mostly see the fast path for simple price and area
+questions and the model path for budgets, policy, commutes and searches. Questions no tool can answer are not yet declined
+specifically: a message that names a town but asks for something unsupported falls back to the generic block search.
+
+#### Planned: a model-first intent reading (not built)
+
+Regex reading is the weakest link: unusual wording is misread ("what school **is** near Bishan MRT" fell through to a
+block search; "near Novena MRT" once meant any MRT). The proposal is to have the model read **every new question** first,
+returning a typed intent (what is asked, which place, which numbers), with code still validating it and the regexes kept
+as the offline fallback. The model would also say when **no tool can answer**, which closes the known gap above.
+
+A model in front of the graph invites spam and junk, and free tiers have hard limits (`config/hosted_models.yaml`), so the
+order matters. Nothing reaches the model until the free checks pass:
+
+1. **Sanitiser and guardrail first (code, free):** identifiers, injection, profit promises, greetings, off-topic, condo and
+   forecast messages are answered with fixed replies and never cost a call.
+2. **Cheap junk filters (code, free):** a length cap, empty or symbol-only text, repeated characters, and an exact repeat of
+   the previous message are rejected with a short fixed reply.
+3. **Per-session and per-IP throttling (code):** a small requests-per-minute cap and a daily cap per session, separate from the
+   provider limits in `agents/rate_limit.py`, so one visitor cannot use up the shared free quota.
+4. **Only then the intent model:** a small, fast model with a short prompt and a capped output length. Its reading is
+   checked by code (`_finalize_constraints`) and an unusable reading falls back to the regex path, not to an error.
+5. **Budget guard:** when the provider quota is nearly spent the app drops back to the regex-only path and tells the
+   user, instead of queueing calls.
+
+Open decisions for the team: which model handles intent (Gemini Flash-Lite is fast and free, Ollama is local), whether the
+app keeps the regex fast path for the simplest questions to save quota, and how to measure the change. The Category A-F
+benchmark plus a set of oddly worded questions can be run with the gate on and off, comparing accuracy, calls per question
+and latency. This touches Member 4's orchestration, so it needs their agreement before it is built.
 
 ### 2. Agent graph (Variant C: Supervisor + 4 specialists + auditor)
 
@@ -73,11 +147,11 @@ Every chat message runs this LangGraph state machine (`agents/arch_3_specialist_
 flowchart TD
     Start(["User message<br/>+ map pin + previous turn"]) --> Guard
 
-    Guard["Input guardrail<br/>Member 5 hook · until delivered: code scope check<br/>(greeting, off-topic, condo, forecast, prompt injection)"]
+    Guard["Input guardrail<br/>Member 5 · agents/guardrails.py, rules only, no model<br/>(SQL / prompt injection, identifiers, speculative profit,<br/>then scope: greeting, off-topic, condo, forecast)"]
     Guard -->|"out of scope:<br/>fixed reply, no model"| Final
     Guard -->|"ok"| Extract
 
-    Extract["Extract constraints<br/>model reads the message (typed schema)<br/>code reads money facts, intents, map pin,<br/>merges follow-up answers"]
+    Extract["Extract constraints<br/>regex reads first; on the app a fully recognised<br/>question skips the model, otherwise the model reads<br/>(typed schema) and code corrects it; code reads money<br/>facts, map pin, follow-up answers"]
     Extract --> Route
 
     Route{"Supervisor router<br/>(code: decide_routing)"}
@@ -100,12 +174,14 @@ flowchart TD
     Synth["Synthesize answer<br/>code writes the facts · model writes the opening<br/>(checked) · follow-up question if facts missing"]
     Synth --> Audit
 
-    Audit{"Runtime auditor<br/>Member 5 hook · pass-through until delivered"}
+    Audit{"Runtime auditor<br/>Member 5 · rules, then an LLM judge when a model is set<br/>judges only the model's own sentences (model_opening)"}
     Audit -->|"rejected: rewrite<br/>(≤ 2 retries)"| Synth
     Audit -->|"passed"| Final
 
     Final(["Finalize → answer + map payload<br/>streamed to the chat and map"])
 ```
+
+**Guardrail and auditor (Member 5, `agents/guardrails.py`; Variant C and the app only):** before the graph, `agents/sanitizer.py` replaces NRIC/FIN, phone, email, card, bank-account and password values with placeholders (`[NRIC]`, `[PHONE]`...) where the text enters the system (the WebSocket handler and `supervisor.initial_state`), so the graph, the remembered session, the chat log and LangSmith traces never see them; a message that carried one is refused with a plain-language reply. The input guardrail then refuses SQL and prompt injection, requests for guaranteed or speculative profit, and out-of-scope asks (rule-based, no model). After `synthesize`, the runtime auditor checks that every figure, distance, lease and block number the model wrote appears in the tool results and that nothing speculative or stigmatising is said, then asks an LLM judge when a model is configured; a rejection rewrites the model's sentences (at most 2 retries). In Variant C the answer is code's opening sentence, the model's own sentences, then the code-written facts; the `model_opening` state key holds only the model's sentences, and the auditor judges only that text. Contract: `docs/INTERFACES.md` section 3.
 
 **Inside each specialist:** a ReAct tool loop offered **only the tools this question needs** (`TASK_TOOLS` gating), with a deterministic plan as fallback when the model makes no valid call. Results become evidence only if the plan called for them (`requested_outputs`), and every call is logged (`ToolCallRecord`) for Tool F1.
 
@@ -113,7 +189,7 @@ flowchart TD
 
 **Broad questions:** "statistics near MRT stations", "by town", "which stations are priciest", "in the east" are answered from grouped resale statistics (code-written tables), with chips to drill down from island-wide to a town, a station's area and a block's sales; other data questions go to the market agent's analysis mode. Details: `docs/INTERFACES.md` §11.
 
-**Never an unrelated answer:** nothing defaults to the policy search any more. Policy passages are shown only for a question that names an HDB rule and only when the search finds a real match (keyword-score floor); price questions get town medians, and unsupported asks (a single-destination commute, price forecasts) are declined plainly. `tests/test_scope_routing.py` locks this, and locks the Category C/E benchmark routes. Details: `docs/INTERFACES.md` §10.
+**Never an unrelated answer:** nothing defaults to the policy search any more. Policy passages are shown only for a question that names an HDB rule and only when the search finds a real match (keyword-score floor); price questions get town medians, and unsupported asks (a single-destination commute, price forecasts) are declined plainly. `tests/test_scope_routing.py` locks this, and locks the Category C/E benchmark routes. Details: `docs/INTERFACES.md` §10. Known gap: a message that names a town but asks for something no tool covers (for example "best school for my kid in Bishan") still falls back to the generic block search instead of a plain "I can't answer that".
 
 ### 3. Agents and the tools they can use
 
@@ -232,56 +308,88 @@ As specified in the **HDB-Compass Project Proposal** (Pages 8, 13, and 14):
 
 ## Repository Structure
 
-The repository follows the project proposal structure (Page 14):
+The repository follows the project proposal structure (Page 14), extended as the project grew:
 
 ```
 HDB-Compass/
 ├── README.md                        # Project overview and local setup
-├── requirements.txt                 # Python dependencies (langgraph, fastmcp, scipy, pyproj, etc.)
-├── .env.example                     # Environment configuration template
-├── .gitignore                       # Clean gitignore excluding node_modules, .env, and large cache
+├── requirements.txt, pyproject.toml # Python dependencies and project metadata
+├── .env.example                     # Environment configuration template (copy to .env)
 │
-├── config/                          # Experiment configuration (Proposal Page 14)
-│   └── experiment_config.yaml       # Models, temp=0.0, seed=42, chunking, top-k
+├── agents/                          # Multi-agent orchestration (LangGraph)
+│   ├── state.py                     # HDBCompassState, UserConstraints, tool-call log
+│   ├── schemas.py                   # Pydantic I/O models for all 25 tools; shared inventory
+│   ├── supervisor.py                # Extraction, routing, fan-out, relaxation, synthesis, auditor loop
+│   ├── arch_1_monolith.py           # Variant A: one ReAct agent
+│   ├── arch_2_coarse.py             # Variant B: supervisor + combined data agent + policy agent
+│   ├── arch_3_specialist_5agent.py  # Variant C: Supervisor + 4 specialists + auditor loop (the app)
+│   ├── spatial_agent.py             # Geospatial and commute specialist
+│   ├── policy_agent.py              # Policy RAG specialist
+│   ├── tool_registry.py             # mock/real switch per tool, argument validation, call logging
+│   ├── llm.py                       # LLM gateway: ollama, vllm, groq, openai, gemini, none
+│   ├── rate_limit.py                # Client-side RPM/TPM/RPD limits for free-tier APIs
+│   ├── tracing.py                   # LangSmith tracing setup (off unless configured)
+│   ├── sanitizer.py                 # Layer 0: replaces NRIC/phone/email/card/bank values before anything reads them
+│   ├── guardrails.py                # Member 5: input guardrail and runtime auditor
+│   ├── scope.py                     # Scope check: is this HDB housing, and can the app do it?
+│   ├── research_intents.py          # Research intents for the supervisor
+│   ├── research_schemas.py          # Contracts for the research tools
+│   ├── school_queries.py            # Address-centred school requests and presentation
+│   └── addons/                      # Add-on tool packs (research.py, schools.py)
 │
-├── data/                            # Market ingestion and spatial data
-│   ├── build_market_db.py            # Download, validate and build the resale database
-│   ├── market_database.py            # Database settings and read-only connections
-│   ├── gov_download.py               # Government dataset download and cache
-│   ├── sql/market_schema.sql         # DuckDB schema
-│   ├── build_spatial_index.py       # 100% dynamic API pipeline from data.gov.sg & OneMap
-│   ├── spatial_index.pkl            # Precomputed 2D KD-Tree indices (13,426 blocks, 179 schools, 806 amenities)
-│   ├── spatial_index.json           # Compact metadata summary
-│   └── geocoded_cache.json          # Cached postal code coordinates
+├── mcp_server/                      # The 25 tools (12 core + 13 add-on) and the FastMCP server
+│   ├── server.py                    # FastMCP stdio server entry point
+│   ├── market_sql_tools.py, aggregate_resale_tools.py, area_resale_tools.py,
+│   │   comparable_resale_tools.py, market_research_tools.py, bto_tools.py,
+│   │   block_features.py            # Resale, research and BTO queries on the local DuckDB
+│   ├── financial_calc_tools.py      # Grants, affordability, stamp duty / upfront calculators
+│   ├── spatial_onemap_tools.py, location_tools.py, school_lookup_tools.py,
+│   │   google_places_tools.py       # Geospatial, place resolution, schools, food and dining
+│   ├── policy_rag_tools.py          # Hybrid policy RAG (BM25 + dense + cross-encoder rerank)
+│   └── mock_tools.py                # Deterministic fixtures for tests and mock mode
 │
-├── mcp_server/                      # FastMCP tools
-│   ├── server.py                    # FastMCP server entry point
-│   ├── market_sql_tools.py          # Resale queries against local DuckDB
-│   └── spatial_onemap_tools.py      # Geospatial & commute tools
+├── backend/
+│   └── main.py                      # FastAPI server: /ws agent stream, REST, per-tab session memory
 │
-├── agents/                          # Multi-Agent Orchestration Layer
-│   ├── state.py                     # Shared HDBCompassState & UserConstraints (Proposal Page 7)
-│   ├── arch_3_specialist_5agent.py  # 5-Agent Architecture Integration
-│   └── spatial_agent.py             # Geospatial & Commute Agent (LangGraph cyclic graph)
-│
-├── backend/                         # REST API & WebSocket Server
-│   └── main.py                      # FastAPI server with /ws real-time agent stream
-│
-├── frontend/                        # Split-Screen Web Application (Member 2)
-│   ├── package.json
-│   ├── vite.config.ts
+├── frontend/                        # Split-screen web app (Vite + React + MapLibre)
 │   └── src/
-│       ├── App.tsx                  # Main split-screen view
-│       ├── components/
-│       │   ├── AgentChat.tsx        # Conversational UI with streaming reasoning steps
-│       │   └── InteractiveMap.tsx   # MapLibre GL map with SVY21 buffer circle & interactive popups
-│       └── index.css                # Premium glassmorphic theme
+│       ├── App.tsx, shortlist.ts, main.tsx, index.css
+│       └── components/              # AgentChat, InteractiveMap, SplitScreenLayout,
+│                                    # HouseholdForm, ShortlistTray, Mascot
 │
-└── tests/                           # Verification & Regression Test Suites
-    ├── test_market_data.py          # Ingestion, resale queries, agent and MCP integration
-    ├── test_market_download.py      # Download authentication and cache handling
-    ├── test_spatial_engine.py       # SVY21 coordinate roundtrip & KD-Tree queries
-    └── test_spatial_tools.py        # All 5 FastMCP tools regression suite
+├── config/
+│   ├── experiment_config.yaml       # Models, temp=0.0, seed=42, chunking, top-k, mock/real per tool
+│   ├── financial_rules.json         # Reviewed financial rule snapshot
+│   └── hosted_models.yaml           # Hosted model profiles
+│
+├── data/                            # Ingestion scripts and committed indexes
+│   ├── build_market_db.py, market_database.py, gov_download.py, sql/market_schema.sql
+│   ├── build_spatial_index.py       # Builds spatial_index.pkl (+ .json, geocoded_cache.json)
+│   ├── ingest_hdb_policy_rag.py     # Builds policy_store.pkl from policy_documents/
+│   ├── policy_documents/, policy_chunks.json, policy_store.pkl
+│   ├── bto/bto_launches.csv         # BTO launch data
+│   └── local/                       # Not committed: hdb_compass.duckdb, chat logs, local model files
+│
+├── evaluation/                      # 90-question benchmark and scoring
+│   ├── category_{a..f}_queries.json # Question sets (A, B, C, D, E, F; 15 each)
+│   ├── build_category_a|b|c|d|f.py  # Builders for A, B, C, D and F (E: ground_category_e.py)
+│   ├── build_benchmark_90.py        # Merges the six categories into benchmark_hdb_90.json
+│   ├── architecture_metrics.py      # Tool F1, parameter match, CSR, ground-truth scoring
+│   ├── run_category_f.py            # Guardrail block-rate and false-block runner
+│   ├── langsmith_evals.py           # LangSmith datasets and experiments
+│   ├── run_category_e_prelim.py, analyze_category_e.py, compare_runs.py,
+│   │   plot_category_e.py, vary_category_e.py, category_e_extra/varied.json
+│   ├── run_rag_ablation.py, rag_ablation_results.json
+│   └── tool_selection_check.py      # Live tool-selection check
+│
+├── docs/                            # INTERFACES.md (contracts), FINANCIAL_TOOLS.md, MARKET_DATA.md,
+│                                    # architecture_graphs.md (generated by build_graph_diagrams.py),
+│                                    # member_3_whiteboard_guide.md
+├── scripts/start_ollama.sh          # Start a local Ollama server
+├── cluster/                         # Slurm / vLLM scripts for the GPU cluster (serve, tunnel, smoke test)
+│
+└── tests/                           # ~50 test modules (pytest): tools, agents, graph, guardrails,
+                                     # backend WebSocket, evaluation builders and scorers
 ```
 
 ---
@@ -404,8 +512,12 @@ provenance and query calculations.
 python -m pytest tests/ -q
 ```
 
-Tests use synthetic/mock fixtures and require no downloaded market database,
-API credentials or running model. They include agent and in-memory MCP calls.
+Tests need no API credentials or running model, and include agent and in-memory
+MCP calls. Many use synthetic or mock fixtures, but they are not fully database-free:
+with `HDB_COMPASS_DB_PATH` pointing at a missing file, about 82 of ~1,460 tests fail
+(mostly the Category A analysis, price-check, place-question and code-opening tests, which
+read the built market database), and the rest pass. Build the database (step 3)
+before running the full suite.
 
 After building the database, with `LLM_PROFILE=none` in `.env`:
 
@@ -416,8 +528,9 @@ python -c 'from agents.arch_3_specialist_5agent import run; print(run("Find 4-ro
 The graph uses real resale queries, comparable-sale analytics, town price trends,
 research tools (block history, market snapshot, town ranking, option comparison,
 asking-price checks, nearby amenities), BTO launch comparisons from official HDB
-annexes and financial calculators through the Python tool registry. Only policy
-retrieval still uses a mock; configuration is in `config/experiment_config.yaml`.
+annexes, financial calculators and policy retrieval through the Python tool
+registry. Every tool is configured `real` in `config/experiment_config.yaml`
+(`mcp_server/mock_tools.py` keeps fixtures for tests).
 
 Research questions work the same way; for example:
 
@@ -459,14 +572,17 @@ python -m mcp_server.server
 ```
 
 An MCP client normally launches this stdio process and communicates over
-stdin/stdout. It exposes nine market tools, three financial tools and seven spatial tools. The
-current agent registry executes Python directly and does not need this process.
+stdin/stdout. It exposes all 25 tools: 14 market (4 core + 10 add-on), 7 spatial (4 core +
+3 add-on), 3 financial and 1 policy. The current agent registry executes Python directly and does not need this process.
 
 ### 6. Run the web application (optional)
 
 Chat streams the Variant C specialist graph, including resale and financial
-tools. Map exploration uses the local spatial index. Each chat request starts a
-new agent state; previous answers are not retained as financial facts.
+tools. Map exploration uses the local spatial index. The backend keeps each
+browser tab's last finished state in memory (`?session=`, up to 200 tabs, lost when
+the backend restarts; the Clear button resets it), so a reply such as "we have
+$25,000 in cash" completes the earlier request and confirmed household facts carry
+over (`docs/INTERFACES.md` sections 7 and 9).
 
 Start the backend in an activated Python environment:
 
@@ -476,7 +592,8 @@ LLM_PROFILE=none .venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 -
 
 This mode needs no model or model API key. Build the market database in step 3
 first. It supports deterministic resale searches and reports missing financial
-inputs; use the direct financial examples above for fully specified calculations.
+inputs; the chat then shows a household form (`HouseholdForm.tsx`) that sends the
+missing facts as one plain-English message, or state them in your own words.
 For live language-model testing, start the configured Ollama or vLLM service and
 select a model profile as described below.
 
@@ -512,12 +629,32 @@ For a local smoke test:
    no resale cards and no school markers. “Schools near 147” must request a
    full address when multiple indexed blocks match.
 
+**Block cards, shortlist and affordability.** Each candidate block card in the chat
+has three actions. **Price check** asks whether the price is fair for that block
+and flat type (`assess_resale_price`: a fair range from the block's and nearby
+sales with the sample window, or a verdict when you give an asking price).
+**Afford?** asks "Can we afford a 4 ROOM at Blk …?" and runs the grant,
+affordability and upfront calculators for that one flat, using your stated asking
+price, else the block's median recent sale, else the median of nearby sales, and
+says which it used; missing household facts are requested through the household
+form. The star adds the block to the **shortlist** (`ShortlistTray.tsx`, saved in
+the browser's localStorage); the tray's Compare button sends a comparison of 2 to 4
+saved blocks of the same flat type (`compare_resale_options`). Area-level
+questions work the same way: "Can I afford a resale within 1km of Novena MRT?"
+reports the household's price ceiling and keeps only the blocks whose median price
+is within it. A **named MRT station** ("near Novena MRT", "near Bishan
+Interchange") measures distance to that station only (the `mrt_station` argument
+of `filter_blocks_by_amenity_proximity`; LRT stops are separate); "near an MRT"
+still means the nearest station.
+
 School lookup resolves the address before searching. It accepts a full block
 and street, a unique block and town, or a six-digit postal code. It reports
 `needs_information` for ambiguous, unknown or placeholder addresses, and
 `unavailable` for missing index data. A successful lookup with no schools in
-the radius is a separate outcome. Resend the full request when clarifying;
-conversation memory is not implemented yet. The local primary-school snapshot
+the radius is a separate outcome. Follow-up questions (which school, which place,
+missing financial facts) are completed from the tab's remembered state, but that
+memory is in-process only, so resend the full request after a backend restart or
+Clear. The local primary-school snapshot
 does not establish official MOE registration boundaries or walking routes.
 
 Run the address-resolution, graph, MCP and WebSocket regression tests with:
@@ -533,18 +670,16 @@ Before a broader demo, prioritize these application fixes:
   Reconcile authoritative addresses, flag unresolved rows and rebuild the index.
   The new school lookup rejects these placeholders; other spatial paths still
   need the same data-quality checks.
-- Retain confirmed addresses and financial facts across turns, with explicit
-  clarification state rather than treating each message as a new search.
+- Make the per-tab conversation memory durable: it already carries confirmed
+  addresses, financial facts and open clarifications between turns, but it is
+  in-process and lost when the backend restarts.
 - Separate property search, town trends and location inspection throughout the
   graph and UI. Return structured trend series for charts; do not attach block
   listings to trend-only answers.
-- Replace mock policy results before enabling that feature for users.
-  Implement evidence auditing; a pass-through hook is not verification.
 - Extend query-to-UI acceptance tests to cover ambiguous locations, missing
   data, model failures and consistency between text, cards and map markers.
 
-Policy retrieval is still mocked; use resale, research, BTO and spatial queries
-for this local demonstration. Further questions to try: "What's near Blk 312
+Further questions to try: "What's near Blk 312
 Shunfu Rd?", "Compare Blk 288B Jurong East St 21 vs Blk 266 Toh Guan Rd for a
 4-room", "How is the resale market now?", "Which town is the cheapest for 5-room
 flats?" and "How does Berlayar Rise BTO compare with resale prices for a 4-room?".
@@ -670,8 +805,8 @@ structured-output support; unsupported sampling parameters can be disabled with
 `?check=true` also checks discovery. The UI shows the configured model, rule-based
 mode, or a fallback notice if a model step failed. Existing inference failures
 can still invoke deterministic processing; no provider switch occurs mid-answer.
-Live models do not add missing chart UI, persistent conversation state or a real
-policy implementation.
+Live models do not add missing chart UI or durable conversation state (the session
+memory above is in-process).
 
 Provider references: [Ollama compatibility](https://docs.ollama.com/api/openai-compatibility),
 [Groq compatibility](https://console.groq.com/docs/openai),
@@ -706,7 +841,7 @@ Dry-run checklist (in the demo room, on its network, a day before):
 - [ ] Ctrl-C, then `--offline` starts in under a minute and answers
 - [ ] Node 20.19+ or 22 installed (`node -v`); `frontend/node_modules` present
 - [ ] Laptop on power, sleep disabled; on the day, start 30–45 min before presenting
-- [ ] Demo questions chosen from flat search, grants and budget (policy search is still a stand-in)
+- [ ] Demo questions chosen from flat search, grants and budget; ask one policy question in the dry run (policy search is real: it loads the committed `data/policy_store.pkl`, rebuilding it from `data/policy_documents/` if missing, and the Hugging Face models `all-MiniLM-L6-v2` and `cross-encoder/ms-marco-MiniLM-L-6-v2` from the local cache, downloading them on first use, so warm them while online; if they cannot load, retrieval degrades to word-overlap and rank-fusion scoring instead of failing)
 
 ### Tracing and evals (LangSmith, optional)
 
@@ -741,12 +876,17 @@ the agent address (see `.env.example`). Details: `docs/INTERFACES.md` section 13
 
 ---
 
-## TODO: Member 1 — Market and financial tools (Categories A & D)
+## Member 1 — Market and financial tools (Categories A & D): status and remaining work
 
 Completed: resale ingestion, the local DuckDB schema, resale analytics, research
 tools, BTO launch comparison and three financial calculators, with Pydantic
 validation, agent-registry integration and FastMCP registration. All Member 1
-tools are real. Financial scenario coverage and exclusions are documented in
+tools are real. Both of Member 1's benchmark categories now exist: Category A
+(`evaluation/category_a_queries.json`, ground truth from independent SQL,
+`evaluation/build_category_a.py`) and Category D
+(`evaluation/category_d_queries.json`, ground truth from the real calculators,
+`evaluation/build_category_d.py`; see the benchmark section below). Unticked
+items below are the remaining work. Financial scenario coverage and exclusions are documented in
 [Financial tools](docs/FINANCIAL_TOOLS.md); research and BTO semantics in
 [Market data](docs/MARKET_DATA.md).
 
@@ -836,7 +976,7 @@ python -m pytest tests/test_comparable_resale.py -q
   or unsupported-scenario results explicitly.
 - [ ] Review the expanded financial contracts and specialist prompts with Member 4.
 - [ ] Review the additional comparable-sale tool, coordinate handoff and updated
-  13-tool inventory with Member 4; run live-model tool-selection checks as well
+  25-tool inventory (12 core + 13 add-on) with Member 4; run live-model tool-selection checks as well
   as deterministic graph/MCP tests.
 - [x] Record financial rule sources, known effective dates, assumptions and rounding
   rules. Define how documentation changes are checked and released as tested
@@ -848,7 +988,8 @@ python -m pytest tests/test_comparable_resale.py -q
   switch its configuration to `real`, and verify direct, agent and MCP calls.
 - [x] Add independent financial reference cases, boundary and integration tests.
 - [ ] Produce Category A & D accuracy results with Member 5 using fixed data/rule versions.
-  Existing unit tests and mock benchmarks do not establish that accuracy.
+  The question sets and scorers exist; the unit tests and mock benchmarks do not
+  by themselves establish accuracy.
 - [ ] Document the MCP client–server flow and explain how SQL/Python calculations
   supply numeric evidence to the LLM for the role presentation.
 
@@ -870,8 +1011,8 @@ After the original deliverables above, prioritize:
   do not treat the purchase-only ceiling or a block's median lease as proof
   that a particular purchase is affordable or eligible.
 - [ ] Extend Category A/D evaluation with independently checked answers under
-  fixed snapshots and rule versions, including stale data, insufficient samples,
-  missing inputs and unsupported scenarios.
+  fixed snapshots and rule versions, including stale data and insufficient samples.
+  Category D already covers missing inputs and unsupported scenarios.
 - [ ] Add pagination or continuation for truncated market results and consistent
   errors for no matches, insufficient observations, a missing database and
   unavailable sources. Ensure agents disclose incomplete result coverage.
@@ -902,12 +1043,13 @@ Comparable analytics are implemented; the remaining items are follow-up capabili
 
 Extend existing tool outputs where practical. Agree any additional callable
 tools and contract changes with Member 4, updating schemas, prompts and
-evaluation expectations together. The inventory now contains 13 tools: the
-original 11 plus comparable resale analytics and address-centred school lookup. Earlier benchmark runs
+evaluation expectations together. The inventory now contains 25 tools: the 12 core
+tools plus 13 add-on tools (research, area statistics and address-centred school
+lookup; `docs/INTERFACES.md` section 8). Earlier benchmark runs
 must remain labelled with their original inventory and configuration.
 
 Next: the BTO project schema and on-demand retrieval, contract review and
-Category A/D evaluation, followed by
+Category A/D accuracy runs, followed by
 reliability improvements and selected analytics expansions. Broader financial
 scenarios remain future work. Complete financial estimates require the household,
 eligibility and funding facts described in the financial contracts.
@@ -961,14 +1103,14 @@ workstream: [`docs/INTERFACES.md`](docs/INTERFACES.md). Graph drawings: [`docs/a
 | File | What it is |
 |---|---|
 | `agents/state.py` | `HDBCompassState` (proposal §4.2) + `tool_call_log`, `relaxation`, `variant`, `errors` |
-| `agents/schemas.py` | Pydantic I/O models for all 13 tools; shared tool inventory |
+| `agents/schemas.py` | Pydantic I/O models for all 25 tools (12 core + 13 add-on); shared tool inventory |
 | `agents/tool_registry.py` | mock/real switch per tool (`config → tools.use_mock`), strict argument validation, tool-call logging |
 | `agents/llm.py` | Shared model factory, local/hosted profiles, auto discovery and tool-call diagnostic |
-| `agents/supervisor.py` | extraction → routing → parallel `Send` fan-out → specialist ReAct loops → SQL ∩ spatial intersection → relaxation (E2) → synthesis + map sync (E1) → auditor hook → finalize |
-| `agents/arch_1_monolith.py` | Variant A: one ReAct agent, 13 tools, no auditor |
-| `agents/arch_2_coarse.py` | Variant B: supervisor + combined data agent (12 tools) + policy agent (1 tool), no auditor |
+| `agents/supervisor.py` | extraction → routing → parallel `Send` fan-out → specialist ReAct loops → SQL ∩ spatial intersection → relaxation (E2) → synthesis + map sync (E1) → runtime auditor → finalize |
+| `agents/arch_1_monolith.py` | Variant A: one ReAct agent, the 12 core tools (add-ons only when `addons.offer_in` is `all`), no auditor |
+| `agents/arch_2_coarse.py` | Variant B: supervisor + combined data agent (11 core tools) + policy agent (1 tool), no auditor |
 | `agents/arch_3_specialist_5agent.py` | Variant C: proposed 5-agent graph + auditor self-correction loop |
-| `mcp_server/mock_tools.py` | deterministic fixtures for Members 1 & 3's tools until the real ones land |
+| `mcp_server/mock_tools.py` | deterministic fixtures kept for tests and mock-mode runs; every tool is configured `real` in `config/experiment_config.yaml` |
 | `evaluation/category_e_queries.json` | 15 Category E golden questions grounded on the real database, with ground truth (`python -m evaluation.ground_category_e`) |
 | Follow-up flow | when facts are missing the Supervisor asks for them; continue with `run(reply, previous=state)` (docs/INTERFACES.md §7) |
 | `evaluation/architecture_metrics.py` | Tool Selection F1, Parameter Exact-Match, CSR, routing accuracy, aggregation |
@@ -982,9 +1124,41 @@ LLM_PROFILE=none .venv/bin/pytest tests/ -q
 .venv/bin/python agents/arch_3_specialist_5agent.py
 ```
 
-Local Ollama note: the default 4096-token context is too small for Variant A (13 tool schemas). Quit the Ollama
+Local Ollama note: the default 4096-token context is too small for Variant A (12 tool schemas). Quit the Ollama
 menu-bar app and start the server with a larger context before benchmarking locally:
 
 ```bash
 OLLAMA_CONTEXT_LENGTH=16384 ollama serve
 ```
+
+---
+
+## Evaluation benchmark and Member 5 — guardrail, auditor and Categories D and F
+
+`evaluation/benchmark_hdb_90.json` holds the 90-question benchmark of the proposal: 15 questions in each of six categories, merged by `python -m evaluation.build_benchmark_90` from `evaluation/category_{a..f}_queries.json` (it checks every item has the benchmark fields, flags duplicate ids and reports any category that is missing or short).
+
+| Cat. | Questions | Builder (regenerates the file) | Owner · ground truth |
+|---|---|---|---|
+| A | Historical resale statistics (distance bands, stations and towns, broad groupings) | `evaluation/build_category_a.py` | Member 1 · independent SQL on the database snapshot |
+| B | Spatial: primary-school boundaries, multi-amenity, dual commute | `evaluation/build_category_b.py` | Member 2 · matching block keys from the spatial tools |
+| C | HDB policy questions | `evaluation/build_category_c.py` | Member 3 · key clauses that the answer must contain |
+| D | Financial: grants, maximum affordability, BSD and upfront outlay | `evaluation/build_category_d.py` | Member 1's tools, scored by Member 5 · the real calculators |
+| E | Multi-constraint search with grants and budget; zero-result relaxation | `python -m evaluation.ground_category_e` | Member 4 · real database, spatial filter and calculators |
+| F | Adversarial and safety: speculative advice, injection, identifiers, out-of-domain, bias bait | `evaluation/build_category_f.py` | Member 5 · expected block kind and forbidden wording |
+
+Scoring is in `evaluation/architecture_metrics.py` (`ground_truth_scores` dispatches on the shape of each item's `ground_truth_facts`); `python -m evaluation.langsmith_evals --dataset category_{a,b,c,d,e}` runs a variant over a category as a LangSmith experiment (`docs/INTERFACES.md` section 13). Run `python -m evaluation.build_category_X --check` (A, B and D) to see whether a question file still matches the current database or rule snapshot.
+
+**Category D (financial, 15 questions).** D1 grants (6), D2 maximum affordability (5), D3 stamp duty and upfront cash (4). Each is one self-contained household description in the plain-statement wording the app's deterministic extractor reads. Ground truth comes from calling the three calculators through the Supervisor's own hand-off (a successful grant total feeds affordability, an affordability LTV feeds the upfront calculator), with a rule-snapshot version recorded in each item, and the build fails if the extractor does not read back every stated fact. The set includes questions whose correct answer is `needs_information` (a fact left out: cash savings, the market valuation) or `unsupported` (second-timer household, a lease that does not reach the youngest buyer's age 95, an HDB loan with other debts, a loan above the LTV limit): the scorer (`financial_scores`) then requires the answer to say so and give no figure, instead of a number. For `ok` questions it requires the calculators' amounts (grant total, maximum purchase price, or BSD and cash required) to appear in the answer. Tests: `tests/test_category_d.py`.
+
+**Guardrail and auditor** are in `agents/guardrails.py` and `agents/sanitizer.py` (behaviour described under diagram 2 above). Tests: `tests/test_guardrails.py`, `tests/test_auditor_model_opening.py`.
+
+**Category F and its block-rate runner.**
+
+```bash
+python -m evaluation.build_category_f              # rewrite category_f_queries.json (F1-F5)
+python -m evaluation.run_category_f                # guardrail only: no model, no database
+python -m evaluation.run_category_f --full         # also run Variant C on the F5 bait questions and check the wording
+python -m evaluation.run_category_f --out results.json
+```
+
+F1 speculative financial advice, F2 SQL / prompt injection, F3 identifiers (NRIC, FIN, phone), F4 out-of-domain asks and F5 neighbourhood-bias bait. F1 to F4 (13 questions) must be stopped by the input guardrail before any agent or tool runs; the runner reports the **adversarial block rate** (blocked, and blocked with the expected kind; target 100%), whether the F5 questions are passed on to the agents (they are legitimate housing questions and must be answered objectively, checked on the output with `guardrails.compliance_issues`), and the **false block** count: questions in Categories A to E that the guardrail wrongly stops (expected none).

@@ -3,7 +3,7 @@
     python -m evaluation.build_benchmark_90
 
 Reads category_{a..f}_queries.json, keeps 15 per category and checks every item has the benchmark fields. A missing
-category file (Category D is Member 1's) is reported, not invented, so the output only reaches 90 once all six exist.
+category file is reported, not invented, so the output only reaches 90 once all six exist (A-F, 15 each).
 """
 import json
 from pathlib import Path

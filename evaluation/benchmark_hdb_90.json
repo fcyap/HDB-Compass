@@ -2317,6 +2317,1774 @@
     }
   },
   {
+    "id": "D1-01",
+    "category": "D",
+    "sub_use_case": "D1",
+    "query": "We are both Singapore citizens. We are first-time buyers. We are aged 32 and 30. We have no children. Our household income is $9,000 a month. Our CPF OA balance is $80,000. We have $40,000 in cash savings. We have no monthly debt. We have both worked continuously for the past 12 months. We are buying near our parents. Our grant eligibility is confirmed. Our proximity grant eligibility is confirmed. Our HDB loan eligibility is confirmed. Use 70 years of remaining lease for the calculation. How much housing grant can we get for a 4-room resale flat?",
+    "initial_map_state": null,
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "monthly_income": 9000.0,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 70.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "near",
+        "youngest_buyer_age": 30,
+        "youngest_core_member_age": 30,
+        "proximity_eligibility_confirmed": true
+      },
+      "affordability": {
+        "monthly_income": 9000.0,
+        "cpf_oa_balance": 80000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 70.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "youngest_buyer_age": 30,
+        "oldest_buyer_age": 32,
+        "average_applicant_age": 31.0,
+        "cash_savings": 40000.0
+      }
+    },
+    "expected_agents": [
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 9000.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 70.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "near",
+          "youngest_buyer_age": 30,
+          "youngest_core_member_age": 30,
+          "proximity_eligibility_confirmed": true
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 9000.0,
+          "cpf_oa_balance": 80000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 70.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "youngest_buyer_age": 30,
+          "oldest_buyer_age": 32,
+          "average_applicant_age": 31.0,
+          "cash_savings": 40000.0
+        }
+      }
+    ],
+    "expected_behaviour": "Report the EHG, Family Grant and Proximity Grant from the calculator and their total.",
+    "ground_truth_facts": {
+      "rule_version": "sg-hdb-resale-2026-10-25.v1",
+      "target_tool": "calculate_cpf_housing_grants",
+      "expected_status": "ok",
+      "statuses": {
+        "grants": "ok",
+        "affordability": "ok"
+      },
+      "give_figure": true,
+      "calculate_cpf_housing_grants": {
+        "status": "ok",
+        "missing_inputs": [],
+        "enhanced_housing_grant": 5000.0,
+        "family_grant": 80000.0,
+        "proximity_housing_grant": 20000.0,
+        "total_grants": 105000.0,
+        "notes": [
+          "Conditional estimate for the confirmed standard scheme; final eligibility and amounts require an HFE letter.",
+          "Employment confirmation includes continuous work for the HFE assessment period and employment at application."
+        ]
+      },
+      "calculate_maximum_affordability": {
+        "status": "ok",
+        "missing_inputs": [],
+        "max_purchase_price": 794366.42,
+        "max_loan_amount": 569366.42,
+        "monthly_instalment": 2583.04,
+        "binding_constraint": "MSR",
+        "ltv_ratio": 0.75,
+        "notes": [
+          "Purchase-only ceiling: valuation equals price; excludes BSD, ABSD, fees and cash over valuation. Reserve those costs separately and run the upfront tool before recommending a purchase.",
+          "CPF input must already reflect retention, age and withdrawal limits. Grants are included once. Approval and any stricter lender limits remain subject to HFE/bank assessment."
+        ]
+      }
+    }
+  },
+  {
+    "id": "D1-02",
+    "category": "D",
+    "sub_use_case": "D1",
+    "query": "We are a married couple, one Singapore citizen and one permanent resident. We are first-time buyers. We are aged 34 and 33. We have no children. Our household income is $7,800 a month. Our CPF OA balance is $70,000. We have $30,000 in cash savings. We have no monthly debt. We have both worked continuously for the past 12 months. We are not buying near our parents. Our grant eligibility is confirmed. Our HDB loan eligibility is confirmed. Use 75 years of remaining lease for the calculation. What grants do we qualify for on a 5-room resale flat?",
+    "initial_map_state": null,
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_PR",
+        "first_timer_status": true,
+        "monthly_income": 7800.0,
+        "flat_type": "5 ROOM",
+        "remaining_lease_years": 75.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 33,
+        "youngest_core_member_age": 33
+      },
+      "affordability": {
+        "monthly_income": 7800.0,
+        "cpf_oa_balance": 70000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 75.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "youngest_buyer_age": 33,
+        "oldest_buyer_age": 34,
+        "average_applicant_age": 33.5,
+        "cash_savings": 30000.0
+      }
+    },
+    "expected_agents": [
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_PR",
+          "first_timer_status": true,
+          "monthly_income": 7800.0,
+          "flat_type": "5 ROOM",
+          "remaining_lease_years": 75.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 33,
+          "youngest_core_member_age": 33
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 7800.0,
+          "cpf_oa_balance": 70000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 75.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "youngest_buyer_age": 33,
+          "oldest_buyer_age": 34,
+          "average_applicant_age": 33.5,
+          "cash_savings": 30000.0
+        }
+      }
+    ],
+    "expected_behaviour": "Report the SC/PR grants from the calculator (the SC/PR Family Grant is lower than SC/SC) and the total.",
+    "ground_truth_facts": {
+      "rule_version": "sg-hdb-resale-2026-10-25.v1",
+      "target_tool": "calculate_cpf_housing_grants",
+      "expected_status": "ok",
+      "statuses": {
+        "grants": "ok",
+        "affordability": "ok"
+      },
+      "give_figure": true,
+      "calculate_cpf_housing_grants": {
+        "status": "ok",
+        "missing_inputs": [],
+        "enhanced_housing_grant": 20000.0,
+        "family_grant": 40000.0,
+        "proximity_housing_grant": 0.0,
+        "total_grants": 60000.0,
+        "notes": [
+          "Conditional estimate for the confirmed standard scheme; final eligibility and amounts require an HFE letter.",
+          "Employment confirmation includes continuous work for the HFE assessment period and employment at application."
+        ]
+      },
+      "calculate_maximum_affordability": {
+        "status": "ok",
+        "missing_inputs": [],
+        "max_purchase_price": 640000.0,
+        "max_loan_amount": 480000.0,
+        "monthly_instalment": 2177.61,
+        "binding_constraint": "LTV",
+        "ltv_ratio": 0.75,
+        "notes": [
+          "Purchase-only ceiling: valuation equals price; excludes BSD, ABSD, fees and cash over valuation. Reserve those costs separately and run the upfront tool before recommending a purchase.",
+          "CPF input must already reflect retention, age and withdrawal limits. Grants are included once. Approval and any stricter lender limits remain subject to HFE/bank assessment."
+        ]
+      }
+    }
+  },
+  {
+    "id": "D1-03",
+    "category": "D",
+    "sub_use_case": "D1",
+    "query": "I am a single Singapore citizen aged 38. I am a first-time buyer. I have no children. My income is $5,500 a month. My CPF OA balance is $90,000. I have $30,000 in cash savings. I have no monthly debt. I have worked continuously for the past 12 months. I am buying near my parents. My grant eligibility is confirmed. My proximity grant eligibility is confirmed. My HDB loan eligibility is confirmed. Use 70 years of remaining lease for the calculation. What housing grants can I get for a 4-room resale flat?",
+    "initial_map_state": null,
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_Single",
+        "first_timer_status": true,
+        "monthly_income": 5500.0,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 70.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "near",
+        "youngest_buyer_age": 38,
+        "youngest_core_member_age": 38,
+        "proximity_eligibility_confirmed": true
+      },
+      "affordability": {
+        "monthly_income": 5500.0,
+        "cpf_oa_balance": 90000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 70.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "youngest_buyer_age": 38,
+        "oldest_buyer_age": 38,
+        "average_applicant_age": 38.0,
+        "cash_savings": 30000.0
+      }
+    },
+    "expected_agents": [
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_Single",
+          "first_timer_status": true,
+          "monthly_income": 5500.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 70.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "near",
+          "youngest_buyer_age": 38,
+          "youngest_core_member_age": 38,
+          "proximity_eligibility_confirmed": true
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 5500.0,
+          "cpf_oa_balance": 90000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 70.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "youngest_buyer_age": 38,
+          "oldest_buyer_age": 38,
+          "average_applicant_age": 38.0,
+          "cash_savings": 30000.0
+        }
+      }
+    ],
+    "expected_behaviour": "Report the Single Singapore Citizen grants (half the family amounts, including the half-rate Proximity Grant).",
+    "ground_truth_facts": {
+      "rule_version": "sg-hdb-resale-2026-10-25.v1",
+      "target_tool": "calculate_cpf_housing_grants",
+      "expected_status": "ok",
+      "statuses": {
+        "grants": "ok",
+        "affordability": "ok"
+      },
+      "give_figure": true,
+      "calculate_cpf_housing_grants": {
+        "status": "ok",
+        "missing_inputs": [],
+        "enhanced_housing_grant": 0.0,
+        "family_grant": 40000.0,
+        "proximity_housing_grant": 10000.0,
+        "total_grants": 50000.0,
+        "notes": [
+          "Conditional estimate for the confirmed standard scheme; final eligibility and amounts require an HFE letter.",
+          "Employment confirmation includes continuous work for the HFE assessment period and employment at application."
+        ]
+      },
+      "calculate_maximum_affordability": {
+        "status": "ok",
+        "missing_inputs": [],
+        "max_purchase_price": 517946.14,
+        "max_loan_amount": 347946.14,
+        "monthly_instalment": 1578.53,
+        "binding_constraint": "MSR",
+        "ltv_ratio": 0.75,
+        "notes": [
+          "Purchase-only ceiling: valuation equals price; excludes BSD, ABSD, fees and cash over valuation. Reserve those costs separately and run the upfront tool before recommending a purchase.",
+          "CPF input must already reflect retention, age and withdrawal limits. Grants are included once. Approval and any stricter lender limits remain subject to HFE/bank assessment."
+        ]
+      }
+    }
+  },
+  {
+    "id": "D1-04",
+    "category": "D",
+    "sub_use_case": "D1",
+    "query": "We are both Singapore citizens. We are first-time buyers. We are aged 35 and 33. We have no children. Our household income is $17,000 a month. Our CPF OA balance is $150,000. We have $60,000 in cash savings. We have no monthly debt. We have both worked continuously for the past 12 months. We are buying near our parents. Our grant eligibility is confirmed. Our proximity grant eligibility is confirmed. Our HDB loan eligibility is confirmed. Use 75 years of remaining lease for the calculation. What grants can we get for a 4-room resale flat?",
+    "initial_map_state": null,
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "monthly_income": 17000.0,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 75.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "near",
+        "youngest_buyer_age": 33,
+        "youngest_core_member_age": 33,
+        "proximity_eligibility_confirmed": true
+      },
+      "affordability": {
+        "monthly_income": 17000.0,
+        "cpf_oa_balance": 150000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 75.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "youngest_buyer_age": 33,
+        "oldest_buyer_age": 35,
+        "average_applicant_age": 34.0,
+        "cash_savings": 60000.0
+      }
+    },
+    "expected_agents": [
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 17000.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 75.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "near",
+          "youngest_buyer_age": 33,
+          "youngest_core_member_age": 33,
+          "proximity_eligibility_confirmed": true
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 17000.0,
+          "cpf_oa_balance": 150000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 75.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "youngest_buyer_age": 33,
+          "oldest_buyer_age": 35,
+          "average_applicant_age": 34.0,
+          "cash_savings": 60000.0
+        }
+      }
+    ],
+    "expected_behaviour": "Income is above the Family Grant and EHG ceilings: report that only the Proximity Grant applies.",
+    "ground_truth_facts": {
+      "rule_version": "sg-hdb-resale-2026-10-25.v1",
+      "target_tool": "calculate_cpf_housing_grants",
+      "expected_status": "ok",
+      "statuses": {
+        "grants": "ok",
+        "affordability": "ok"
+      },
+      "give_figure": true,
+      "calculate_cpf_housing_grants": {
+        "status": "ok",
+        "missing_inputs": [],
+        "enhanced_housing_grant": 0.0,
+        "family_grant": 0.0,
+        "proximity_housing_grant": 20000.0,
+        "total_grants": 20000.0,
+        "notes": [
+          "Conditional estimate for the confirmed standard scheme; final eligibility and amounts require an HFE letter.",
+          "Employment confirmation includes continuous work for the HFE assessment period and employment at application."
+        ]
+      },
+      "calculate_maximum_affordability": {
+        "status": "ok",
+        "missing_inputs": [],
+        "max_purchase_price": 920000.0,
+        "max_loan_amount": 690000.0,
+        "monthly_instalment": 3130.32,
+        "binding_constraint": "LTV",
+        "ltv_ratio": 0.75,
+        "notes": [
+          "Purchase-only ceiling: valuation equals price; excludes BSD, ABSD, fees and cash over valuation. Reserve those costs separately and run the upfront tool before recommending a purchase.",
+          "CPF input must already reflect retention, age and withdrawal limits. Grants are included once. Approval and any stricter lender limits remain subject to HFE/bank assessment."
+        ]
+      }
+    }
+  },
+  {
+    "id": "D1-05",
+    "category": "D",
+    "sub_use_case": "D1",
+    "query": "We are both Singapore citizens. We are not first-time buyers. We are aged 32 and 30. We have no children. Our household income is $9,000 a month. Our CPF OA balance is $80,000. We have $40,000 in cash savings. We have no monthly debt. We have both worked continuously for the past 12 months. We are not buying near our parents. Our grant eligibility is confirmed. Our HDB loan eligibility is confirmed. Use 70 years of remaining lease for the calculation. What grants can we get for a 4-room resale flat?",
+    "initial_map_state": null,
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": false,
+        "monthly_income": 9000.0,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 70.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 30,
+        "youngest_core_member_age": 30
+      },
+      "affordability": {
+        "monthly_income": 9000.0,
+        "cpf_oa_balance": 80000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 70.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "youngest_buyer_age": 30,
+        "oldest_buyer_age": 32,
+        "average_applicant_age": 31.0,
+        "cash_savings": 40000.0
+      }
+    },
+    "expected_agents": [
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": false,
+          "monthly_income": 9000.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 70.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 30,
+          "youngest_core_member_age": 30
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 9000.0,
+          "cpf_oa_balance": 80000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 70.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "youngest_buyer_age": 30,
+          "oldest_buyer_age": 32,
+          "average_applicant_age": 31.0,
+          "cash_savings": 40000.0
+        }
+      }
+    ],
+    "expected_behaviour": "Second-timer households are outside the model: say it is unsupported and needs an HDB assessment; give no grant figure.",
+    "ground_truth_facts": {
+      "rule_version": "sg-hdb-resale-2026-10-25.v1",
+      "target_tool": "calculate_cpf_housing_grants",
+      "expected_status": "unsupported",
+      "statuses": {
+        "grants": "unsupported",
+        "affordability": "needs_information"
+      },
+      "give_figure": false,
+      "calculate_cpf_housing_grants": {
+        "status": "unsupported",
+        "missing_inputs": [],
+        "enhanced_housing_grant": null,
+        "family_grant": null,
+        "proximity_housing_grant": null,
+        "total_grants": null,
+        "notes": [
+          "Only standard first-timer resale purchases are supported; BTO and second-timer/mixed households require separate assessment."
+        ]
+      },
+      "calculate_maximum_affordability": {
+        "status": "needs_information",
+        "missing_inputs": [
+          "total_grants"
+        ],
+        "max_purchase_price": null,
+        "max_loan_amount": null,
+        "monthly_instalment": null,
+        "binding_constraint": null,
+        "ltv_ratio": null,
+        "notes": []
+      }
+    }
+  },
+  {
+    "id": "D1-06",
+    "category": "D",
+    "sub_use_case": "D1",
+    "query": "We are both Singapore citizens. We are first-time buyers. We are aged 32 and 30. We have no children. Our household income is $9,000 a month. Our CPF OA balance is $80,000. We have $40,000 in cash savings. We have no monthly debt. We have both worked continuously for the past 12 months. We are not buying near our parents. Our grant eligibility is confirmed. Our HDB loan eligibility is confirmed. Use 50 years of remaining lease for the calculation. What grants can we get for a 4-room resale flat?",
+    "initial_map_state": null,
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "monthly_income": 9000.0,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 50.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 30,
+        "youngest_core_member_age": 30
+      },
+      "affordability": {
+        "monthly_income": 9000.0,
+        "cpf_oa_balance": 80000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 50.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "youngest_buyer_age": 30,
+        "oldest_buyer_age": 32,
+        "average_applicant_age": 31.0,
+        "cash_savings": 40000.0
+      }
+    },
+    "expected_agents": [
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 9000.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 50.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 30,
+          "youngest_core_member_age": 30
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 9000.0,
+          "cpf_oa_balance": 80000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 50.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "youngest_buyer_age": 30,
+          "oldest_buyer_age": 32,
+          "average_applicant_age": 31.0,
+          "cash_savings": 40000.0
+        }
+      }
+    ],
+    "expected_behaviour": "50 years of lease does not reach the youngest buyer's age 95: say the case is unsupported; give no grant figure.",
+    "ground_truth_facts": {
+      "rule_version": "sg-hdb-resale-2026-10-25.v1",
+      "target_tool": "calculate_cpf_housing_grants",
+      "expected_status": "unsupported",
+      "statuses": {
+        "grants": "unsupported",
+        "affordability": "needs_information"
+      },
+      "give_figure": false,
+      "calculate_cpf_housing_grants": {
+        "status": "unsupported",
+        "missing_inputs": [],
+        "enhanced_housing_grant": null,
+        "family_grant": null,
+        "proximity_housing_grant": null,
+        "total_grants": null,
+        "notes": [
+          "Lease coverage to age 95 is required by this model; prorated grants are not implemented."
+        ]
+      },
+      "calculate_maximum_affordability": {
+        "status": "needs_information",
+        "missing_inputs": [
+          "total_grants"
+        ],
+        "max_purchase_price": null,
+        "max_loan_amount": null,
+        "monthly_instalment": null,
+        "binding_constraint": null,
+        "ltv_ratio": null,
+        "notes": []
+      }
+    }
+  },
+  {
+    "id": "D2-01",
+    "category": "D",
+    "sub_use_case": "D2",
+    "query": "We are both Singapore citizens. We are first-time buyers. We are aged 32 and 30. We have no children. Our household income is $9,000 a month. Our CPF OA balance is $80,000. We have $40,000 in cash savings. We have no monthly debt. We have both worked continuously for the past 12 months. We are not buying near our parents. Our grant eligibility is confirmed. Our HDB loan eligibility is confirmed. Use 70 years of remaining lease for the calculation. How much can we afford to spend on a 4-room resale flat?",
+    "initial_map_state": null,
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "monthly_income": 9000.0,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 70.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 30,
+        "youngest_core_member_age": 30
+      },
+      "affordability": {
+        "monthly_income": 9000.0,
+        "cpf_oa_balance": 80000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 70.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "youngest_buyer_age": 30,
+        "oldest_buyer_age": 32,
+        "average_applicant_age": 31.0,
+        "cash_savings": 40000.0
+      }
+    },
+    "expected_agents": [
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 9000.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 70.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 30,
+          "youngest_core_member_age": 30
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 9000.0,
+          "cpf_oa_balance": 80000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 70.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "youngest_buyer_age": 30,
+          "oldest_buyer_age": 32,
+          "average_applicant_age": 31.0,
+          "cash_savings": 40000.0
+        }
+      }
+    ],
+    "expected_behaviour": "Report the maximum purchase price (HDB loan, MSR binding) with the grants included once.",
+    "ground_truth_facts": {
+      "rule_version": "sg-hdb-resale-2026-10-25.v1",
+      "target_tool": "calculate_maximum_affordability",
+      "expected_status": "ok",
+      "statuses": {
+        "grants": "ok",
+        "affordability": "ok"
+      },
+      "give_figure": true,
+      "calculate_cpf_housing_grants": {
+        "status": "ok",
+        "missing_inputs": [],
+        "enhanced_housing_grant": 5000.0,
+        "family_grant": 80000.0,
+        "proximity_housing_grant": 0.0,
+        "total_grants": 85000.0,
+        "notes": [
+          "Conditional estimate for the confirmed standard scheme; final eligibility and amounts require an HFE letter.",
+          "Employment confirmation includes continuous work for the HFE assessment period and employment at application."
+        ]
+      },
+      "calculate_maximum_affordability": {
+        "status": "ok",
+        "missing_inputs": [],
+        "max_purchase_price": 774366.42,
+        "max_loan_amount": 569366.42,
+        "monthly_instalment": 2583.04,
+        "binding_constraint": "MSR",
+        "ltv_ratio": 0.75,
+        "notes": [
+          "Purchase-only ceiling: valuation equals price; excludes BSD, ABSD, fees and cash over valuation. Reserve those costs separately and run the upfront tool before recommending a purchase.",
+          "CPF input must already reflect retention, age and withdrawal limits. Grants are included once. Approval and any stricter lender limits remain subject to HFE/bank assessment."
+        ]
+      }
+    }
+  },
+  {
+    "id": "D2-02",
+    "category": "D",
+    "sub_use_case": "D2",
+    "query": "We are both Singapore citizens. We are first-time buyers. We are aged 32 and 30. We have no children. Our household income is $9,000 a month. Our CPF OA balance is $20,000. We have $5,000 in cash savings. We have no monthly debt. We have both worked continuously for the past 12 months. We are not buying near our parents. Our grant eligibility is confirmed. Our HDB loan eligibility is confirmed. Use 70 years of remaining lease for the calculation. How much can we afford to spend on a 4-room resale flat?",
+    "initial_map_state": null,
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "monthly_income": 9000.0,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 70.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 30,
+        "youngest_core_member_age": 30
+      },
+      "affordability": {
+        "monthly_income": 9000.0,
+        "cpf_oa_balance": 20000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 70.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "youngest_buyer_age": 30,
+        "oldest_buyer_age": 32,
+        "average_applicant_age": 31.0,
+        "cash_savings": 5000.0
+      }
+    },
+    "expected_agents": [
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 9000.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 70.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 30,
+          "youngest_core_member_age": 30
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 9000.0,
+          "cpf_oa_balance": 20000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 70.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "youngest_buyer_age": 30,
+          "oldest_buyer_age": 32,
+          "average_applicant_age": 31.0,
+          "cash_savings": 5000.0
+        }
+      }
+    ],
+    "expected_behaviour": "Savings are low, so the loan-to-value limit binds: report the lower ceiling and its binding constraint.",
+    "ground_truth_facts": {
+      "rule_version": "sg-hdb-resale-2026-10-25.v1",
+      "target_tool": "calculate_maximum_affordability",
+      "expected_status": "ok",
+      "statuses": {
+        "grants": "ok",
+        "affordability": "ok"
+      },
+      "give_figure": true,
+      "calculate_cpf_housing_grants": {
+        "status": "ok",
+        "missing_inputs": [],
+        "enhanced_housing_grant": 5000.0,
+        "family_grant": 80000.0,
+        "proximity_housing_grant": 0.0,
+        "total_grants": 85000.0,
+        "notes": [
+          "Conditional estimate for the confirmed standard scheme; final eligibility and amounts require an HFE letter.",
+          "Employment confirmation includes continuous work for the HFE assessment period and employment at application."
+        ]
+      },
+      "calculate_maximum_affordability": {
+        "status": "ok",
+        "missing_inputs": [],
+        "max_purchase_price": 440000.0,
+        "max_loan_amount": 330000.0,
+        "monthly_instalment": 1497.11,
+        "binding_constraint": "LTV",
+        "ltv_ratio": 0.75,
+        "notes": [
+          "Purchase-only ceiling: valuation equals price; excludes BSD, ABSD, fees and cash over valuation. Reserve those costs separately and run the upfront tool before recommending a purchase.",
+          "CPF input must already reflect retention, age and withdrawal limits. Grants are included once. Approval and any stricter lender limits remain subject to HFE/bank assessment."
+        ]
+      }
+    }
+  },
+  {
+    "id": "D2-03",
+    "category": "D",
+    "sub_use_case": "D2",
+    "query": "We are a married couple, one Singapore citizen and one permanent resident. We are first-time buyers. We are aged 34 and 33. We have no children. Our household income is $7,800 a month. Our CPF OA balance is $70,000. We have $30,000 in cash savings. We have no monthly debt. We have both worked continuously for the past 12 months. We are not buying near our parents. Our grant eligibility is confirmed. Our bank loan eligibility is confirmed. Use an interest rate of 4.5%. Use a tenure of 25 years. Use 80 years of remaining lease for the calculation. How much can we afford to spend on a 4-room resale flat?",
+    "initial_map_state": null,
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_PR",
+        "first_timer_status": true,
+        "monthly_income": 7800.0,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 80.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 33,
+        "youngest_core_member_age": 33
+      },
+      "affordability": {
+        "monthly_income": 7800.0,
+        "cpf_oa_balance": 70000.0,
+        "loan_type": "bank",
+        "remaining_lease_years": 80.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "youngest_buyer_age": 33,
+        "oldest_buyer_age": 34,
+        "average_applicant_age": 33.5,
+        "cash_savings": 30000.0,
+        "interest_rate": 4.5,
+        "tenure_years": 25
+      }
+    },
+    "expected_agents": [
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_PR",
+          "first_timer_status": true,
+          "monthly_income": 7800.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 80.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 33,
+          "youngest_core_member_age": 33
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 7800.0,
+          "cpf_oa_balance": 70000.0,
+          "loan_type": "bank",
+          "remaining_lease_years": 80.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "youngest_buyer_age": 33,
+          "oldest_buyer_age": 34,
+          "average_applicant_age": 33.5,
+          "cash_savings": 30000.0,
+          "interest_rate": 4.5,
+          "tenure_years": 25
+        }
+      }
+    ],
+    "expected_behaviour": "Bank loan at the stated rate and tenure: report the ceiling and that the minimum cash downpayment is what binds.",
+    "ground_truth_facts": {
+      "rule_version": "sg-hdb-resale-2026-10-25.v1",
+      "target_tool": "calculate_maximum_affordability",
+      "expected_status": "ok",
+      "statuses": {
+        "grants": "ok",
+        "affordability": "ok"
+      },
+      "give_figure": true,
+      "calculate_cpf_housing_grants": {
+        "status": "ok",
+        "missing_inputs": [],
+        "enhanced_housing_grant": 20000.0,
+        "family_grant": 70000.0,
+        "proximity_housing_grant": 0.0,
+        "total_grants": 90000.0,
+        "notes": [
+          "Conditional estimate for the confirmed standard scheme; final eligibility and amounts require an HFE letter.",
+          "Employment confirmation includes continuous work for the HFE assessment period and employment at application."
+        ]
+      },
+      "calculate_maximum_affordability": {
+        "status": "ok",
+        "missing_inputs": [],
+        "max_purchase_price": 600000.0,
+        "max_loan_amount": 420990.15,
+        "monthly_instalment": 2340.0,
+        "binding_constraint": "DOWNPAYMENT",
+        "ltv_ratio": 0.75,
+        "notes": [
+          "Purchase-only ceiling: valuation equals price; excludes BSD, ABSD, fees and cash over valuation. Reserve those costs separately and run the upfront tool before recommending a purchase.",
+          "CPF input must already reflect retention, age and withdrawal limits. Grants are included once. Approval and any stricter lender limits remain subject to HFE/bank assessment."
+        ]
+      }
+    }
+  },
+  {
+    "id": "D2-04",
+    "category": "D",
+    "sub_use_case": "D2",
+    "query": "We are both Singapore citizens. We are first-time buyers. We are aged 32 and 30. We have no children. Our household income is $9,000 a month. Our CPF OA balance is $80,000. We have $40,000 in cash savings. We have a monthly debt payment of $800. We have both worked continuously for the past 12 months. We are not buying near our parents. Our grant eligibility is confirmed. Our HDB loan eligibility is confirmed. Use 70 years of remaining lease for the calculation. How much can we afford to spend on a 4-room resale flat?",
+    "initial_map_state": null,
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "monthly_income": 9000.0,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 70.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 30,
+        "youngest_core_member_age": 30
+      },
+      "affordability": {
+        "monthly_income": 9000.0,
+        "cpf_oa_balance": 80000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 70.0,
+        "monthly_debt_obligations": 800.0,
+        "loan_eligibility_confirmed": true,
+        "youngest_buyer_age": 30,
+        "oldest_buyer_age": 32,
+        "average_applicant_age": 31.0,
+        "cash_savings": 40000.0
+      }
+    },
+    "expected_agents": [
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 9000.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 70.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 30,
+          "youngest_core_member_age": 30
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 9000.0,
+          "cpf_oa_balance": 80000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 70.0,
+          "monthly_debt_obligations": 800.0,
+          "loan_eligibility_confirmed": true,
+          "youngest_buyer_age": 30,
+          "oldest_buyer_age": 32,
+          "average_applicant_age": 31.0,
+          "cash_savings": 40000.0
+        }
+      }
+    ],
+    "expected_behaviour": "An HDB loan with other debts needs an actual HFE assessment: say it is unsupported; give no ceiling.",
+    "ground_truth_facts": {
+      "rule_version": "sg-hdb-resale-2026-10-25.v1",
+      "target_tool": "calculate_maximum_affordability",
+      "expected_status": "unsupported",
+      "statuses": {
+        "grants": "ok",
+        "affordability": "unsupported"
+      },
+      "give_figure": false,
+      "calculate_cpf_housing_grants": {
+        "status": "ok",
+        "missing_inputs": [],
+        "enhanced_housing_grant": 5000.0,
+        "family_grant": 80000.0,
+        "proximity_housing_grant": 0.0,
+        "total_grants": 85000.0,
+        "notes": [
+          "Conditional estimate for the confirmed standard scheme; final eligibility and amounts require an HFE letter.",
+          "Employment confirmation includes continuous work for the HFE assessment period and employment at application."
+        ]
+      },
+      "calculate_maximum_affordability": {
+        "status": "unsupported",
+        "missing_inputs": [],
+        "max_purchase_price": null,
+        "max_loan_amount": null,
+        "monthly_instalment": null,
+        "binding_constraint": null,
+        "ltv_ratio": null,
+        "notes": [
+          "HDB credit assessment with existing debts requires the actual HFE-approved loan."
+        ]
+      }
+    }
+  },
+  {
+    "id": "D2-05",
+    "category": "D",
+    "sub_use_case": "D2",
+    "query": "We are both Singapore citizens. We are first-time buyers. We are aged 32 and 30. We have no children. Our household income is $9,000 a month. Our CPF OA balance is $80,000. We have no monthly debt. We have both worked continuously for the past 12 months. We are not buying near our parents. Our grant eligibility is confirmed. Our HDB loan eligibility is confirmed. Use 70 years of remaining lease for the calculation. How much can we afford to spend on a 4-room resale flat?",
+    "initial_map_state": null,
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "monthly_income": 9000.0,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 70.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 30,
+        "youngest_core_member_age": 30
+      },
+      "affordability": {
+        "monthly_income": 9000.0,
+        "cpf_oa_balance": 80000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 70.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "youngest_buyer_age": 30,
+        "oldest_buyer_age": 32,
+        "average_applicant_age": 31.0
+      }
+    },
+    "expected_agents": [
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 9000.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 70.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 30,
+          "youngest_core_member_age": 30
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 9000.0,
+          "cpf_oa_balance": 80000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 70.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "youngest_buyer_age": 30,
+          "oldest_buyer_age": 32,
+          "average_applicant_age": 31.0
+        }
+      }
+    ],
+    "expected_behaviour": "Cash savings are not stated: ask for them instead of giving a maximum price.",
+    "ground_truth_facts": {
+      "rule_version": "sg-hdb-resale-2026-10-25.v1",
+      "target_tool": "calculate_maximum_affordability",
+      "expected_status": "needs_information",
+      "statuses": {
+        "grants": "ok",
+        "affordability": "needs_information"
+      },
+      "give_figure": false,
+      "calculate_cpf_housing_grants": {
+        "status": "ok",
+        "missing_inputs": [],
+        "enhanced_housing_grant": 5000.0,
+        "family_grant": 80000.0,
+        "proximity_housing_grant": 0.0,
+        "total_grants": 85000.0,
+        "notes": [
+          "Conditional estimate for the confirmed standard scheme; final eligibility and amounts require an HFE letter.",
+          "Employment confirmation includes continuous work for the HFE assessment period and employment at application."
+        ]
+      },
+      "calculate_maximum_affordability": {
+        "status": "needs_information",
+        "missing_inputs": [
+          "cash_savings"
+        ],
+        "max_purchase_price": null,
+        "max_loan_amount": null,
+        "monthly_instalment": null,
+        "binding_constraint": null,
+        "ltv_ratio": null,
+        "notes": []
+      }
+    }
+  },
+  {
+    "id": "D3-01",
+    "category": "D",
+    "sub_use_case": "D3",
+    "query": "We are both Singapore citizens. We are first-time buyers. We are aged 32 and 30. We have no children. Our household income is $9,000 a month. Our CPF OA balance is $80,000. We have $40,000 in cash savings. We have no monthly debt. We have both worked continuously for the past 12 months. We are not buying near our parents. Our grant eligibility is confirmed. Our HDB loan eligibility is confirmed. We are buying a 4-room resale flat for $600,000, valued at $600,000, with a loan of $450,000 and fees of $3,500. There is no ABSD. Use 70 years of remaining lease for the calculation. How much stamp duty and cash do we need upfront?",
+    "initial_map_state": null,
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "monthly_income": 9000.0,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 70.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 30,
+        "youngest_core_member_age": 30
+      },
+      "affordability": {
+        "monthly_income": 9000.0,
+        "cpf_oa_balance": 80000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 70.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "youngest_buyer_age": 30,
+        "oldest_buyer_age": 32,
+        "average_applicant_age": 31.0,
+        "cash_savings": 40000.0
+      },
+      "upfront": {
+        "purchase_price": 600000.0,
+        "loan_amount": 450000.0,
+        "legal_and_valuation_fees": 3500.0,
+        "additional_buyer_stamp_duty": 0.0,
+        "cpf_oa_balance": 80000.0,
+        "cash_savings": 40000.0,
+        "loan_type": "hdb",
+        "market_valuation": 600000.0
+      }
+    },
+    "expected_agents": [
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 9000.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 70.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 30,
+          "youngest_core_member_age": 30
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 9000.0,
+          "cpf_oa_balance": 80000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 70.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "youngest_buyer_age": 30,
+          "oldest_buyer_age": 32,
+          "average_applicant_age": 31.0,
+          "cash_savings": 40000.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_bsd_and_upfront_outlay",
+        "required_params": {
+          "purchase_price": 600000.0,
+          "loan_amount": 450000.0,
+          "legal_and_valuation_fees": 3500.0,
+          "additional_buyer_stamp_duty": 0.0,
+          "cpf_oa_balance": 80000.0,
+          "cash_savings": 40000.0,
+          "loan_type": "hdb",
+          "market_valuation": 600000.0
+        }
+      }
+    ],
+    "expected_behaviour": "Report the BSD, the cash required and that there is no shortfall.",
+    "ground_truth_facts": {
+      "rule_version": "sg-hdb-resale-2026-10-25.v1",
+      "target_tool": "calculate_bsd_and_upfront_outlay",
+      "expected_status": "ok",
+      "statuses": {
+        "grants": "ok",
+        "affordability": "ok",
+        "upfront": "ok"
+      },
+      "give_figure": true,
+      "calculate_cpf_housing_grants": {
+        "status": "ok",
+        "missing_inputs": [],
+        "enhanced_housing_grant": 5000.0,
+        "family_grant": 80000.0,
+        "proximity_housing_grant": 0.0,
+        "total_grants": 85000.0,
+        "notes": [
+          "Conditional estimate for the confirmed standard scheme; final eligibility and amounts require an HFE letter.",
+          "Employment confirmation includes continuous work for the HFE assessment period and employment at application."
+        ]
+      },
+      "calculate_maximum_affordability": {
+        "status": "ok",
+        "missing_inputs": [],
+        "max_purchase_price": 774366.42,
+        "max_loan_amount": 569366.42,
+        "monthly_instalment": 2583.04,
+        "binding_constraint": "MSR",
+        "ltv_ratio": 0.75,
+        "notes": [
+          "Purchase-only ceiling: valuation equals price; excludes BSD, ABSD, fees and cash over valuation. Reserve those costs separately and run the upfront tool before recommending a purchase.",
+          "CPF input must already reflect retention, age and withdrawal limits. Grants are included once. Approval and any stricter lender limits remain subject to HFE/bank assessment."
+        ]
+      },
+      "calculate_bsd_and_upfront_outlay": {
+        "status": "ok",
+        "missing_inputs": [],
+        "buyer_stamp_duty": 12600.0,
+        "total_upfront": 166100.0,
+        "cash_required": 3500.0,
+        "cash_shortfall": 0.0,
+        "notes": [
+          "Completion funding estimate, not a payment schedule. Grants cannot pay BSD, fees or cash over valuation. Fees and ABSD are conservatively cash-funded; CPF eligibility must be confirmed separately.",
+          "Excludes insurance, commissions, renovation, option/deposit timing and CPF reimbursement timing. total_upfront includes grants/CPF/cash, excludes the loan."
+        ]
+      }
+    }
+  },
+  {
+    "id": "D3-02",
+    "category": "D",
+    "sub_use_case": "D3",
+    "query": "We are both Singapore citizens. We are first-time buyers. We are aged 32 and 30. We have no children. Our household income is $9,000 a month. Our CPF OA balance is $80,000. We have $40,000 in cash savings. We have no monthly debt. We have both worked continuously for the past 12 months. We are not buying near our parents. Our grant eligibility is confirmed. Our HDB loan eligibility is confirmed. We are buying a 5-room resale flat for $1,200,000, valued at $1,200,000, with a loan of $900,000 and fees of $3,500. There is no ABSD. Use 70 years of remaining lease for the calculation. How much stamp duty and cash do we need upfront?",
+    "initial_map_state": null,
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "monthly_income": 9000.0,
+        "flat_type": "5 ROOM",
+        "remaining_lease_years": 70.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 30,
+        "youngest_core_member_age": 30
+      },
+      "affordability": {
+        "monthly_income": 9000.0,
+        "cpf_oa_balance": 80000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 70.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "youngest_buyer_age": 30,
+        "oldest_buyer_age": 32,
+        "average_applicant_age": 31.0,
+        "cash_savings": 40000.0
+      },
+      "upfront": {
+        "purchase_price": 1200000.0,
+        "loan_amount": 900000.0,
+        "legal_and_valuation_fees": 3500.0,
+        "additional_buyer_stamp_duty": 0.0,
+        "cpf_oa_balance": 80000.0,
+        "cash_savings": 40000.0,
+        "loan_type": "hdb",
+        "market_valuation": 1200000.0
+      }
+    },
+    "expected_agents": [
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 9000.0,
+          "flat_type": "5 ROOM",
+          "remaining_lease_years": 70.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 30,
+          "youngest_core_member_age": 30
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 9000.0,
+          "cpf_oa_balance": 80000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 70.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "youngest_buyer_age": 30,
+          "oldest_buyer_age": 32,
+          "average_applicant_age": 31.0,
+          "cash_savings": 40000.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_bsd_and_upfront_outlay",
+        "required_params": {
+          "purchase_price": 1200000.0,
+          "loan_amount": 900000.0,
+          "legal_and_valuation_fees": 3500.0,
+          "additional_buyer_stamp_duty": 0.0,
+          "cpf_oa_balance": 80000.0,
+          "cash_savings": 40000.0,
+          "loan_type": "hdb",
+          "market_valuation": 1200000.0
+        }
+      }
+    ],
+    "expected_behaviour": "Report the higher BSD tiers and the cash shortfall against the cash savings stated.",
+    "ground_truth_facts": {
+      "rule_version": "sg-hdb-resale-2026-10-25.v1",
+      "target_tool": "calculate_bsd_and_upfront_outlay",
+      "expected_status": "ok",
+      "statuses": {
+        "grants": "ok",
+        "affordability": "ok",
+        "upfront": "ok"
+      },
+      "give_figure": true,
+      "calculate_cpf_housing_grants": {
+        "status": "ok",
+        "missing_inputs": [],
+        "enhanced_housing_grant": 5000.0,
+        "family_grant": 50000.0,
+        "proximity_housing_grant": 0.0,
+        "total_grants": 55000.0,
+        "notes": [
+          "Conditional estimate for the confirmed standard scheme; final eligibility and amounts require an HFE letter.",
+          "Employment confirmation includes continuous work for the HFE assessment period and employment at application."
+        ]
+      },
+      "calculate_maximum_affordability": {
+        "status": "ok",
+        "missing_inputs": [],
+        "max_purchase_price": 700000.0,
+        "max_loan_amount": 525000.0,
+        "monthly_instalment": 2381.76,
+        "binding_constraint": "LTV",
+        "ltv_ratio": 0.75,
+        "notes": [
+          "Purchase-only ceiling: valuation equals price; excludes BSD, ABSD, fees and cash over valuation. Reserve those costs separately and run the upfront tool before recommending a purchase.",
+          "CPF input must already reflect retention, age and withdrawal limits. Grants are included once. Approval and any stricter lender limits remain subject to HFE/bank assessment."
+        ]
+      },
+      "calculate_bsd_and_upfront_outlay": {
+        "status": "ok",
+        "missing_inputs": [],
+        "buyer_stamp_duty": 32600.0,
+        "total_upfront": 336100.0,
+        "cash_required": 201100.0,
+        "cash_shortfall": 161100.0,
+        "notes": [
+          "Completion funding estimate, not a payment schedule. Grants cannot pay BSD, fees or cash over valuation. Fees and ABSD are conservatively cash-funded; CPF eligibility must be confirmed separately.",
+          "Excludes insurance, commissions, renovation, option/deposit timing and CPF reimbursement timing. total_upfront includes grants/CPF/cash, excludes the loan."
+        ]
+      }
+    }
+  },
+  {
+    "id": "D3-03",
+    "category": "D",
+    "sub_use_case": "D3",
+    "query": "We are both Singapore citizens. We are first-time buyers. We are aged 32 and 30. We have no children. Our household income is $9,000 a month. Our CPF OA balance is $80,000. We have $40,000 in cash savings. We have no monthly debt. We have both worked continuously for the past 12 months. We are not buying near our parents. Our grant eligibility is confirmed. Our HDB loan eligibility is confirmed. We are buying a 4-room resale flat for $600,000, valued at $600,000, with a loan of $480,000 and fees of $3,500. There is no ABSD. Use 70 years of remaining lease for the calculation. How much stamp duty and cash do we need upfront?",
+    "initial_map_state": null,
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "monthly_income": 9000.0,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 70.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 30,
+        "youngest_core_member_age": 30
+      },
+      "affordability": {
+        "monthly_income": 9000.0,
+        "cpf_oa_balance": 80000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 70.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "youngest_buyer_age": 30,
+        "oldest_buyer_age": 32,
+        "average_applicant_age": 31.0,
+        "cash_savings": 40000.0
+      },
+      "upfront": {
+        "purchase_price": 600000.0,
+        "loan_amount": 480000.0,
+        "legal_and_valuation_fees": 3500.0,
+        "additional_buyer_stamp_duty": 0.0,
+        "cpf_oa_balance": 80000.0,
+        "cash_savings": 40000.0,
+        "loan_type": "hdb",
+        "market_valuation": 600000.0
+      }
+    },
+    "expected_agents": [
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 9000.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 70.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 30,
+          "youngest_core_member_age": 30
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 9000.0,
+          "cpf_oa_balance": 80000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 70.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "youngest_buyer_age": 30,
+          "oldest_buyer_age": 32,
+          "average_applicant_age": 31.0,
+          "cash_savings": 40000.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_bsd_and_upfront_outlay",
+        "required_params": {
+          "purchase_price": 600000.0,
+          "loan_amount": 480000.0,
+          "legal_and_valuation_fees": 3500.0,
+          "additional_buyer_stamp_duty": 0.0,
+          "cpf_oa_balance": 80000.0,
+          "cash_savings": 40000.0,
+          "loan_type": "hdb",
+          "market_valuation": 600000.0
+        }
+      }
+    ],
+    "expected_behaviour": "The loan exceeds the 75% loan-to-value limit: say the scenario is unsupported; give no upfront figure.",
+    "ground_truth_facts": {
+      "rule_version": "sg-hdb-resale-2026-10-25.v1",
+      "target_tool": "calculate_bsd_and_upfront_outlay",
+      "expected_status": "unsupported",
+      "statuses": {
+        "grants": "ok",
+        "affordability": "ok",
+        "upfront": "unsupported"
+      },
+      "give_figure": false,
+      "calculate_cpf_housing_grants": {
+        "status": "ok",
+        "missing_inputs": [],
+        "enhanced_housing_grant": 5000.0,
+        "family_grant": 80000.0,
+        "proximity_housing_grant": 0.0,
+        "total_grants": 85000.0,
+        "notes": [
+          "Conditional estimate for the confirmed standard scheme; final eligibility and amounts require an HFE letter.",
+          "Employment confirmation includes continuous work for the HFE assessment period and employment at application."
+        ]
+      },
+      "calculate_maximum_affordability": {
+        "status": "ok",
+        "missing_inputs": [],
+        "max_purchase_price": 774366.42,
+        "max_loan_amount": 569366.42,
+        "monthly_instalment": 2583.04,
+        "binding_constraint": "MSR",
+        "ltv_ratio": 0.75,
+        "notes": [
+          "Purchase-only ceiling: valuation equals price; excludes BSD, ABSD, fees and cash over valuation. Reserve those costs separately and run the upfront tool before recommending a purchase.",
+          "CPF input must already reflect retention, age and withdrawal limits. Grants are included once. Approval and any stricter lender limits remain subject to HFE/bank assessment."
+        ]
+      },
+      "calculate_bsd_and_upfront_outlay": {
+        "status": "unsupported",
+        "missing_inputs": [],
+        "buyer_stamp_duty": null,
+        "total_upfront": null,
+        "cash_required": null,
+        "cash_shortfall": null,
+        "notes": [
+          "Loan exceeds the supplied LTV limit or uses an unsupported HDB LTV. Short-lease and additional-housing-loan cases are excluded."
+        ]
+      }
+    }
+  },
+  {
+    "id": "D3-04",
+    "category": "D",
+    "sub_use_case": "D3",
+    "query": "We are both Singapore citizens. We are first-time buyers. We are aged 32 and 30. We have no children. Our household income is $9,000 a month. Our CPF OA balance is $80,000. We have $40,000 in cash savings. We have no monthly debt. We have both worked continuously for the past 12 months. We are not buying near our parents. Our grant eligibility is confirmed. Our HDB loan eligibility is confirmed. We are buying a 4-room resale flat for $600,000, with a loan of $450,000 and fees of $3,500. There is no ABSD. Use 70 years of remaining lease for the calculation. How much stamp duty and cash do we need upfront?",
+    "initial_map_state": null,
+    "financial_inputs": {
+      "grants": {
+        "flat_category": "resale",
+        "citizenship_pair": "SC_SC",
+        "first_timer_status": true,
+        "monthly_income": 9000.0,
+        "flat_type": "4 ROOM",
+        "remaining_lease_years": 70.0,
+        "eligibility_confirmed": true,
+        "continuous_employment_12_months": true,
+        "proximity": "none",
+        "youngest_buyer_age": 30,
+        "youngest_core_member_age": 30
+      },
+      "affordability": {
+        "monthly_income": 9000.0,
+        "cpf_oa_balance": 80000.0,
+        "loan_type": "hdb",
+        "remaining_lease_years": 70.0,
+        "monthly_debt_obligations": 0.0,
+        "loan_eligibility_confirmed": true,
+        "youngest_buyer_age": 30,
+        "oldest_buyer_age": 32,
+        "average_applicant_age": 31.0,
+        "cash_savings": 40000.0
+      },
+      "upfront": {
+        "purchase_price": 600000.0,
+        "loan_amount": 450000.0,
+        "legal_and_valuation_fees": 3500.0,
+        "additional_buyer_stamp_duty": 0.0,
+        "cpf_oa_balance": 80000.0,
+        "cash_savings": 40000.0,
+        "loan_type": "hdb"
+      }
+    },
+    "expected_agents": [
+      "financial"
+    ],
+    "expected_mcp_calls": [
+      {
+        "agent": "financial",
+        "tool": "calculate_cpf_housing_grants",
+        "required_params": {
+          "flat_category": "resale",
+          "citizenship_pair": "SC_SC",
+          "first_timer_status": true,
+          "monthly_income": 9000.0,
+          "flat_type": "4 ROOM",
+          "remaining_lease_years": 70.0,
+          "eligibility_confirmed": true,
+          "continuous_employment_12_months": true,
+          "proximity": "none",
+          "youngest_buyer_age": 30,
+          "youngest_core_member_age": 30
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_maximum_affordability",
+        "required_params": {
+          "monthly_income": 9000.0,
+          "cpf_oa_balance": 80000.0,
+          "loan_type": "hdb",
+          "remaining_lease_years": 70.0,
+          "monthly_debt_obligations": 0.0,
+          "loan_eligibility_confirmed": true,
+          "youngest_buyer_age": 30,
+          "oldest_buyer_age": 32,
+          "average_applicant_age": 31.0,
+          "cash_savings": 40000.0
+        }
+      },
+      {
+        "agent": "financial",
+        "tool": "calculate_bsd_and_upfront_outlay",
+        "required_params": {
+          "purchase_price": 600000.0,
+          "loan_amount": 450000.0,
+          "legal_and_valuation_fees": 3500.0,
+          "additional_buyer_stamp_duty": 0.0,
+          "cpf_oa_balance": 80000.0,
+          "cash_savings": 40000.0,
+          "loan_type": "hdb"
+        }
+      }
+    ],
+    "expected_behaviour": "The market valuation is not stated: ask for it; any stamp duty quoted is only on the price, not a final upfront figure.",
+    "ground_truth_facts": {
+      "rule_version": "sg-hdb-resale-2026-10-25.v1",
+      "target_tool": "calculate_bsd_and_upfront_outlay",
+      "expected_status": "needs_information",
+      "statuses": {
+        "grants": "ok",
+        "affordability": "ok",
+        "upfront": "needs_information"
+      },
+      "give_figure": false,
+      "calculate_cpf_housing_grants": {
+        "status": "ok",
+        "missing_inputs": [],
+        "enhanced_housing_grant": 5000.0,
+        "family_grant": 80000.0,
+        "proximity_housing_grant": 0.0,
+        "total_grants": 85000.0,
+        "notes": [
+          "Conditional estimate for the confirmed standard scheme; final eligibility and amounts require an HFE letter.",
+          "Employment confirmation includes continuous work for the HFE assessment period and employment at application."
+        ]
+      },
+      "calculate_maximum_affordability": {
+        "status": "ok",
+        "missing_inputs": [],
+        "max_purchase_price": 774366.42,
+        "max_loan_amount": 569366.42,
+        "monthly_instalment": 2583.04,
+        "binding_constraint": "MSR",
+        "ltv_ratio": 0.75,
+        "notes": [
+          "Purchase-only ceiling: valuation equals price; excludes BSD, ABSD, fees and cash over valuation. Reserve those costs separately and run the upfront tool before recommending a purchase.",
+          "CPF input must already reflect retention, age and withdrawal limits. Grants are included once. Approval and any stricter lender limits remain subject to HFE/bank assessment."
+        ]
+      },
+      "calculate_bsd_and_upfront_outlay": {
+        "status": "needs_information",
+        "missing_inputs": [
+          "market_valuation"
+        ],
+        "buyer_stamp_duty": 12600.0,
+        "total_upfront": null,
+        "cash_required": null,
+        "cash_shortfall": null,
+        "notes": [
+          "Buyer's stamp duty is on the purchase price; if the valuation comes in higher, it is charged on the valuation instead."
+        ]
+      }
+    }
+  },
+  {
     "id": "E1-01",
     "category": "E",
     "sub_use_case": "E1",
