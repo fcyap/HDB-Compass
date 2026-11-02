@@ -60,6 +60,8 @@ PROMPTS: List[Dict[str, str]] = [
 
 
 def run(variants: List[str]) -> List[Dict[str, Any]]:
+    from evaluation.run_category_e_prelim import require_open_model_profile   # noqa: PLC0415
+    require_open_model_profile()
     profile = active_profile()
     out_path = PROJECT_ROOT / "evaluation" / "results" / f"tool_selection_{profile['name']}.jsonl"
     out_path.parent.mkdir(parents=True, exist_ok=True)

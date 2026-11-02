@@ -44,7 +44,7 @@ from typing import Any, Dict, List, Optional, Tuple
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from agents.llm import active_profile  # noqa: E402
+from agents.llm import active_profile, load_config  # noqa: E402
 from evaluation import architecture_metrics as M  # noqa: E402
 
 RESULTS_DIR = PROJECT_ROOT / "evaluation" / "results"
@@ -458,9 +458,25 @@ def main() -> None:
             os.environ["HDB_ADDONS"] = previous
 
 
+# Experiment 1 compares architectures on one open model we run ourselves: the course cluster (vllm), the laptop
+# (ollama) or none. config/hosted_models.yaml also offers hosted APIs (groq, openai, gemini, compatible), and "auto"
+# can fall back to a paid one, so the evaluation refuses them by name, before any of them is contacted.
+OPEN_MODEL_PROFILES = ("none", "ollama", "vllm")
+
+
+def require_open_model_profile() -> str:
+    """The requested model profile, or SystemExit naming the ones the evaluation runs on."""
+    name = (os.getenv("LLM_PROFILE") or str(load_config()["llm"].get("active") or "")).strip().lower()
+    if name not in OPEN_MODEL_PROFILES:
+        raise SystemExit(f"LLM_PROFILE={name!r} is a hosted or automatic profile. The evaluation runs only on our own "
+                         f"open model: {', '.join(OPEN_MODEL_PROFILES)} (the cluster is vllm).")
+    return name
+
+
 def _main(args: Optional[argparse.Namespace] = None) -> None:
     args = args or build_parser().parse_args()
 
+    require_open_model_profile()
     profile = active_profile()
     queries = dataset_path(args.dataset)
     global RUN_SETTINGS, DATASET_NAME, DATASET_SHA
