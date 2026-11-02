@@ -95,6 +95,14 @@ def resolve_callable(tool_name: str) -> Callable[..., Any]:
     return _unwrap(MOCK_TOOLS[tool_name])
 
 
+def _single_candidate(result: Any, kwargs: Dict[str, Any]) -> str | None:
+    """The one place a lookup called ambiguous, when it named exactly one candidate for the address it was given."""
+    if not (isinstance(result, dict) and result.get("status") == "ambiguous" and kwargs.get("address")):
+        return None
+    names = [c.get("name") for c in result.get("candidates") or [] if isinstance(c, dict) and c.get("name")]
+    return names[0] if len(names) == 1 and names[0] != kwargs["address"] else None
+
+
 class ToolRunner:
     """Callable wrapper that validates, times and logs one tool."""
 
@@ -143,6 +151,15 @@ class ToolRunner:
         self.log.append(ToolCallRecord(agent=self.agent, tool=self.name, arguments=validated.model_dump(),
                                        ok=ok, error=err, latency_ms=(time.perf_counter() - t0) * 1000,
                                        source=self.source))
+        only = _single_candidate(result, kwargs)
+        if only:
+            # "Blk 884 Tampines" came back "ambiguous" with one candidate, Blk 884 TAMPINES ST 83: there is nothing for
+            # the user to choose, so the same lookup runs again for that place (logged as code, not the model's choice)
+            caller, self.source = self.source, "code"
+            try:
+                return self(**{**kwargs, "address": only})
+            finally:
+                self.source = caller
         return result
 
     def as_langchain_tool(self) -> StructuredTool:

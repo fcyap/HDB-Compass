@@ -79,3 +79,30 @@ def test_a_place_on_its_own_still_gets_the_question_first():
     out = app("Tampines blk 884", addresses=["Tampines blk 884"])
     assert (out.get("clarification") or {}).get("kind") == "place"
     assert not any(v for k, v in out["user_constraints"].items() if k.startswith("wants_"))
+
+
+# --- a lookup that calls one candidate "ambiguous" is asked again for that candidate (tool_registry.ToolRunner) ------
+def test_a_single_candidate_lookup_runs_again_for_that_place():
+    from agents.tool_registry import ToolRunner
+    runner = ToolRunner("get_block_transaction_history")
+    runner.source = "model"
+    out = runner(address="Blk 884 Tampines")   # one Blk 884 in Tampines: TAMPINES ST 83
+    assert out["status"] == "ok" and out["transaction_count"] > 0
+    assert [(r.source, r.arguments["address"]) for r in runner.log] == [
+        ("model", "Blk 884 Tampines"), ("code", "Blk 884 TAMPINES ST 83")]
+    assert runner.source == "model"
+
+
+def test_several_candidates_are_left_for_the_user_to_choose():
+    from agents.tool_registry import _single_candidate
+    two = {"status": "ambiguous", "candidates": [{"name": "Blk 1 A ST"}, {"name": "Blk 1 B ST"}]}
+    assert _single_candidate(two, {"address": "Blk 1"}) is None
+    assert _single_candidate({"status": "ok"}, {"address": "Blk 1"}) is None
+    assert _single_candidate({"status": "ambiguous", "candidates": [{"name": "Blk 1 A ST"}]}, {}) is None
+
+
+def test_the_reply_resale_price_now_shows_the_blocks_past_sales(asked):
+    out = app("resale price", asked)
+    calls = [t for t in out["tool_call_log"] if t["tool"] == "get_block_transaction_history"]
+    assert calls and calls[-1]["arguments"]["address"] == "Blk 884 TAMPINES ST 83"
+    assert "ask the user which one they mean" not in out["draft_response"]
