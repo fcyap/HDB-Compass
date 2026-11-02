@@ -54,6 +54,9 @@ class HDBCompassState(TypedDict, total=False):
     variant: str                                                   # "A" | "B" | "C" — which architecture produced this run
     errors: Annotated[List[str], operator.add]                     # non-fatal sub-agent errors surfaced to the UI/eval
     subagent_notes: Annotated[List[Dict[str, Any]], operator.add]  # {"agent", "text"}: each sub-agent's own final summary
+    model_opening: str                                             # the model's own sentences in draft_response, as kept by
+                                                                   # synthesize's checks ("" when code wrote it all): what the
+                                                                   # runtime auditor judges (docs/INTERFACES.md section 3)
     fast_path: bool                                                # app mode: answer recognised questions without model calls
     # Follow-up flow for missing financial facts (Member 4). clarification: what this turn asks the user for;
     # prior_constraints / pending_clarification: carried in from the previous turn by initial_state(previous=...).

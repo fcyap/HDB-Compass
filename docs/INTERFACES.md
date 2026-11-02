@@ -198,24 +198,32 @@ Both nodes run in **Variant C and the app only**; Variants A and B have neither 
   `ungrounded_claims: List[str]`.
 - Evidence to judge against: `candidate_blocks_intersection`, `relaxation`, `sql_market_results`,
   `spatial_block_candidates`, `financial_breakdown`, `rag_policy_passages`, `user_constraints`.
-- **What to judge in Variant C.** The answer's facts section (blocks, prices, leases, distances,
-  relaxations, grants, budget) is written by code from the tool results, and code has already
-  removed every opening sentence that states a figure. Only the opening before it is written by
-  the model, so judge only that part (claims, contradictions with the facts, invented rules),
-  never the facts section:
+- **What to judge in Variant C: `state["model_opening"]`.** The answer has three parts, and only one is the model's:
+  1. code's short answer sentence first ("All the blocks below meet every limit you set", "Blk 228 is the cheapest,
+     while Blk 288B is nearest an MRT station"), built by `sv.code_opening_parts` from the facts, so true by construction;
+  2. then any model sentences that survived synthesize's checks (no figures, block comparisons that hold, no notes the
+     facts carry);
+  3. then the facts section (blocks, prices, leases, distances, relaxations, grants, budget), written by code from the
+     tool results, plus code-written text after it (the HFE disclaimer, a follow-up question).
+
+  `synthesize` puts part 2 in `state["model_opening"]`: the model's own sentences, exactly as shown. Judge only that
+  text (claims, contradictions with the facts, invented rules). It is `""` when there is no model, the model failed,
+  or every sentence it wrote was dropped: pass. Never judge code's answer sentence or the facts section. A rejection
+  only rewrites the model's sentences, so rejecting because of code's text cannot change the answer and only costs
+  two rewrites and three auditor calls per question (the 2 Nov live run: the judge rejected 15 of 15 correct Category E
+  answers for code's sentences, doubling the tokens per answer).
+
+  The best data to judge against is the facts section itself: it is what the user sees under the model's sentences,
+  short, and already checked against the tool results (raw tool JSON is long; a judge that sees only the first part of
+  it rejects claims about blocks it cannot find):
 
   ```python
-  facts = sv.template_response(state) if sv.writes_facts_in_code(state) else ""
-  draft = state["draft_response"]
-  opening = draft.split(facts, 1)[0].strip() if facts and facts in draft else draft
+  model_text = state.get("model_opening") or ""
+  facts = sv.template_response(state) if sv.writes_facts_in_code(state) else ""   # the same on every retry
   ```
 
-  `template_response(state)` is the exact text the synthesis appended, and it is the same on
-  every retry. Text after the facts (the HFE disclaimer, a follow-up question) is code-written
-  too. An empty opening means the model wrote nothing (it failed or was off): pass. A rejection
-  only rewrites the opening, so rejecting because of the facts section cannot change anything.
-  When `architecture.code_written_facts` is off, `writes_facts_in_code` is false and the whole
-  draft is the model's.
+  When `architecture.code_written_facts` is off, `writes_facts_in_code` is false: the model wrote the whole draft,
+  `model_opening` is the whole draft, and the evidence keys are the data to judge it against.
 - On rejection the graph loops back to `synthesize` with `critique` in the prompt. Set
   `retry_count` = number of rejections so far (previous value + 1 on each rejection; keep the
   previous value on a pass). With `architecture.auditor_max_retries` = 2 the draft is rewritten

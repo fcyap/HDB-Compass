@@ -4020,6 +4020,7 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
                  "clarification_needed.question.")
     verdict = state.get("auditor_verdict") or {}
     text = ""
+    model_text = ""   # what the model wrote and the checks kept: the only part of the answer the auditor judges
     errors: List[str] = []
     # app fast path, or a turn that only asks the user something: code writes it all
     only_asking = bool(c.get("clarifications")) and not state.get("active_subagents")
@@ -4075,8 +4076,10 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
             if isinstance(text, list):
                 text = "".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in text)
             text = strip_think(text)
+            model_text = text   # with code_written_facts off the whole draft is the model's
             if facts:
                 kept, dropped = check_model_opening(text, state, facts, policy)
+                model_text = " ".join(kept)
                 if code_answers:
                     # code's answer, then code's trade-off unless the model made a (checked) comparison of its own,
                     # then the model's sentences
@@ -4098,6 +4101,7 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
         except Exception as e:  # noqa: BLE001
             errors.append(f"synthesize: LLM failed, template used: {type(e).__name__}")
             text = ""      # a failure after the model replied must not let its unchecked text through
+            model_text = ""
     if not text:
         # no model, or it failed: the code-written facts, led by code's opening (variant C and the app)
         text = (lead + "\n\n" + facts if lead else facts) or template_response(state)
@@ -4107,7 +4111,8 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
             text += HFE_DISCLAIMER
     if clar and clar["question"] not in text:
         text = text.rstrip() + "\n\n" + clar["question"]
-    return {"draft_response": text, "map_ui_payload": payload, "tool_call_log": log, "errors": errors,
+    return {"draft_response": text, "model_opening": model_text, "map_ui_payload": payload, "tool_call_log": log,
+            "errors": errors,
             # drill-down chips first, then radius chips (both are whole questions, not answers to a pending question)
             "clarification": clar, "suggestions": [] if clar else _merge_chips(ri.drilldown_suggestions(state), ri.comparison_chips(state), ri.price_check_chips(state), ri.radius_chips(c))}
 
@@ -4275,7 +4280,7 @@ def initial_state(query: str, variant: str, map_state: Optional[Dict[str, Any]] 
     query = (menu_reply or {}).get("query") or query
     return {"menu_followup": followup, "messages": history + [{"role": "user", "content": query}], "variant": variant, "active_subagents": [],
             "candidate_blocks_intersection": [], "map_ui_payload": map_state or {}, "draft_response": "",
-            "auditor_verdict": {}, "tool_call_log": [], "errors": [], "subagent_notes": [],
+            "auditor_verdict": {}, "model_opening": "", "tool_call_log": [], "errors": [], "subagent_notes": [],
             "prior_constraints": (previous or {}).get("user_constraints"),
             "pending_clarification": (previous or {}).get("clarification"), "clarification": None,
             "fast_path": fast_path}
