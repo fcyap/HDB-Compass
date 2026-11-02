@@ -289,3 +289,34 @@ def test_injection_reply_is_plain_language():
     reply = g.input_guardrail_node(_state("'; DROP TABLE resale; --"))["draft_response"]
     assert "read-only" not in reply and "queries" not in reply
     assert "median 4-room price in Tampines" in reply
+
+
+# ---------------------------------------------------------------------------
+# the auditor judges state["model_opening"] only (docs/INTERFACES.md section 3)
+# ---------------------------------------------------------------------------
+_EVID = {"candidate_blocks_intersection": [{"block": "312", "street": "SHUNFU RD", "nearest_mrt_m": 420.0}]}
+
+
+def _audit(**extra):
+    return g.runtime_auditor_node(_state("find flats", variant="C", **_EVID, **extra))["auditor_verdict"]
+
+
+def test_code_written_text_is_never_judged(monkeypatch):
+    monkeypatch.setenv("LLM_PROFILE", "none")
+    # the draft holds a figure that is not in the evidence, but the model wrote none of it
+    v = _audit(draft_response="Blk 999 is 150m away.", model_opening="")
+    assert v["passed"] is True and v["retry_count"] == 0
+
+
+def test_the_models_own_sentences_are_judged(monkeypatch):
+    monkeypatch.setenv("LLM_PROFILE", "none")
+    v = _audit(draft_response="Code sentence. Blk 312 is only 150m from the MRT.",
+               model_opening="Blk 312 is only 150m from the MRT.")
+    assert v["passed"] is False and v["retry_count"] == 1 and "150m" in v["ungrounded_claims"]
+    assert _audit(draft_response="x", model_opening="A calm, central pick.")["passed"] is True
+
+
+def test_a_state_without_model_opening_still_audits_the_whole_draft(monkeypatch):
+    monkeypatch.setenv("LLM_PROFILE", "none")
+    v = g.runtime_auditor_node(_state("x", variant="B", draft_response="Blk 312 is 150m away.", **_EVID))["auditor_verdict"]
+    assert v["passed"] is False
