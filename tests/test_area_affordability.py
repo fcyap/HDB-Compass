@@ -165,3 +165,23 @@ def test_stated_flat_type_and_lease_win(graph):
     g = out["financial_breakdown"]["calculate_cpf_housing_grants"]
     assert g["family_grant"] == 50000   # 5-room Family Grant, not the 4-room default
     assert out["user_constraints"]["financial_inputs"]["grants"]["remaining_lease_years"] == 80
+
+
+# --- schools near a named MRT station ("what school is near bishan mrt station") ------------------------------------
+@pytest.mark.parametrize("q,addr", [
+    ("what school is near bishan mrt station", "bishan mrt station"),
+    ("what schools are near Novena MRT", "Novena MRT"),
+    ("which school is nearby Bishan MRT", "Bishan MRT"),
+])
+def test_school_question_about_a_station_reads_the_station(q, addr):
+    from agents.school_queries import school_location_request
+    assert school_location_request(q)["address"] == addr
+
+
+def test_schools_near_a_station_are_found_not_asked_for_a_block():
+    from mcp_server.school_lookup_tools import find_primary_schools_near_address as f
+    r = f("Novena MRT", 1000)
+    assert r["status"] == "ok" and r["schools"] and r["location"]["street"] == "Novena MRT Station"
+    assert all(s["distance_meters"] <= 1000 for s in r["schools"])
+    assert f("Blk 1 Nowhere")["status"] == "needs_information"      # a block address is still not a station
+    assert f("somewhere")["status"] == "needs_information"

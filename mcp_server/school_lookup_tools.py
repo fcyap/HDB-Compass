@@ -9,7 +9,7 @@ from agents.schemas import (
     FindSchoolsNearAddressOutput,
     NearbySchoolRecord,
 )
-from mcp_server.spatial_onemap_tools import get_spatial_index, wgs84_to_svy21
+from mcp_server.spatial_onemap_tools import get_spatial_index, station_key, wgs84_to_svy21
 
 
 def address_tokens(value):
@@ -17,6 +17,19 @@ def address_tokens(value):
                "CRESCENT": "CRES", "NORTH": "NTH", "SOUTH": "STH"}
     ignored = {"BLK", "BLOCK", "IN", "AT", "SINGAPORE", "POSTAL", "CODE"}
     return {aliases.get(t, t) for t in re.findall(r"[A-Z0-9]+", value.upper()) if t not in ignored}
+
+
+def _mrt_station_centre(address, payload):
+    """'Bishan MRT' / 'Novena MRT station' -> the station's centre point, or None. Only an address that says MRT/LRT/station
+    is read as a station, so a block or street address is never mistaken for one."""
+    if not re.search(r"\b(?:mrt|lrt|station)\b", address, re.I):
+        return None
+    key = station_key(address)
+    points = [a for a in payload.get("amenities", []) if a.get("category") == "mrt" and station_key(a["name"]) == key]
+    if not key or not points:
+        return None
+    return {"block": "", "street": points[0]['name'].title().replace('Mrt', 'MRT'), "town": "",
+            "lat": sum(p["lat"] for p in points) / len(points), "lng": sum(p["lng"] for p in points) / len(points)}
 
 
 def find_primary_schools_near_address(address: str, radius_meters: float = 2000):
@@ -32,17 +45,21 @@ def find_primary_schools_near_address(address: str, radius_meters: float = 2000)
     )
     tokens = address_tokens(args.address)
     identifier = re.search(r"\b\d+[A-Z]?\b", args.address.upper())
-    if identifier is None:
-        return result.model_dump()
     try:
         payload = get_spatial_index()["payload"]
     except (FileNotFoundError, OSError):
         result.status = "unavailable"
         result.message = "The local spatial index is unavailable. Rebuild it before searching for nearby schools."
         return result.model_dump()
+    station = _mrt_station_centre(args.address, payload)
+    if station is None and identifier is None:
+        return result.model_dump()
 
     matches = {}
-    for block in payload.get("blocks", []):
+    if station is not None:
+        matches[("station",)] = station
+        identifier = None
+    for block in ([] if station is not None else payload.get("blocks", [])):
         identity_field = "postal" if re.fullmatch(r"\d{6}", identifier[0]) else "block"
         if str(block.get(identity_field, "")).upper() != identifier[0]:
             continue

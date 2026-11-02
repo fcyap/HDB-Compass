@@ -9,7 +9,7 @@ def school_location_request(query):
     # Direction matters: schools near an address is different from flats near a school.
     match = re.search(
         r"^\s*(?:(?:please|find|show|list|me|the|what|which|are|there|any|primary|secondary)\s+)*"
-        r"schools?\s+(?:are\s+)?(?:near(?:by)?|around|close to|within\s+"
+        r"schools?\s+(?:(?:are|is)\s+)?(?:near(?:by)?|around|close to|within\s+"
         r"(?P<radius>\d+(?:\.\d+)?)\s*(?P<unit>km|m)\s+of)\s+(?P<address>.+)",
         query, re.I,
     )
@@ -62,7 +62,7 @@ def present_school_result(result):
     location = result["location"]
     radius = result["radius_meters"]
     schools = result["schools"]
-    name = f"Blk {location['block']} {location['street']}"
+    name = f"Blk {location['block']} {location['street']}" if location["block"] else location["street"].title()
     lines = [f"**Primary schools near {name}**", f"Search radius: {radius:g} m, straight-line."]
     if schools:
         lines.extend(f"- {s['name']}: {s['distance_meters']:.0f} m — {s['address']}" for s in schools)
