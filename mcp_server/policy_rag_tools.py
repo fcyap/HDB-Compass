@@ -261,20 +261,31 @@ def rerank_cross_encoder(
         pairs = [[query, _clean_for_cross_encoder(chunks[idx]["text"])] for idx, _ in candidate_indices]
         try:
             scores = cross_encoder.predict(pairs)
-            norm_scores = 1.0 / (1.0 + np.exp(-np.array(scores, dtype=np.float32)))
+            raw_scores = np.nan_to_num(np.array(scores, dtype=np.float32), nan=0.0, posinf=50.0, neginf=-50.0)
+            norm_scores = 1.0 / (1.0 + np.exp(-np.clip(raw_scores, -50.0, 50.0)))
             max_rrf = max((s for _, s in candidate_indices), default=1.0)
             reranked = []
             for i, (idx, rrf_s) in enumerate(candidate_indices):
                 norm_rrf = rrf_s / max_rrf if max_rrf > 0 else 0.0
-                c_text_lower = f"{chunks[idx].get('section', '')} {chunks[idx]['text']}".lower()
+                section = chunks[idx].get("section", "")
+                # The full breadcrumb repeats the same document title in every chunk. Score the local section and
+                # body instead, otherwise a PHG chunk inherits words from its parent heading.
+                local_section = section.rsplit(" > ", 1)[-1]
+                body = re.sub(r"^\[.*?\]\s*", "", chunks[idx]["text"])
+                c_text_lower = f"{local_section} {body}".lower()
                 token_cov = (
                     sum(1 for w in q_tokens if w in c_text_lower) / max(1, len(q_tokens))
                     if q_tokens else 0.0
                 )
-                blended = 0.25 * float(norm_scores[i]) + 0.50 * norm_rrf + 0.25 * token_cov
-                reranked.append((idx, round(min(1.0, blended), 4)))
+                # Balance semantic matching with exact coverage of the user's substantive terms. The latter prevents
+                # a generic parent/PHG chunk from outranking a passage whose local section names the requested rule.
+                blended = 0.25 * float(norm_scores[i]) + 0.35 * norm_rrf + 0.40 * token_cov
+                reranked.append((idx, blended))
             reranked.sort(key=lambda x: x[1], reverse=True)
-            return reranked[:top_n]
+            # Keep scores in [0, 1] without saturating every strong match at exactly 1.0. The old min(1.0, ...) made
+            # the score output useless for diagnosing ranking and hid small but meaningful ordering differences.
+            max_blended = max((score for _, score in reranked), default=1.0)
+            return [(idx, round(score / max_blended, 4)) for idx, score in reranked[:top_n]]
         except Exception as e:
             print(f"[Warning] CrossEncoder prediction failed ({e}); falling back to RRF scores.")
 
@@ -316,8 +327,10 @@ def execute_rag_pipeline(
     else:
         # RAG-3: Hybrid Search (BM25 + Dense top-20 over hierarchical chunks) + Cross-Encoder Reranking to top-5
         pipeline = "RAG-3"
-        dense_results = retrieve_dense(query, store, top_k=20)
-        bm25_results = retrieve_bm25(query, store, top_k=20)
+        # RAG-3 uses the expanded query for candidate generation as well as reranking. Previously expansion only
+        # reached the cross-encoder, weakening acronym/synonym queries before reranking.
+        dense_results = retrieve_dense(expanded, store, top_k=20)
+        bm25_results = retrieve_bm25(expanded, store, top_k=20)
         rrf_candidates = reciprocal_rank_fusion(dense_results, bm25_results, k=60, top_n=20)
         selected_candidates = rerank_cross_encoder(expanded, rrf_candidates, store, top_n=top_k)
 
@@ -327,9 +340,10 @@ def execute_rag_pipeline(
             for idx, score in selected_candidates:
                 c = chunks[idx]
                 b_score = score * 1.08 if c.get("policy_category") == domain else score
-                boosted.append((idx, round(min(1.0, b_score), 4)))
+                boosted.append((idx, b_score))
             boosted.sort(key=lambda x: x[1], reverse=True)
-            selected_candidates = boosted[:top_k]
+            max_boosted = max((score for _, score in boosted), default=1.0)
+            selected_candidates = [(idx, round(score / max_boosted, 4)) for idx, score in boosted[:top_k]]
 
     # Build typed PolicyPassage models
     passages: List[PolicyPassage] = []

@@ -39,6 +39,7 @@ CRITICAL POLICY GROUNDING RULES:
 3. Private Property Wait-Out: 15-month wait-out applies to private property owners buying non-subsidised resale flats, but seniors aged 55 and above right-sizing to 4-room or smaller resale flats are STRICTLY EXEMPT.
 4. Grants: EHG provides up to $120,000 for families (income ceiling $9,000) and up to $60,000 for singles (income ceiling $4,500). First-timer resale buyers can stack EHG + Family Grant + PHG up to $230,000.
 5. Citations: Every regulatory statement MUST cite the official source URL provided in the retrieved passages.
+6. Answer-first writing: Begin with one short sentence that directly answers the user's exact question. If the question names several policy topics, cover those topics in the opening sentence without introducing an unasked topic. For yes/no questions, start with "Yes" or "No" and state the key condition. Then give only the supporting policy details the user needs, with citations. Do not begin with a heading, a summary of the passages, or a generic policy introduction.
 """
 
 
@@ -48,6 +49,16 @@ class PolicyRagAgent:
     def __init__(self, pipeline: str = "RAG-3"):
         self.pipeline = pipeline
         self.tool_runner = ToolRunner("retrieve_hdb_policy_knowledge")
+
+    @staticmethod
+    def _fallback_opening(query: str, passages: List[Dict[str, Any]]) -> str:
+        """Grounded non-LLM fallback when no model is available; it does not classify query shapes."""
+        for passage in passages:
+            for line in str(passage.get("text", "")).splitlines():
+                clean = re.sub(r"^(?:[-*]\s*|\d+[.)]\s*)", "", line).strip()
+                if clean and not clean.startswith(("[", "#", "|", "---")):
+                    return f"The relevant HDB rule is: {clean}"
+        return "The retrieved HDB rules relevant to your question are summarized below."
 
     @staticmethod
     def synthesize_grounded_answer(query: str, passages: List[Dict[str, Any]]) -> str:
@@ -86,7 +97,8 @@ class PolicyRagAgent:
             "\n\n*Regulatory Notice: All eligibility, grant, and financing figures are subject to official "
             "HDB Flat Eligibility (HFE) assessment.*"
         )
-        return "### Official HDB & CPF Regulatory Analysis\n\n" + "\n\n".join(sections_out) + disclaimer
+        opening = PolicyRagAgent._fallback_opening(query, passages)
+        return (opening + "\n\n" if opening else "") + "### Official HDB & CPF Regulatory Analysis\n\n" + "\n\n".join(sections_out) + disclaimer
 
     def run(self, query: str, policy_domain: Optional[str] = None, use_llm: bool = True) -> Dict[str, Any]:
         """
@@ -109,8 +121,12 @@ class PolicyRagAgent:
                     prompt = (
                         f"User Question: {query}\n\n"
                         f"Retrieved Official Policy Context:\n{context_str}\n\n"
-                        "Synthesize a clear, concise, and structured answer. "
-                        "Include inline citations with exact URLs for each factual claim."
+                        "Answer the user's exact question directly in the first sentence, before any explanation. "
+                        "If the question names several policy topics, cover those topics in that first sentence and omit unasked topics. "
+                        "For a yes/no question, begin with Yes or No and include the key condition in that sentence. "
+                        "Then provide only the relevant supporting policy details in a concise response. "
+                        "Do not start with a heading or a generic introduction about the policies or retrieved passages. "
+                        "Use only the retrieved context, and include inline citations with exact URLs for each factual claim."
                     )
                     response = llm.invoke([SystemMessage(content=POLICY_AGENT_SYSTEM), HumanMessage(content=prompt)])
                     answer = response.content

@@ -259,6 +259,9 @@ TURN_ONLY_KEYS = frozenset({
     "wants_group_stats", "stats_group_by", "stats_near", "stats_distance_m", "stats_bands", "stats_trend",
     "stats_lookback_years", "stats_since_year", "stats_sort", "stats_order", "stats_listings", "analysis_mode",
     "wants_data_catalog",
+    # A policy question belongs to the turn that asked it. Carrying it into an unrelated next message (for example,
+    # "huh") makes the policy agent retrieve and repeat the previous answer instead of processing the new message.
+    "policy_question",
 })
 # Never carried from an earlier turn, not even into a reply: they are worked out afresh for every message.
 ALWAYS_FRESH_KEYS = frozenset({"clarifications", "assumptions", "extraction_source", "requested_tools", "place_options",

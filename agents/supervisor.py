@@ -381,15 +381,16 @@ def commute_limits(q: str) -> List[int]:
 # scope's topic words miss. "plus" only in the Plus-classification sense: "plus $30,000 in cash" is not a policy question.
 _POLICY_WORDING = re.compile(
     r"\b(mop|minimum occupation|prime|plus (?:flats?|models?|bto|resale|classification)|standard flat|clawback|subsidy recovery|eip|ethnic\w*|quota\w*|wait[- ]out|eligible|eligibility (?:criteria|requirements?|rules?|conditions?|to )|scheme\w*|rental restriction|exempt\w*"
-    r"|not married|unmarried|fianc[eé]e?s?|apply(?:ing)? for (?:an? )?(?:[2-5][- ]room )?(?:flexi )?btos?|can (?:we|i) (?:buy|apply)"
+    r"|not married|unmarried|fianc[eé]e?s?|apply(?:ing)? for (?:an? )?(?:[2-5][- ]room )?(?:flexi )?(?:bto|btr)s?|can (?:we|i) (?:buy|apply)"
     # rules asked about in other words: "grant rules", "2-room Flexi", "how long must I wait", "can I rent out",
     # "after selling my private property"
-    r"|(?:grant|housing|hdb|resale|bto) rules?"
+    r"|(?:grant|housing|hdb|resale|bto|btr) rules?"
     r"|how long (?:must|do|should|will|would) (?:i|we) (?:have to )?wait (?:before|until|to) (?:i |we )?(?:can )?(?:buy|apply|purchase)"
     r"|(?:sold|selling|disposed of|disposal of) (?:my |our |the |a )?private (?:residential )?propert(?:y|ies)"
     # who may buy, which grants exist, income limits, how often one may apply (the stems above need endings)
-    r"|(?:can|may|could) (?:an? )?(?:pr|prs|permanent residents?|foreigners?|singles?|singaporeans?|divorcees?|widow(?:er)?s?)\s+(?:aged? \d{2}\s+)?(?:buy|apply|own|purchase|get)"
-    r"|(?:pr|prs|permanent residents?|foreigners?|singles?|divorcees?|widow(?:er)?s?)\s+(?:allowed|able|permitted|eligible)\s+to\s+(?:buy|apply|own|purchase)"
+    r"|(?:can|may|could) (?:an? )?(?:single citizens?|singles?|singapore citizens?|citizens?|singaporeans?|pr|prs|permanent residents?|foreigners?|divorcees?|widow(?:er)?s?)\s+(?:(?:aged?|above|over)\s+\d{1,2}(?:\s+and\s+above)?\s+)?(?:still\s+)?(?:buy|apply|own|purchase|get)"
+    r"|(?:single citizens?|singles?|singapore citizens?|citizens?|singaporeans?|pr|prs|permanent residents?|foreigners?|divorcees?|widow(?:er)?s?)\s+(?:(?:aged?|above|over)\s+\d{1,2}\s+)?(?:allowed|able|permitted|eligible)\s+to\s+(?:buy|apply|own|purchase)"
+    r"|can\s+(?:aged?\s+\d{1,2}\s+and\s+above|someone\s+aged?\s+\d{1,2})\s+(?:still\s+)?(?:buy|apply|own|purchase)"
     r"|(?:what|which) (?:housing |cpf )?grants? (?:are|is|exist|does|(?:can|could|do|would|will|am|might)(?! (?:we|i)\b))|grants? (?:are )?(?:available|offered)|grants? for (?:first|second|singles?|young|large|married|couples?|families|seniors?|resale|bto)|income (?:ceiling|cap|limit)s?"
     r"|how many times (?:can|may) (?:i|we) apply|second[- ]?timers?"
     # a named grant explained, the rules for a purchase, CPF use: "What is the Enhanced CPF Housing Grant?",
@@ -1717,6 +1718,11 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
             constraints = merge_constraints(constraints, {"financial_inputs": answers})
     # the place an earlier turn named is a candidate even for a self-contained question ("what's near there?")
     _apply_map_pin(constraints, query, state, prior=state.get("prior_constraints"), pending=pending)
+    # Keep the current policy question separate from a previous flat-search turn. A question such as
+    # "can citizens aged 35 and above buy a 4-room BTO?" may mention a flat type, but it is not a request to
+    # search resale blocks. If old towns, budgets or amenity limits are carried into it, the market/spatial agents
+    # can produce thousands of unrelated candidate flats alongside the policy answer.
+    fresh_constraints = dict(constraints)
     if prior:
         # A new question does not inherit the last one's one-off asks (block history, a snapshot, a clarifying
         # question); a reply to an open question keeps them, since it completes that request.
@@ -1727,6 +1733,17 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         answer_place_question(constraints, query)
     elif prior and not pending:
         narrow_block_question(constraints, prior, query)
+
+    if constraints.get("policy_question") and not scope.mentions_data(query):
+        for key in (
+            "towns", "flat_types", "max_budget_sgd", "min_remaining_lease_years", "amenity_radii_meters",
+            "mrt_station", "school_name", "work_destinations", "max_commute_minutes", "addresses", "map_pin",
+            "wants_price_trend", "wants_bto_comparison", "comparable_resale", "wants_block_history",
+            "wants_market_snapshot", "wants_town_ranking", "wants_option_comparison", "wants_price_assessment",
+            "wants_nearby_amenities", "wants_area_statistics", "wants_group_stats", "analysis_mode",
+            "wants_flat_affordability", "wants_area_affordability", "flat_purchase",
+        ):
+            constraints[key] = fresh_constraints.get(key)
     # a fact a later message changed in a way code could not read is asked again, not carried over from the last turn
     for vals in (constraints.get("financial_inputs") or {}).values():
         for k in unsure:
@@ -2853,6 +2870,47 @@ _SECTION_NUMBER = re.compile(r"^\d+(?:\.\d+)*\.?\s+")
 _TABLE_RULE = re.compile(r":?-{3,}:?")
 _LIST_MARKER = re.compile(r"^(?:[-*•]|\d{1,2}[.)])\s+")
 
+# Topic signals used only when a question names more than one policy dimension. A section that matches only the
+# generic flat-classification words ("Prime", "Plus", "flat") is not enough to justify showing it: for example,
+# a question about MOP and eligibility should not also dump a clawback section merely because it mentions Prime.
+_POLICY_TOPIC_PATTERNS = {
+    "mop": re.compile(r"\b(?:mop|minimum occupation|physical occupancy|occupancy period)\b", re.I),
+    "eligibility": re.compile(r"\b(?:eligibility|who can|age requirement|income ceiling|citizen|singles? scheme|eligible single buyers)\b", re.I),
+    "clawback": re.compile(r"\b(?:clawback|subsidy recovery)\b", re.I),
+    "rental": re.compile(r"\b(?:whole[- ]flat rental|rental restriction|rent(?:al|ed|ing)?|bedroom)\b", re.I),
+    "classification": re.compile(r"\b(?:prime|plus|standard|flat classification|flat type)\b", re.I),
+}
+
+
+def _policy_topic_groups(question: str) -> set:
+    """Return named policy dimensions in a question; generic words such as "rules" are ignored."""
+    return {name for name, pattern in _POLICY_TOPIC_PATTERNS.items() if pattern.search(question or "")}
+
+
+def _section_topic_groups(section: Dict[str, Any]) -> set:
+    title = " ".join([section.get("title", ""), section.get("parent", "")])
+    body = " ".join(section.get("lines", []))
+    groups = set()
+    for name, pattern in _POLICY_TOPIC_PATTERNS.items():
+        # Bare "MOP" in a clawback explanation is supporting context, not an MOP section. Require the expanded
+        # phrase in body text unless the breadcrumb/title itself names MOP.
+        body_pattern = (re.compile(r"\b(?:minimum occupation|occupancy period)\b", re.I)
+                        if name == "mop" else pattern)
+        if pattern.search(title) or body_pattern.search(body):
+            groups.add(name)
+    return groups
+
+
+def _line_topic_groups(line: str) -> set:
+    """Topics stated by one displayed line; unlike section scoring, a bare MOP is meaningful here."""
+    return {name for name, pattern in _POLICY_TOPIC_PATTERNS.items() if pattern.search(line or "")}
+
+
+def _line_starts_with_topic(line: str, topic: str) -> bool:
+    """Whether a line is headed by a topic (table rows such as "Whole-Flat Rental After MOP — ...")."""
+    head = re.split(r"\s+—\s+|:", line or "", maxsplit=1)[0]
+    return bool(_POLICY_TOPIC_PATTERNS[topic].search(head))
+
 
 def _content_words(text: str) -> set:
     """Lower-case words and numbers that carry meaning, with simple endings folded so "aged" meets "age", "flats"
@@ -3020,11 +3078,50 @@ def shown_policy_passages(passages: Any, question: str = "") -> List[Dict[str, A
         key = p.get("section") or title or lines[0]
         if key in sections:
             sections[key]["lines"] += [line for line in lines if line not in sections[key]["lines"]]
-        elif len(sections) < POLICY_PASSAGES_SHOWN:
-            sections[key] = {"title": title, "parent": parent, "lines": lines, "source_url": p.get("source_url") or ""}
+            sections[key]["score"] = max(sections[key].get("score", 0.0), float(p.get("rerank_score") or 0.0))
+        else:
+            sections[key] = {"title": title, "parent": parent, "lines": lines, "source_url": p.get("source_url") or "",
+                             "score": float(p.get("rerank_score") or 0.0)}
+
+    # Select sections by the retriever's relevance score, not merely by the order in which duplicate chunks happen to
+    # arrive. This is generic section-level aggregation: any decisive passage can outrank several supporting chunks.
+    ordered_sections = sorted(sections.values(), key=lambda s: s.get("score", 0.0), reverse=True)
+
+    # For multi-part policy questions, keep sections that address one of the explicitly named dimensions. The
+    # classification group is deliberately not sufficient on its own because most sections mention Prime/Plus.
+    # Single-topic questions retain the existing top-three behavior and its fallback lines.
+    topics = _policy_topic_groups(question)
+    required_topics = topics - {"classification"}
+    if len(required_topics) >= 2:
+        relevant = [s for s in ordered_sections if _section_topic_groups(s) & required_topics]
+        if relevant:
+            sections = {str(i): s for i, s in enumerate(relevant[:POLICY_PASSAGES_SHOWN])}
+    else:
+        sections = {str(i): s for i, s in enumerate(ordered_sections[:POLICY_PASSAGES_SHOWN])}
+
     pool = [line for s in sections.values() for line in s["lines"]]
     for s in sections.values():
-        s["lines"] = [_trim_line(s["lines"][i], question) for i in _pick_lines(s["lines"], question, pool)]
+        picked = [_trim_line(s["lines"][i], question) for i in _pick_lines(s["lines"], question, pool)]
+        if len(required_topics) >= 2:
+            def relevant_line(line: str) -> bool:
+                groups = _line_topic_groups(line)
+                return bool(groups & required_topics) and not any(
+                    _line_starts_with_topic(line, topic) for topic in groups - required_topics)
+
+            topical = [line for line in picked if relevant_line(line)]
+            if len(topical) < 2:
+                # The general word-overlap scorer can spend its slots on "Prime/Plus" boilerplate. Supplement from
+                # the full section so an explicitly requested eligibility or MOP rule is still shown.
+                topical += [_trim_line(line, question) for line in s["lines"]
+                            if relevant_line(line) and _trim_line(line, question) not in topical]
+            if len(topical) < 2:
+                topical += [line for line in picked if line not in topical]
+            topical = topical[:POLICY_LINES_SHOWN]
+            # Keep the section's best lines when topic extraction cannot classify a short table row; otherwise
+            # an explicitly requested topic must not be accompanied by an unasked rental/clawback rule.
+            s["lines"] = topical or picked[:1]
+        else:
+            s["lines"] = picked
     return list(sections.values())
 
 
@@ -3765,7 +3862,7 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
     else:
         # no flat search: policy first (the question was about the rules), then what the calculators could do
         if policy_shown:
-            sentences.append("The HDB policy passages that bear on your question are below.")
+            sentences.append(policy_fallback_opening(state))
         elif state.get("rag_policy_passages") and "retrieve_hdb_policy_knowledge" not in unbuilt:
             sentences.append("The policy search found no HDB passage that answers this directly.")
         if done:
@@ -3793,7 +3890,10 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
                              else "No comparable resale sales could be summarised for your search; the reason is below.")
     kept, errors = [], []
     for s in filter(None, sentences):
-        if keep_supported_sentences(s, facts)[1]:
+        # Permit policy figures only for a policy-only turn. Block/market answers must retain the existing
+        # figure-free code opening checks even if a policy passage was also retrieved.
+        opening_policy = state.get("rag_policy_passages") if policy_shown and not searched else None
+        if keep_supported_sentences(s, facts, user_request(state), opening_policy)[1]:
             errors.append(f"synthesize: code opening sentence left out, it failed the figure check: {s[:80]}")
         else:
             kept.append(s)
@@ -3914,6 +4014,24 @@ _RESTATED_ANSWER = re.compile(r"^\W*(?:no|none|both|all|each|every|only|these|th
 _NOTE = re.compile(r"\b(?:tax(?:es)?|fees|cash over valuation|HFE|conditional estimate|indicative|financial advice"
                    r"|upfront funding)\b", re.I)
 _LEANS_BACK = re.compile(r"^\W*(?:this|that|these|those|it|they|its|their|such|however|but|also|otherwise|instead)\b", re.I)
+_GENERIC_POLICY_LEAD = re.compile(r"\bThe (?:HDB )?policy passages (?:that bear on|relevant to) your question are below|The relevant HDB rules follow\b", re.I)
+_SOURCE_ONLY = re.compile(r"^\s*(?:\[+\s*(?:source|official source)\s*\]+\s*)?\(?https?://[^\s)]+\)?\s*$|^\s*\[[^\]]{0,40}\]\(https?://[^)]+\)\s*$", re.I)
+
+_POLICY_OPENING_STOPWORDS = frozenset(
+    "can could would should what which who how are is the a an we i me my our to buy apply own get for with "
+    "and or of do does this that rules rule flat flats grant grants housing policy user question yes no".split()
+)
+
+
+def policy_opening_is_relevant(sentence: str, question: str) -> bool:
+    """Require meaningful lexical overlap with the user's question without enumerating policy names."""
+    q_words = {w for w in re.findall(r"[a-z][a-z0-9-]{2,}", (question or "").lower())
+               if w not in _POLICY_OPENING_STOPWORDS}
+    s_words = set(re.findall(r"[a-z][a-z0-9-]{2,}", (sentence or "").lower()))
+    overlap = q_words & s_words
+    # A sentence that shares only generic words such as "grant" or "housing" can still answer a different scheme.
+    # Require at least one non-generic query term; this is corpus/query agnostic and works for unseen policy names.
+    return bool(overlap)
 
 
 def check_model_opening(text: str, state: HDBCompassState, facts: str,
@@ -3926,7 +4044,7 @@ def check_model_opening(text: str, state: HDBCompassState, facts: str,
     searched = bool(blocks) or _sql_blocks(state) is not None or state.get("spatial_block_candidates") is not None
     notes_are_facts = searched or not state.get("rag_policy_passages")
     kept: List[str] = []
-    dropped = {"figures": 0, "comparisons": 0, "notes": 0, "leans_back": 0, "restated": 0, "lead_ins": 0}
+    dropped = {"figures": 0, "comparisons": 0, "notes": 0, "leans_back": 0, "restated": 0, "lead_ins": 0, "relevance": 0}
     fact_lines = {_plain(line) for line in (facts or "").splitlines() if _plain(line)}
     nothing_found = (facts or "").strip() == NO_DATA
     for sentence in _split_opening(text):
@@ -3937,8 +4055,10 @@ def check_model_opening(text: str, state: HDBCompassState, facts: str,
             reason = "restated"
         elif keep_supported_sentences(sentence, facts, user_request(state), policy)[1]:
             reason = "figures"
-        elif not says_something(sentence):
+        elif not says_something(sentence) or (policy and (_GENERIC_POLICY_LEAD.search(sentence) or _SOURCE_ONLY.match(sentence))):
             reason = "lead_ins"
+        elif policy and not policy_opening_is_relevant(sentence, user_request(state)):
+            reason = "relevance"
         elif searched and _LEANS_BACK.match(sentence):
             reason = "leans_back"
         elif searched and not comparisons_hold(sentence, blocks[:LISTED_BLOCKS]):
@@ -3994,6 +4114,41 @@ def policy_answer_passages(state: HDBCompassState) -> Optional[List[Dict[str, An
                                   "candidate_blocks_intersection", "relaxation")):
         return None
     return passages
+
+
+def policy_fallback_opening(state: HDBCompassState) -> str:
+    """Non-LLM safety net used only when no valid model opening can be produced.
+
+    It does not classify or special-case queries: it quotes the first relevant grounded policy line and leaves the
+    actual answer wording to the LLM whenever an LLM is available.
+    """
+    query = user_request(state)
+    passages = state.get("rag_policy_passages") or []
+    for line in policy_fact_lines(passages, query):
+        clean = re.sub(r"^\s*-\s*", "", line).strip()
+        if clean and not clean.startswith(("**", "Source:")):
+            return f"The relevant HDB rule is: {clean}"
+    return "The retrieved HDB rules relevant to your question are summarized below."
+
+
+def repair_policy_opening(llm: Any, query: str, facts: str) -> str:
+    """Ask the same LLM for a replacement when its first policy draft had no usable opening sentence."""
+    prompt = (
+        f"User question: {query}\n\n"
+        "Write exactly one plain-text opening sentence that directly answers the question using the grounded policy "
+        "facts below. Start with Yes or No when appropriate. Do not write a heading, a generic introduction, a source "
+        "link, a citation-only line, or a list. Reuse at least one substantive term from the question, and do not "
+        "introduce a different scheme or topic. Do not answer an unasked policy topic.\n\n"
+        f"Grounded policy facts:\n{facts}"
+    )
+    try:
+        response = llm.invoke([SystemMessage(content=SYNTH_SYSTEM), HumanMessage(content=prompt)])
+        content = response.content
+        if isinstance(content, list):
+            content = "".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in content)
+        return strip_think(str(content or "")).strip()
+    except Exception:
+        return ""
 
 
 def place_clarification(state: HDBCompassState) -> Optional[Dict[str, Any]]:
@@ -4055,9 +4210,11 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     errors: List[str] = []
     # app fast path, or a turn that only asks the user something: code writes it all
     only_asking = bool(c.get("clarifications")) and not state.get("active_subagents")
-    llm = get_llm() if c.get("extraction_source") != FAST_PATH_SOURCE and not only_asking else None
     facts = template_response(state) if writes_facts_in_code(state) else ""
     policy = policy_answer_passages(state) if facts else None
+    # Fast path may skip model calls for fully recognized market/form flows, but policy answers still need the LLM
+    # opening. The selected policy passages and the user's question are handed to that call below.
+    llm = get_llm() if not only_asking and (c.get("extraction_source") != FAST_PATH_SOURCE or policy) else None
     # code's own opening (code_opening_parts). In a block-search answer its answer sentence always goes first and the
     # model's checked sentences follow; otherwise it is used when none of the model's survives, or there is no model.
     answer, trade, lead_errors = code_opening_parts(state, facts) if facts else ([], "", [])
@@ -4084,11 +4241,22 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
                                                  "such comparison is checked against the facts, and a sentence with a "
                                                  "wrong one is deleted" if len(blocks_listed) > 1 else
                                                  "what the user should weigh in the options below, in words"))
+                elif policy:
+                    task = ("Answer the user's specific policy or eligibility question directly in 1 to 2 clear, authoritative sentences. "
+                            "State the direct answer upfront (e.g. explicitly state 'No' or 'Yes', or give the exact rule, "
+                            "such as flat size restriction, BTO vs resale eligibility, MOP duration, or grant entitlement). "
+                            "If the question names several policy topics, cover those topics in the opening sentence, "
+                            "reuse at least one substantive term from the question, and do not answer an unasked topic. "
+                            "Never output generic placeholders, boilerplate or lead-ins like 'The HDB policy passages that bear on your question are below'. "
+                            "Write only your direct answer to the user's question.")
                 else:
                     task = ("Write only a short opening (one or two sentences that answer the question directly) and, when "
                             "there are several options, the trade-offs between them (price vs lease vs distance) in words: "
                             "cheaper, more lease left, nearer the MRT station")
-                reading = trade if code_answers else lead
+                reading = trade if code_answers else ("" if policy else lead)
+                policy_context = ("\nRelevant retrieved policy passages selected for this question:\n---\n"
+                                  + "\n".join(policy_fact_lines(policy, user_request(state)))
+                                  + "\n---\n") if policy else ""
                 rule = ("The facts section below was written by code from the tool results and will be shown to the user "
                         "exactly as written, straight after your text:\n---\n" + facts + "\n---\n" + task + ". Do not "
                         "repeat or change any price, grant, budget, distance, lease, count or relaxation figure: " + numbers
@@ -4098,6 +4266,7 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
                            if not policy and (len(blocks_listed) > 1 or not code_answers) else "")
                         + (f" What code reads from these facts, which you may reword or add to but must not contradict: "
                            f"\"{reading}\"" if reading else "")
+                        + policy_context
                         + unchecked)
             msgs = [sys_msg(SYNTH_SYSTEM),
                     HumanMessage(content=f"User query: {user_request(state)}\n\n{rule}\n\nEvidence JSON:\n{ri.compact_tool_result(evidence, 24000)}")]
@@ -4110,6 +4279,15 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
             model_text = text   # with code_written_facts off the whole draft is the model's
             if facts:
                 kept, dropped = check_model_opening(text, state, facts, policy)
+                if policy and not kept:
+                    # A model sometimes returns only a source link or a generic lead. Repair it with a second,
+                    # answer-first instruction instead of deciding the opening from query-specific rules.
+                    repaired = repair_policy_opening(llm, user_request(state), facts)
+                    repaired_kept, repaired_dropped = check_model_opening(repaired, state, facts, policy)
+                    if repaired_kept:
+                        text = repaired
+                        kept = repaired_kept
+                        dropped += repaired_dropped
                 model_text = " ".join(kept)
                 if code_answers:
                     # code's answer, then code's trade-off unless the model made a (checked) comparison of its own,
@@ -4122,6 +4300,7 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
                 code_only = not kept and bool(lead)
                 why = {"figures": "stated figures", "comparisons": "compared blocks in a way the facts do not bear out",
                        "notes": "repeated a note the facts carry", "leans_back": "leaned on the sentence before"}
+                why["relevance"] = "answered a different policy topic from the user's question"
                 drops = [f"synthesize: dropped {dropped[r]} opening sentence(s) that {w}" for r, w in why.items() if dropped[r]]
                 if drops and code_only:
                     drops[0] += "; code opening used"
