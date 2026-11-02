@@ -1707,6 +1707,8 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         carried = {k: v for k, v in prior.items()
                    if k not in ri.ALWAYS_FRESH_KEYS and (pending or k not in ri.TURN_ONLY_KEYS)}
         constraints = merge_constraints(carried, constraints)
+    if pending and pending.get("kind") == "place":
+        answer_place_question(constraints, query)
     # a fact a later message changed in a way code could not read is asked again, not carried over from the last turn
     for vals in (constraints.get("financial_inputs") or {}).values():
         for k in unsure:
@@ -1733,6 +1735,42 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     if comparables not in constraints["requested_tools"] and coordinates_stated(constraints.get("comparable_resale"), users):
         constraints["requested_tools"].append(comparables)
     return constraints
+
+
+# A reply to "What would you like to know about <place>?" (research_intents.place_clarification), read as the option it
+# picks. The question offers past sales, resale prices around the place, the price trend, a fair-price check and
+# amenities; "resale price" on its own is the block's own past sales.
+_PLACE_REPLY = (
+    ("wants_price_assessment", r"\bfair\b|\breasonable\b|\bover\s*priced\b|\basking\b|\bworth\b|\$\s?\d"),
+    ("wants_area_statistics", r"\b(?:around|nearby|near\s+(?:it|there|the\s+block)|within|radius)\b.*\bpric|"
+                              r"\bpric\w*\b.*\b(?:around|nearby|within|radius)\b|\barea\b"),
+    ("wants_price_trend", r"\btrend\b|\bover\s+(?:the\s+)?(?:years|time)\b|\bgone\s+up\b|\bappreciat"),
+    ("wants_nearby_amenities", r"\bamenit|\bnear\s+(?:it|there)\b|\bnearby\b|\bwhat'?s\s+(?:near|around)\b|\bmrt\b|\bschools?\b|"
+                               r"\bhawker|\bsupermarket"),
+    ("wants_block_history", r"\bpast\s+sales\b|\bsales\b|\bsold\b|\bhistory\b|\btransactions?\b|\bresale\s+pric|\bprices?\b"),
+)
+_TOWN_FIRST_BLOCK = re.compile(r"^\s*(.+?)\s+(?:blk|block)\.?\s*(\d{1,4}[a-z]?)\s*$", re.I)
+
+
+def answer_place_question(c: Dict[str, Any], query: str) -> None:
+    """The user answered the open question about a place: read the reply as the option it picks, so the next turn
+    answers it instead of asking the same question again. "Tampines blk 884" is the block "Blk 884 Tampines", the
+    order the block lookups read. A reply no option matches gets the place's past sales (a block) or what is near
+    it (any other place) rather than the question again."""
+    c["addresses"] = [_TOWN_FIRST_BLOCK.sub(lambda m: f"Blk {m.group(2)} {m.group(1)}", a) for a in c.get("addresses") or []]
+    if not c["addresses"] and not c.get("map_pin"):
+        return
+    c["clarifications"] = [q for q in c.get("clarifications") or [] if not q.startswith("What would you like to know about")]
+    if any(c.get(k) for k, _ in _PLACE_REPLY):
+        return
+    picked = next((k for k, pat in _PLACE_REPLY if re.search(pat, query, re.I)), None)
+    if picked is None:
+        is_block = any(re.match(r"(?:blk\s+)?\d", a, re.I) for a in c["addresses"])
+        picked = "wants_block_history" if is_block else "wants_nearby_amenities"
+        c["assumptions"] = list(c.get("assumptions") or []) + [
+            "Your reply did not match one of the options I offered, so this shows "
+            + ("the block's past sales." if is_block else "what is near it.")]
+    c[picked] = True
 
 
 def _add_flat_purchase(c: Dict[str, Any]) -> None:
