@@ -4291,9 +4291,11 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
                 model_text = " ".join(kept)
                 if code_answers:
                     # code's answer, then code's trade-off unless the model made a (checked) comparison of its own,
-                    # then the model's sentences
+                    # then the model's sentences (deduplicating any sentence that repeats code's answer)
                     compares = any(_COMPARISON.search(k) for k in kept)
-                    opening = " ".join(answer + ([trade] if trade and not compares else []) + kept)
+                    answer_plains = {_plain(a) for a in answer}
+                    unique_kept = [k for k in kept if _plain(k) not in answer_plains]
+                    opening = " ".join(answer + ([trade] if trade and not compares else []) + unique_kept)
                 else:
                     # the model's surviving sentences are preferred; code's opening only when none of them survives
                     opening = " ".join(kept) or lead

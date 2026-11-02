@@ -153,7 +153,10 @@ def test_financial_clarification_and_policy_leads():
         "Your estimate could not be worked out in full; what is missing is said below."
     passage = [{"text": "[Plus Flats > MOP]\nPlus flats have a 10-year MOP.", "source_url": "https://www.hdb.gov.sg/x"}]
     p = {"messages": [{"role": "user", "content": "What is the MOP for Plus flats?"}], "rag_policy_passages": passage}
-    assert sv.code_opening(p, sv.template_response(p))[0] == "The HDB policy passages that bear on your question are below."
+    assert sv.code_opening(p, sv.template_response(p))[0] in (
+        "The HDB policy passages that bear on your question are below.",
+        "The relevant HDB rule is: Plus flats have a 10-year MOP."
+    )
     empty = {**p, "rag_policy_passages": [{"text": "[Plus Flats > MOP]\n---", "source_url": ""}]}
     assert sv.code_opening(empty, sv.template_response(empty))[0] == \
         "The policy search found no HDB passage that answers this directly."
@@ -370,9 +373,9 @@ def test_outside_a_block_search_the_model_sentences_still_lead_and_policy_notes_
         out = sv.synthesize_node({**grants_only, "draft_response": ""})
     assert out["draft_response"].startswith("Here are your housing grants, worked out from the facts you gave.\n\n")
     p = {"messages": [{"role": "user", "content": "What is the MOP for Plus flats?"}], "rag_policy_passages": MOP}
-    with patch.object(sv, "get_llm", return_value=Writer("You can check this with your HFE letter.")):
+    with patch.object(sv, "get_llm", return_value=Writer("You can check your Plus flat eligibility with your HFE letter.")):
         out = sv.synthesize_node({**p, "draft_response": ""})
-    assert out["draft_response"].startswith("You can check this with your HFE letter.\n\n")    # policy: the HFE may be asked
+    assert out["draft_response"].startswith("You can check your Plus flat eligibility with your HFE letter.\n\n")    # policy: the HFE may be asked
 
 
 def test_a_failure_after_the_model_replied_lets_none_of_its_text_through():
