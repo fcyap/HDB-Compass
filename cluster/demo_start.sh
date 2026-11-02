@@ -177,7 +177,7 @@ if [[ "$MODE" == cluster ]]; then
     echo "Or start without the model:  bash cluster/demo_start.sh --offline"
     exit 1; }
   SSH=(ssh -o BatchMode=yes -S "$SOCK" "$LOGIN")
-  JOB="$("${SSH[@]}" 'squeue --me -h -n hdb-vllm -o %i | head -1')"
+  JOB="$("${SSH[@]}" 'squeue --me -h -n hdb-vllm -t PENDING,RUNNING -o %i | head -1')"   # not one being cancelled
   if [[ -z "$JOB" ]]; then
     JOB="$("${SSH[@]}" 'rm -f ~/vllm_endpoint.txt; sbatch --parsable ~/hdb-cluster/serve_vllm.sbatch')"
     echo "== submitted GPU job $JOB"

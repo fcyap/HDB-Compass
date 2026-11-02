@@ -56,7 +56,7 @@ export LLM_TIMEOUT_S="${LLM_TIMEOUT_S:-90}" LLM_MAX_RETRIES="${LLM_MAX_RETRIES:-
 
 # The session can pass the check above and still be dead (the VPN dropped a moment ago and the shared login has
 # not noticed yet), so a failed listing also names the recorded job
-RUNNING="$("${SSH[@]}" 'squeue --me -h -n hdb-vllm -o %i')" \
+RUNNING="$("${SSH[@]}" 'squeue --me -h -n hdb-vllm -t PENDING,RUNNING -o %i')" \
   || { echo "STEP_FAILED could not list the GPU jobs (VPN or session lost? log in with  ssh $LOGIN  again)"
        kept_job_hint; exit 1; }
 if [[ -n "$KEPT" ]] && grep -qx "$KEPT" <<< "$RUNNING"; then
