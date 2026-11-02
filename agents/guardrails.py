@@ -234,19 +234,30 @@ def llm_judge(draft: str, evidence: str, user_text: str) -> Optional[Dict[str, A
             "critique": "" if passed else "the data does not support: " + "; ".join(claims)}
 
 
-def _opening(state: Dict[str, Any]) -> str:
-    """The part of the draft the model wrote. In Variant C the facts section is code-written, so only the text before it
-    is judged (docs/INTERFACES.md section 3)."""
+def _model_text(state: Dict[str, Any]) -> str:
+    """What the auditor judges: the model's own sentences. `synthesize` records them in `model_opening` ("" when code
+    wrote everything or the model wrote nothing: pass); code's answer sentence and the facts section are never judged
+    (docs/INTERFACES.md section 3). A state without that key (Variants A and B, hand-built states) falls back to the
+    draft before the code-written facts."""
+    if "model_opening" in state:
+        return (state.get("model_opening") or "").strip()
     draft = state.get("draft_response") or ""
     facts = sv.template_response(state) if sv.writes_facts_in_code(state) else ""
     return draft.split(facts, 1)[0].strip() if facts and facts in draft else draft
+
+
+def _judge_data(state: Dict[str, Any]) -> str:
+    """The data the LLM judge reads: the facts section the user sees (short, already checked against the tool results)
+    when code writes it, else the evidence JSON."""
+    facts = sv.template_response(state) if sv.writes_facts_in_code(state) else ""
+    return facts or evidence_text(state)
 
 
 def runtime_auditor_node(state: Dict[str, Any]) -> Dict[str, Any]:
     prev = state.get("auditor_verdict") or {}
     retries = int(prev.get("retry_count", 0))
     try:
-        opening = _opening(state)
+        opening = _model_text(state)
         if not opening:   # the model wrote nothing (it failed or was off)
             return {"auditor_verdict": AuditorVerdict(passed=True, critique="", retry_count=retries).model_dump()}
         evidence, user = evidence_text(state), sv.last_user_query(state)
@@ -254,7 +265,7 @@ def runtime_auditor_node(state: Dict[str, Any]) -> Dict[str, Any]:
         errors: List[str] = []
         if verdict["passed"]:
             try:
-                judged = llm_judge(opening, evidence, user)
+                judged = llm_judge(opening, _judge_data(state), user)
             except Exception as e:  # noqa: BLE001 — a judge fault leaves the rule verdict (pass)
                 judged, errors = None, [f"runtime_auditor: llm_judge {type(e).__name__}"]
             if judged is not None:
