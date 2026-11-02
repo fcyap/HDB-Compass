@@ -51,12 +51,22 @@ _OFF_TASK = re.compile(
     r"function|bot|scraper|essay|poem|story|email|cover letter)\b|\bscrape\w*\b[^.?!]{0,30}\b(?:web|website|listings?|sites?)\b",
     re.I)
 
-SQL_REPLY = ("I can't run database commands or change how I work. I only read published HDB resale data through fixed, "
-             "read-only queries. Ask me about HDB housing, for example 'median 4-room price in Tampines'.")
-PII_REPLY = ("Your message contained a personal or financial identifier (an NRIC/FIN, phone number, email, card or bank "
-             "account number). It was removed before I read it, and I have not processed the message. You never need to "
-             "share one: grant and loan estimates only need your income, citizenship status and household details. "
-             "Please resend your question without it.")
+SQL_REPLY = ("I can't act on that request. I can only help with questions about HDB housing, and I can't change my "
+             "instructions or access the database directly. For example, you could ask: "
+             "\"What is the median 4-room price in Tampines?\"")
+_PII_NAMES = {"NRIC": "NRIC/FIN number", "PHONE": "phone number", "CARD": "card number",
+              "BANK_ACCOUNT": "bank account number", "EMAIL": "email address", "SECRET": "password or PIN"}
+
+
+def pii_reply(kinds: List[str]) -> str:
+    """The refusal for a message that carried identifiers; it names each kind found, e.g. "a bank account number"."""
+    names = [_PII_NAMES[k] for k in kinds if k in _PII_NAMES] or ["personal identifier"]
+    found = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    return (f"For your security, I've removed the {found} from your message and have not processed it. Please don't "
+            "share personal or financial identifiers such as NRIC/FIN, phone, card or account numbers. I don't need them. "
+            "To estimate your grants, just tell me your household income, citizenship status and ages.")
+
+
 SPECULATIVE_REPLY = ("I can't promise or predict profit on any flat or BTO launch; resale prices depend on location, lease "
                      "and market conditions, and past prices don't guarantee future ones. What I can show is how prices "
                      "have moved: for example 'How have 4-room prices in Tampines changed over the last 5 years?'. "
@@ -77,8 +87,9 @@ def classify_input(text: str, mid_conversation: bool = False) -> Tuple[str, Opti
         return "sql_injection", SQL_REPLY
     if scope.classify(t, mid_conversation) == scope.INJECTION:
         return "prompt_injection", scope.REPLIES[scope.INJECTION]
-    if sanitizer.redact(t)[1] or sanitizer.has_placeholder(t):   # raw (evaluation) or already redacted (the app)
-        return "pii", PII_REPLY
+    kinds = sanitizer.redact(t)[1] + [k for k, ph in sanitizer.PLACEHOLDERS.items() if ph in t]   # raw (evaluation) or redacted (the app)
+    if kinds:
+        return "pii", pii_reply(list(dict.fromkeys(kinds)))
     if _OFF_TASK.search(t):   # a coding or writing job that happens to mention property
         return scope.OFF_TOPIC, scope.REPLIES[scope.OFF_TOPIC]
     if scope.classify(t, mid_conversation) == scope.PRIVATE:   # before the speculative check: "best condo for investment"

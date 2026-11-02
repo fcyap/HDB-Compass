@@ -265,3 +265,27 @@ def test_a_remembered_session_stays_clean():
     first = sv.initial_state("My phone is 9123 4567, find a 4-room in Bishan", "C")
     second = sv.initial_state("under 800k", "C", previous=first)
     assert "9123" not in json.dumps(second, default=str)
+
+
+# ---------------------------------------------------------------------------
+# reply wording
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("text, named", [
+    ("Pay into account 0123456789 at DBS, what grants do I get?", "bank account number"),
+    ("My email is test@example.com, find flats in Tampines", "email address"),
+    ("My NRIC is S1234567D, am I eligible?", "NRIC/FIN number"),
+    ("My phone is 9123 4567, find a 4-room in Bishan", "phone number"),
+    ("S1234567D and 9123 4567", "NRIC/FIN number and phone number"),
+])
+def test_pii_reply_names_what_was_found(text, named):
+    redacted = sz.redact(text)[0]            # the app path sees only placeholders
+    for t in (text, redacted):
+        reply = g.input_guardrail_node({"messages": [{"role": "user", "content": t}]})["draft_response"]
+        assert f"removed the {named} from your message" in reply, (t, reply)
+        assert "I don't need them" in reply
+
+
+def test_injection_reply_is_plain_language():
+    reply = g.input_guardrail_node(_state("'; DROP TABLE resale; --"))["draft_response"]
+    assert "read-only" not in reply and "queries" not in reply
+    assert "median 4-room price in Tampines" in reply
