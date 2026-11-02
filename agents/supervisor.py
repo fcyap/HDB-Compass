@@ -1811,6 +1811,19 @@ def _apply_map_pin(c: Dict[str, Any], query: str, state: HDBCompassState, prior:
     ri.resolve_place(c, query, pin, earlier, pending, radius_meters=map_state.get("radius_meters"))
 
 
+# Words that mention an amenity beyond AMENITY_WORDS: a station or LRT is a rail stop, a food centre is a hawker centre
+_AMENITY_MENTION = {"mrt": r"\b(?:mrt|lrt|train|stations?)\b", "hawker": r"\b(?:hawkers?|food\s+cent(?:re|er)s?|kopitiam)\b",
+                    "supermarket": r"\b(?:supermarkets?|grocer(?:y|ies)|ntuc|fairprice|giant|sheng\s+siong|cold\s+storage)\b",
+                    "bus_stop": r"\bbus(?:\s+stops?|\s+interchange)?\b", "park": r"\bparks?\b(?!\s+primary)",
+                    "school": r"\bschools?\b|\bprimary\b", "clinic": r"\b(?:clinics?|polyclinics?|gp)\b"}
+
+
+def mentioned_amenities(text: str) -> set:
+    """The amenity keys a message mentions in any words, plus any the regex reading gives a distance to."""
+    found = {k for k, pat in _AMENITY_MENTION.items() if re.search(pat, text, re.I)}
+    return found | set((rule_based_extract(text).amenity_radii_meters or {}).keys())
+
+
 def _station_key(name: Any) -> str:
     """'Novena MRT Station', 'NOVENA' and 'novena mrt' are the same station."""
     return " ".join(re.sub(r"\b(?:mrt|lrt|station)\b|[^a-z0-9]+", " ", str(name or "").lower()).split())
@@ -1823,12 +1836,27 @@ def _verify_extraction(c: Dict[str, Any], query: str, errors: List[str], from_mo
         c["comparable_resale"] = None
         errors.append("extract_constraints: comparable coordinates were not in the message; dropped")
     if from_model and c.get("towns"):
-        # the same names, aliases and short forms ("JE", "AMK", "TPY") the prompt teaches and the regex reads
+        # the same names, aliases and short forms ("JE", "AMK", "TPY") the prompt teaches and the regex reads; a model
+        # that splits "Kallang/Whampoa" into KALLANG and WHAMPOA gets the HDB town both names stand for
         stated = set(named_towns(query, any_case_short=True))
-        invented = [t for t in c["towns"] if t not in stated]
+        kept, invented = [], []
+        for t in c["towns"]:
+            same = [t] if t in stated else [s for s in named_towns(str(t), any_case_short=True) if s in stated]
+            kept.extend(s for s in same if s not in kept)
+            if not same:
+                invented.append(t)
+        c["towns"] = kept
         if invented:
-            c["towns"] = [t for t in c["towns"] if t in stated]
             errors.append(f"extract_constraints: towns not named in the message were dropped: {invented}")
+    if from_model and c.get("amenity_radii_meters"):
+        # "within 1km of Meridian Primary School" is one limit: a model that also sets MRT, hawker, supermarket, bus
+        # stop and park limits of 1,000 m cuts blocks the user never asked to cut. A limit is kept only for an amenity
+        # the user's words mention.
+        mentioned = mentioned_amenities(query)
+        extra = sorted(k for k in c["amenity_radii_meters"] if k not in mentioned)
+        if extra:
+            c["amenity_radii_meters"] = {k: v for k, v in c["amenity_radii_meters"].items() if k in mentioned}
+            errors.append(f"extract_constraints: distance limits for amenities not in the message were dropped: {extra}")
     if from_model and c.get("mrt_station") is not None:
         # "within 400m of an MRT station" in Ang Mo Kio names no station: a model that fills in the town's station
         # (or "not specified") would measure every block to that one station. Kept only when code reads the same
