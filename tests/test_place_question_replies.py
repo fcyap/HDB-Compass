@@ -106,3 +106,55 @@ def test_the_reply_resale_price_now_shows_the_blocks_past_sales(asked):
     calls = [t for t in out["tool_call_log"] if t["tool"] == "get_block_transaction_history"]
     assert calls and calls[-1]["arguments"]["address"] == "Blk 884 TAMPINES ST 83"
     assert "ask the user which one they mean" not in out["draft_response"]
+
+
+# --- the second app conversation (2 Nov): "Resale price for Tampines Blk 884?", then "4 room" -----------------------
+@pytest.mark.parametrize("text,expected", [
+    ("Resale price for Tampines Blk 884?", "Resale price for Blk 884 Tampines?"),
+    ("ang mo kio blk 225a", "Blk 225a ANG MO KIO"),
+    ("Tampines Blk 884 Tampines St 83", "Tampines Blk 884 Tampines St 83"),   # a street follows: already an address
+    ("4-room in Tampines under $600k", "4-room in Tampines under $600k"),
+])
+def test_a_town_then_a_block_number_is_read_as_the_block(text, expected):
+    assert sv.town_first_block(text).lower() == expected.lower()
+
+
+def test_a_question_that_names_a_block_and_asks_its_price_is_answered_not_asked_back():
+    out = C.graph.invoke(sv.initial_state(query="Resale price for Tampines Blk 884?", variant="C", map_state={},
+                                          previous=None, fast_path=True))
+    assert not out.get("clarification")
+    assert out["user_constraints"]["wants_block_history"]
+    assert "Blk 884 TAMPINES ST 83" in out["draft_response"]
+
+
+def test_a_model_block_search_with_no_budget_or_lease_runs_with_no_limit():
+    from langchain_core.messages import AIMessage
+    first = C.graph.invoke(sv.initial_state(query="Resale price for Tampines Blk 884?", variant="C", map_state={},
+                                            previous=None, fast_path=True))
+    null_call = AIMessage(content="", tool_calls=[{"name": "query_resale_blocks_by_criteria", "id": "c1", "args": {
+        "towns": ["TAMPINES"], "flat_types": ["4 ROOM"], "max_price": None, "min_lease_years": None}}])
+    llm = FakeLLM(extraction=LLMExtractedConstraints(towns=["TAMPINES"], flat_types=["4 ROOM"]), script=[null_call])
+    with patch.object(sv, "get_llm", return_value=llm):
+        out = C.graph.invoke(sv.initial_state(query="4 room", variant="C", map_state={}, previous=first, fast_path=True))
+    call = next(t for t in out["tool_call_log"] if t["tool"] == "query_resale_blocks_by_criteria")
+    assert call["ok"] and call["arguments"]["max_price"] == sv.NO_PRICE_LIMIT and call["arguments"]["min_lease_years"] == 0
+    assert "could not find data" not in out["draft_response"]
+
+
+def test_when_every_model_call_fails_code_runs_its_own_plan():
+    from langchain_core.messages import AIMessage
+    bad = AIMessage(content="", tool_calls=[{"name": "query_resale_blocks_by_criteria", "id": "c1",
+                                             "args": {"towns": "not a list", "flat_types": 7}}])
+    c = sv.rule_based_extract("4-room in Tampines under $600k").model_dump()
+    with patch.object(sv, "get_llm", return_value=FakeLLM(script=[bad])):
+        outputs, log, errors, _ = sv.run_react("market_sql", ["query_resale_blocks_by_criteria"], "sys",
+                                               "4-room in Tampines under $600k", c)
+    assert [r for r in log if r["source"] == "model" and not r["ok"]]
+    assert [r for r in log if r["source"] == "code" and r["ok"]]
+    assert any("deterministic plan used" in e for e in errors)
+
+
+def test_a_model_sentence_that_repeats_a_facts_line_is_dropped():
+    text, dropped = sv.keep_supported_sentences("I could not find data for that request.",
+                                                "I could not find data for that request.")
+    assert text == "" and dropped == 0   # nothing is lost: not reported as a dropped sentence
