@@ -72,6 +72,8 @@ TOWN_ALIASES = {"TIONG BAHRU": "BUKIT MERAH", "KALLANG": "KALLANG/WHAMPOA", "WHA
 # short forms people actually type, matched as whole upper-case words so "JE" never matches inside another word
 TOWN_SHORT = {"AMK": "ANG MO KIO", "TPY": "TOA PAYOH", "JE": "JURONG EAST", "JW": "JURONG WEST", "CCK": "CHOA CHU KANG",
               "BP": "BUKIT PANJANG", "SK": "SENGKANG", "PG": "PUNGGOL"}
+NO_DATA = "I could not find data for that request."   # the facts section when no tool found anything
+FLAT_TYPES = ("1 ROOM", "2 ROOM", "3 ROOM", "4 ROOM", "5 ROOM", "EXECUTIVE", "MULTI-GENERATION")   # as in the resale data
 NUMBER_WORDS = {"two": "2", "three": "3", "four": "4", "five": "5"}
 AMENITY_WORDS = {"mrt": "mrt", "train": "mrt", "hawker": "hawker", "bus stop": "bus_stop", "bus": "bus_stop",
                  "supermarket": "supermarket", "park": "park", "school": "school", "clinic": "clinic"}
@@ -407,12 +409,26 @@ def policy_wording(q: str, money_stated: bool = False) -> bool:
     return bool(_POLICY_WORDING.search(q)) or (bool(_OWN_GRANT_ASK.search(q)) and not money_stated)
 
 
+# "Tampines Blk 884": a town, then a block number with no street after it. The block lookups read "Blk 884 Tampines".
+_STREET_WORD = (r"(?:st|street|ave|avenue|rd|road|dr|drive|cres|crescent|ctrl|central|lane|ln|way|walk|ring|close|cl|"
+                r"hts|heights|link|view|vale|place|pl|green|grove|loop|terrace|track|rise|hill|park|garden|gardens)")
+_TOWN_THEN_BLOCK = re.compile(r"\b(" + "|".join(re.escape(t) for t in sorted(HDB_TOWNS, key=len, reverse=True))
+                              + r")\s+(?:blk|block)\.?\s*(\d{1,4}[a-z]?)\b(?!\s+(?:[a-z0-9]+\s+){0,2}" + _STREET_WORD + r"\b)",
+                              re.I)
+
+
+def town_first_block(text: str) -> str:
+    """'Resale price for Tampines Blk 884?' -> 'Resale price for Blk 884 Tampines?'. A block number with a street after
+    it ('Tampines Blk 884 Tampines St 83') is already an address and is left alone."""
+    return _TOWN_THEN_BLOCK.sub(lambda m: f"Blk {m.group(2)} {m.group(1)}", text)
+
+
 def rule_based_extract(query: str) -> ExtractedConstraints:
     """Regex extractor: the no-LLM path and the safety net when structured output fails."""
     nearby = school_location_request(query)
     if nearby is not None:
         return ExtractedConstraints(nearby_schools=nearby)
-    q = query
+    q = town_first_block(query)
     towns = named_towns(q)
     for word, digit in NUMBER_WORDS.items():
         q = re.sub(rf"\b{word}(?=[- ]?(?:room|rm)\b)", digit, q, flags=re.I)
@@ -1707,6 +1723,8 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         carried = {k: v for k, v in prior.items()
                    if k not in ri.ALWAYS_FRESH_KEYS and (pending or k not in ri.TURN_ONLY_KEYS)}
         constraints = merge_constraints(carried, constraints)
+    if pending and pending.get("kind") == "place":
+        answer_place_question(constraints, query)
     # a fact a later message changed in a way code could not read is asked again, not carried over from the last turn
     for vals in (constraints.get("financial_inputs") or {}).values():
         for k in unsure:
@@ -1733,6 +1751,48 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     if comparables not in constraints["requested_tools"] and coordinates_stated(constraints.get("comparable_resale"), users):
         constraints["requested_tools"].append(comparables)
     return constraints
+
+
+# A reply to "What would you like to know about <place>?" (research_intents.place_clarification), read as the option it
+# picks. The question offers past sales, resale prices around the place, the price trend, a fair-price check and
+# amenities; "resale price" on its own is the block's own past sales.
+_PLACE_REPLY = (
+    ("wants_price_assessment", r"\bfair\b|\breasonable\b|\bover\s*priced\b|\basking\b|\bworth\b|\$\s?\d"),
+    ("wants_area_statistics", r"\b(?:around|nearby|near\s+(?:it|there|the\s+block)|within|radius)\b.*\bpric|"
+                              r"\bpric\w*\b.*\b(?:around|nearby|within|radius)\b|\barea\b"),
+    ("wants_price_trend", r"\btrend\b|\bover\s+(?:the\s+)?(?:years|time)\b|\bgone\s+up\b|\bappreciat"),
+    ("wants_nearby_amenities", r"\bamenit|\bnear\s+(?:it|there)\b|\bnearby\b|\bwhat'?s\s+(?:near|around)\b|\bmrt\b|\bschools?\b|"
+                               r"\bhawker|\bsupermarket"),
+    ("wants_block_history", r"\bpast\s+sales\b|\bsales\b|\bsold\b|\bhistory\b|\btransactions?\b|\bresale\s+pric|\bprices?\b"),
+)
+_TOWN_FIRST_BLOCK = re.compile(r"^\s*(.+?)\s+(?:blk|block)\.?\s*(\d{1,4}[a-z]?)\s*$", re.I)
+
+
+PLACE_QUESTION = "What would you like to know about"   # research_intents.place_clarification
+
+
+def answer_place_question(c: Dict[str, Any], query: str, default: bool = True) -> None:
+    """The user answered the open question about a place: read the reply as the option it picks, so the next turn
+    answers it instead of asking the same question again. "Tampines blk 884" is the block "Blk 884 Tampines", the
+    order the block lookups read. A reply no option matches gets the place's past sales (a block) or what is near
+    it (any other place) rather than the question again."""
+    c["addresses"] = [_TOWN_FIRST_BLOCK.sub(lambda m: f"Blk {m.group(2)} {m.group(1)}", a) for a in c.get("addresses") or []]
+    if not c["addresses"] and not c.get("map_pin"):
+        return
+    if any(c.get(k) for k, _ in _PLACE_REPLY):
+        c["clarifications"] = [q for q in c.get("clarifications") or [] if not q.startswith(PLACE_QUESTION)]
+        return
+    picked = next((k for k, pat in _PLACE_REPLY if re.search(pat, query, re.I)), None)
+    if picked is None and not default:
+        return   # the message names a place and asks nothing about it: the question stays
+    c["clarifications"] = [q for q in c.get("clarifications") or [] if not q.startswith(PLACE_QUESTION)]
+    if picked is None:
+        is_block = any(re.match(r"(?:blk\s+)?\d", a, re.I) for a in c["addresses"])
+        picked = "wants_block_history" if is_block else "wants_nearby_amenities"
+        c["assumptions"] = list(c.get("assumptions") or []) + [
+            "Your reply did not match one of the options I offered, so this shows "
+            + ("the block's past sales." if is_block else "what is near it.")]
+    c[picked] = True
 
 
 def _add_flat_purchase(c: Dict[str, Any]) -> None:
@@ -1857,6 +1917,16 @@ def _verify_extraction(c: Dict[str, Any], query: str, errors: List[str], from_mo
         if extra:
             c["amenity_radii_meters"] = {k: v for k, v in c["amenity_radii_meters"].items() if k in mentioned}
             errors.append(f"extract_constraints: distance limits for amenities not in the message were dropped: {extra}")
+    if c.get("addresses"):
+        # "Tampines Blk 884" (the model's reading or the user's words) is the block the lookups read as "Blk 884 Tampines"
+        c["addresses"] = [town_first_block(a) for a in c["addresses"]]
+    if from_model and c.get("flat_types"):
+        # the live model read "Resale price for Tampines Blk 884?" as flat type "BLK 884", which every search refuses
+        kinds = [t for t in c["flat_types"] if str(t).upper() in FLAT_TYPES]
+        if len(kinds) < len(c["flat_types"]):
+            errors.append(f"extract_constraints: flat types that are not HDB flat types were dropped: "
+                          f"{[t for t in c['flat_types'] if str(t).upper() not in FLAT_TYPES]}")
+        c["flat_types"] = [str(t).upper() for t in kinds]
     if from_model and c.get("mrt_station") is not None:
         # "within 400m of an MRT station" in Ang Mo Kio names no station: a model that fills in the town's station
         # (or "not specified") would measure every block to that one station. Kept only when code reads the same
@@ -1929,6 +1999,12 @@ def route_node(state: HDBCompassState) -> Dict[str, Any]:
     c = state.get("user_constraints", {})
     active = decide_routing(c, state.get("pending_clarification"))
     if not active and not c.get("clarifications") and (c.get("addresses") or c.get("map_pin")):
+        # "Resale price for Blk 884 Tampines?" names the place and already says what it wants: answer, don't ask
+        picked = {**c}
+        answer_place_question(picked, last_user_query(state), default=False)
+        active = decide_routing(picked, state.get("pending_clarification"))
+        if active:
+            return {"active_subagents": active, "user_constraints": picked}
         return {"active_subagents": active, "user_constraints": {**c, "clarifications": [ri.place_clarification(c)]}}
     if not active and not c.get("clarifications"):
         menu = scope.menu_for(last_user_query(state))
@@ -2122,6 +2198,9 @@ def _scheme_to_pair(scheme: Optional[str]) -> Tuple[str, bool]:
     return pair, "SECOND" not in s
 
 
+NO_PRICE_LIMIT = 5_000_000   # a block search with no stated budget: above every resale price on record
+
+
 def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
                        spatial_blocks: Optional[List[str]] = None) -> List[Tuple[str, Dict[str, Any]]]:
     """What a competent specialist would call for these constraints. Used when no LLM is
@@ -2135,7 +2214,7 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
         if towns and ri.is_block_search(c, query):
             plan.append(("query_resale_blocks_by_criteria", dict(
                 towns=towns, flat_types=c.get("flat_types") or ["4 ROOM"],
-                max_price=c.get("max_budget_sgd") or 5_000_000, min_lease_years=c.get("min_remaining_lease_years") or 0)))
+                max_price=c.get("max_budget_sgd") or NO_PRICE_LIMIT, min_lease_years=c.get("min_remaining_lease_years") or 0)))
         if c.get("wants_price_trend") and towns:
             plan.append(("compute_town_price_timeseries", dict(towns=towns, flat_type=(c.get("flat_types") or ["4 ROOM"])[0],
                                                                lookback_years=c.get("trend_years") or 3)))
@@ -2297,13 +2376,19 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
                             if given:
                                 errors.append(f"{label}: commute blocks that no filter kept were replaced by the filtered blocks")
                             args = {**args, "candidate_blocks": kept}
+                    if name == "query_resale_blocks_by_criteria":
+                        # "4 room" in Tampines states no budget or lease: the model passed null for both and the tool
+                        # refused the call; no stated limit is the same no-limit code's own plan uses
+                        args = {**args, "max_price": NO_PRICE_LIMIT if args.get("max_price") is None else args["max_price"],
+                                "min_lease_years": 0 if args.get("min_lease_years") is None else args["min_lease_years"]}
                     guarded = guard_financial_args(name, args, c, outputs, runners)   # may run the grant calculator (code)
                     runners[name].source = "model"
                     try:
                         result = runners[name](**guarded)
                     finally:
                         runners[name].source = "code"
-                    used_llm_tools = True
+                    # a call the tool refused or that failed is not evidence: if every call fails, code's plan runs
+                    used_llm_tools = used_llm_tools or bool(runners[name].log and runners[name].log[-1].ok)
                     _store(outputs, name, result)
                     msgs.append(ToolMessage(content=ri.compact_tool_result(result), tool_call_id=tc["id"]))
                 if stop_when_covered and planned and planned <= set(outputs):
@@ -3049,7 +3134,7 @@ def template_response(state: HDBCompassState) -> str:
     elif state.get("policy_no_match"):
         lines.append(NO_POLICY_ANSWER)
     if not lines:
-        lines.append("I could not find data for that request.")
+        lines.append(NO_DATA)
     if state.get("financial_breakdown") or passages:
         lines.append(HFE_DISCLAIMER)
     return "\n".join(lines)
@@ -3454,6 +3539,11 @@ def policy_figures(passages: Any, question: str = "") -> set:
     return set(_figures("\n".join(line for line in lines if not re.match(r"(?:worked )?example\b", line, re.I))))
 
 
+def _plain(text: str) -> str:
+    """A line as words only: no markdown, bullets or punctuation, lower case."""
+    return " ".join(re.sub(r"[^a-z0-9$ ]+", " ", text.lower()).split())
+
+
 def keep_supported_sentences(opening: str, facts: str, user_text: str = "",
                              policy_passages: Optional[List[Dict[str, Any]]] = None) -> Tuple[str, int]:
     """The model's opening with every sentence dropped that states a figure (an amount, distance, lease, percentage,
@@ -3464,8 +3554,12 @@ def keep_supported_sentences(opening: str, facts: str, user_text: str = "",
     Returns (text, sentences dropped)."""
     listed = {m.group(1).upper() for m in re.finditer(r"\bBlk\s+(\d{1,4}[A-Z]?)\b", facts or "")}
     allowed = policy_figures(policy_passages, user_text) if policy_passages else set()
+    # a sentence that only repeats a line of the facts ("I could not find data for that request.") shows it twice
+    fact_lines = {_plain(line) for line in (facts or "").splitlines() if _plain(line)}
     kept, dropped = [], 0
     for sentence in _split_opening(opening):
+        if _plain(sentence) in fact_lines:
+            continue   # not counted: nothing is lost, the facts say it
         named = [m.group(1).upper() for m in _BLOCK_LIST.finditer(sentence)]
         named += [b.upper() for m in _BLOCK_LIST.finditer(sentence) for b in re.findall(r"(\d{1,4}[A-Z]?)\b", m.group(2) or "")]
         named += [m.group(1).upper() for m in _ADDRESS.finditer(sentence)]
@@ -3802,9 +3896,15 @@ def check_model_opening(text: str, state: HDBCompassState, facts: str,
     notes_are_facts = searched or not state.get("rag_policy_passages")
     kept: List[str] = []
     dropped = {"figures": 0, "comparisons": 0, "notes": 0, "leans_back": 0, "restated": 0, "lead_ins": 0}
+    fact_lines = {_plain(line) for line in (facts or "").splitlines() if _plain(line)}
+    nothing_found = (facts or "").strip() == NO_DATA
     for sentence in _split_opening(text):
         reason = ""
-        if keep_supported_sentences(sentence, facts, user_request(state), policy)[1]:
+        if nothing_found or _plain(sentence) in fact_lines:
+            # the facts already say it ("I could not find data for that request."), and with nothing found the model
+            # has no evidence to add anything from: the line would show twice, or reworded ("I couldn't find any data")
+            reason = "restated"
+        elif keep_supported_sentences(sentence, facts, user_request(state), policy)[1]:
             reason = "figures"
         elif not says_something(sentence):
             reason = "lead_ins"
