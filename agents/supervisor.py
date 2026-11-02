@@ -1928,8 +1928,13 @@ def _verify_extraction(c: Dict[str, Any], query: str, errors: List[str], from_mo
         errors.append("extract_constraints: comparable coordinates were not in the message; dropped")
     if from_model and c.get("towns"):
         # the same names, aliases and short forms ("JE", "AMK", "TPY") the prompt teaches and the regex reads; a model
-        # that splits "Kallang/Whampoa" into KALLANG and WHAMPOA gets the HDB town both names stand for
+        # that splits "Kallang/Whampoa" into KALLANG and WHAMPOA gets the HDB town both names stand for. A region the
+        # user named ("in the east", "the north-east region") states its towns (research_intents.REGION_TOWNS): the model
+        # that read "in the east" as Bedok, Pasir Ris and Tampines read it right (Experiment 1, 2 Nov: A1-05, A2-04, A3-05)
         stated = set(named_towns(query, any_case_short=True))
+        region = ri.region_towns(query)
+        if region:
+            stated |= set(region[1])
         kept, invented = [], []
         for t in c["towns"]:
             same = [t] if t in stated else [s for s in named_towns(str(t), any_case_short=True) if s in stated]

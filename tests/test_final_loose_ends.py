@@ -184,3 +184,32 @@ def test_forbidden_words_fail_unless_negated():
 def test_the_runner_has_a_category_f_shortcut():
     from evaluation.run_category_e_prelim import dataset_path
     assert dataset_path("category_f").name == "category_f_queries.json"
+
+
+# --- 6. a region the user named states its towns (Experiment 1, 2 Nov: A1-05, A2-04, A3-05) ------------------------
+def _model_reading(query, **reading):
+    st = {"messages": [{"role": "user", "content": query}], "variant": "C"}
+    c = {**sv.rule_based_extract(query).model_dump(), **reading}
+    errors = []
+    return sv._finalize_constraints(c, query, st, errors, from_model=True), errors
+
+
+@pytest.mark.parametrize("query,towns", [
+    ("What's the price premium for 5-room flats close to MRT in the east?", ["BEDOK", "PASIR RIS", "TAMPINES"]),
+    ("Resale statistics near MRT stations in the north-east region", ["ANG MO KIO", "HOUGANG", "PUNGGOL", "SENGKANG", "SERANGOON"]),
+    ("Resale prices by remaining lease in the east", ["BEDOK", "PASIR RIS", "TAMPINES"]),
+])
+def test_the_models_reading_of_a_named_region_is_kept(query, towns):
+    c, errors = _model_reading(query, towns=list(towns))
+    assert c["towns"] == towns
+    assert not [e for e in errors if "towns not named" in e]
+
+
+def test_a_town_outside_the_named_region_is_still_dropped():
+    c, errors = _model_reading("Resale prices by remaining lease in the east", towns=["BEDOK", "JURONG EAST"])
+    assert c["towns"] == ["BEDOK"] and [e for e in errors if "JURONG EAST" in e]
+
+
+def test_without_a_region_invented_towns_are_still_dropped():
+    c, _ = _model_reading("4-room near Tampines East MRT under 600k", towns=["TAMPINES", "BEDOK"])
+    assert c["towns"] == ["TAMPINES"]
