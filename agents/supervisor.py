@@ -72,6 +72,8 @@ TOWN_ALIASES = {"TIONG BAHRU": "BUKIT MERAH", "KALLANG": "KALLANG/WHAMPOA", "WHA
 # short forms people actually type, matched as whole upper-case words so "JE" never matches inside another word
 TOWN_SHORT = {"AMK": "ANG MO KIO", "TPY": "TOA PAYOH", "JE": "JURONG EAST", "JW": "JURONG WEST", "CCK": "CHOA CHU KANG",
               "BP": "BUKIT PANJANG", "SK": "SENGKANG", "PG": "PUNGGOL"}
+NO_DATA = "I could not find data for that request."   # the facts section when no tool found anything
+FLAT_TYPES = ("1 ROOM", "2 ROOM", "3 ROOM", "4 ROOM", "5 ROOM", "EXECUTIVE", "MULTI-GENERATION")   # as in the resale data
 NUMBER_WORDS = {"two": "2", "three": "3", "four": "4", "five": "5"}
 AMENITY_WORDS = {"mrt": "mrt", "train": "mrt", "hawker": "hawker", "bus stop": "bus_stop", "bus": "bus_stop",
                  "supermarket": "supermarket", "park": "park", "school": "school", "clinic": "clinic"}
@@ -1915,6 +1917,16 @@ def _verify_extraction(c: Dict[str, Any], query: str, errors: List[str], from_mo
         if extra:
             c["amenity_radii_meters"] = {k: v for k, v in c["amenity_radii_meters"].items() if k in mentioned}
             errors.append(f"extract_constraints: distance limits for amenities not in the message were dropped: {extra}")
+    if c.get("addresses"):
+        # "Tampines Blk 884" (the model's reading or the user's words) is the block the lookups read as "Blk 884 Tampines"
+        c["addresses"] = [town_first_block(a) for a in c["addresses"]]
+    if from_model and c.get("flat_types"):
+        # the live model read "Resale price for Tampines Blk 884?" as flat type "BLK 884", which every search refuses
+        kinds = [t for t in c["flat_types"] if str(t).upper() in FLAT_TYPES]
+        if len(kinds) < len(c["flat_types"]):
+            errors.append(f"extract_constraints: flat types that are not HDB flat types were dropped: "
+                          f"{[t for t in c['flat_types'] if str(t).upper() not in FLAT_TYPES]}")
+        c["flat_types"] = [str(t).upper() for t in kinds]
     if from_model and c.get("mrt_station") is not None:
         # "within 400m of an MRT station" in Ang Mo Kio names no station: a model that fills in the town's station
         # (or "not specified") would measure every block to that one station. Kept only when code reads the same
@@ -3122,7 +3134,7 @@ def template_response(state: HDBCompassState) -> str:
     elif state.get("policy_no_match"):
         lines.append(NO_POLICY_ANSWER)
     if not lines:
-        lines.append("I could not find data for that request.")
+        lines.append(NO_DATA)
     if state.get("financial_breakdown") or passages:
         lines.append(HFE_DISCLAIMER)
     return "\n".join(lines)
@@ -3884,9 +3896,15 @@ def check_model_opening(text: str, state: HDBCompassState, facts: str,
     notes_are_facts = searched or not state.get("rag_policy_passages")
     kept: List[str] = []
     dropped = {"figures": 0, "comparisons": 0, "notes": 0, "leans_back": 0, "restated": 0, "lead_ins": 0}
+    fact_lines = {_plain(line) for line in (facts or "").splitlines() if _plain(line)}
+    nothing_found = (facts or "").strip() == NO_DATA
     for sentence in _split_opening(text):
         reason = ""
-        if keep_supported_sentences(sentence, facts, user_request(state), policy)[1]:
+        if nothing_found or _plain(sentence) in fact_lines:
+            # the facts already say it ("I could not find data for that request."), and with nothing found the model
+            # has no evidence to add anything from: the line would show twice, or reworded ("I couldn't find any data")
+            reason = "restated"
+        elif keep_supported_sentences(sentence, facts, user_request(state), policy)[1]:
             reason = "figures"
         elif not says_something(sentence):
             reason = "lead_ins"

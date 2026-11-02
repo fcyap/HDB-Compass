@@ -158,3 +158,32 @@ def test_a_model_sentence_that_repeats_a_facts_line_is_dropped():
     text, dropped = sv.keep_supported_sentences("I could not find data for that request.",
                                                 "I could not find data for that request.")
     assert text == "" and dropped == 0   # nothing is lost: not reported as a dropped sentence
+
+
+# --- the live model's reading of "Resale price for Tampines Blk 884?" (2 Nov) ---------------------------------------
+def test_the_live_models_reading_still_shows_the_blocks_past_sales():
+    reading = dict(addresses=["Tampines Blk 884"], towns=["TAMPINES"], flat_types=["BLK 884"])
+    out = app("Resale price for Tampines Blk 884?", **reading)
+    c = out["user_constraints"]
+    assert c["addresses"] == ["Blk 884 Tampines"] and c["flat_types"] == []
+    assert any("not HDB flat types were dropped" in e for e in out["errors"])
+    assert "Blk 884 TAMPINES ST 83" in out["draft_response"]
+    assert sv.NO_DATA not in out["draft_response"]
+
+
+def test_real_flat_types_from_the_model_are_kept():
+    c = {"flat_types": ["4 room", "EXECUTIVE", "BLK 884"]}
+    errors = []
+    sv._verify_extraction(c, "4-room or executive in Tampines", errors, from_model=True)
+    assert c["flat_types"] == ["4 ROOM", "EXECUTIVE"] and errors
+
+
+@pytest.mark.parametrize("model_text", ["I could not find data for that request.",
+                                        "I couldn't find any data for that request."])
+def test_nothing_found_is_said_once(model_text):
+    from tests.test_code_opening import Writer
+    state = {"messages": [{"role": "user", "content": "Resale price for Tampines Blk 884?"}], "variant": "C",
+             "user_constraints": {"towns": ["TAMPINES"]}, "tool_call_log": [], "active_subagents": ["market_sql"]}
+    with patch.object(sv, "get_llm", return_value=Writer(model_text)):
+        out = sv.synthesize_node(state)
+    assert out["draft_response"] == sv.NO_DATA
