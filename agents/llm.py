@@ -132,7 +132,9 @@ def _probe_profile(profile: Dict[str, Any]) -> tuple[bool, str]:
         if not isinstance(data, list):
             return False, "Provider returned an invalid model list."
         if not any(
-            isinstance(row, dict) and row.get("id") == profile["model"] for row in data
+            isinstance(row, dict)
+            and (row.get("id") == profile["model"] or str(row.get("id", "")).removeprefix("models/") == profile["model"])
+            for row in data
         ):
             return (
                 False,

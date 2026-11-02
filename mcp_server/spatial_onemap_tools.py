@@ -297,7 +297,6 @@ def _geocode_names_school(geo: Dict[str, Any], school_name: str) -> bool:
     return bool(wanted) and wanted <= found and bool(found & {"SCHOOL", "PRIMARY"})
 
 
-@mcp.tool()
 def verify_primary_school_distance(
     school_name: str,
     bracket: str = "1km"
@@ -358,7 +357,6 @@ def station_key(name: str) -> str:
     return " ".join(words)
 
 
-@mcp.tool()
 def filter_blocks_by_amenity_proximity(
     towns: List[str],
     amenity_constraints: Dict[str, int],
@@ -583,7 +581,6 @@ def route_onemap_pt_minutes(
     return None
 
 
-@mcp.tool()
 def compute_dual_transit_commute(
     candidate_blocks: List[str],
     work_dest_a: str = "Raffles Place",
@@ -680,7 +677,6 @@ def compute_dual_transit_commute(
     return results
 
 
-@mcp.tool()
 def sync_interactive_map_ui(
     candidate_blocks: List[str],
     buffer_radii: Dict[str, int],
@@ -707,6 +703,13 @@ def sync_interactive_map_ui(
         "buffer_polygon": buffer_poly,
         "candidate_count": len(candidate_blocks)
     }
+
+
+# Register tools with FastMCP server while preserving plain callable functions
+mcp.tool()(verify_primary_school_distance)
+mcp.tool()(filter_blocks_by_amenity_proximity)
+mcp.tool()(compute_dual_transit_commute)
+mcp.tool()(sync_interactive_map_ui)
 
 
 if __name__ == "__main__":

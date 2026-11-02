@@ -63,5 +63,5 @@ def test_with_code_written_facts_off_the_whole_draft_is_the_models():
 
 
 def test_the_contract_names_model_opening():
-    doc = (Path(__file__).resolve().parent.parent / "docs" / "INTERFACES.md").read_text()
+    doc = (Path(__file__).resolve().parent.parent / "docs" / "INTERFACES.md").read_text(encoding="utf-8")
     assert 'state["model_opening"]' in doc and "Never judge code's answer sentence" in doc

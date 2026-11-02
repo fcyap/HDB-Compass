@@ -277,6 +277,16 @@ def query_radius(req: RadiusQueryRequest):
                 seen_names.add(norm_name)
                 matches.append(a)
 
+    # 1b. Commercial Food & Dining (Google Places API & Commercial Hubs)
+    if cat_lower in ("all", "hawker"):
+        from mcp_server.google_places_tools import fetch_google_places_food
+        commercial_food = fetch_google_places_food(req.lat, req.lng, radius_meters=req.radius_meters)
+        for cf in commercial_food:
+            norm_name = cf["name"].strip().upper()
+            if norm_name not in seen_names:
+                seen_names.add(norm_name)
+                matches.append(cf)
+
     # 2. Query Official MOE Primary Schools (Full SVY21 ground-truth for Phase 2C)
     if cat_lower in ("all", "school") and school_tree and schools:
         s_idxs = school_tree.query_ball_point([cx, cy], r=req.radius_meters)

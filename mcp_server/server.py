@@ -48,10 +48,10 @@ from mcp_server.policy_rag_tools import retrieve_hdb_policy_knowledge
 mcp = FastMCP("HDB-Compass-MCP-Server")
 
 # Re-register Member 2 Tools on the unified server
-mcp.add_tool(verify_primary_school_distance)
-mcp.add_tool(filter_blocks_by_amenity_proximity)
-mcp.add_tool(compute_dual_transit_commute)
-mcp.add_tool(sync_interactive_map_ui)
+mcp.tool()(verify_primary_school_distance)
+mcp.tool()(filter_blocks_by_amenity_proximity)
+mcp.tool()(compute_dual_transit_commute)
+mcp.tool()(sync_interactive_map_ui)
 mcp.tool(output_schema=QueryResaleBlocksOutput.model_json_schema())(
     query_resale_blocks_by_criteria
 )

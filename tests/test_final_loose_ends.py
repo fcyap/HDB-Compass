@@ -101,6 +101,7 @@ def _shell_function(script: str, name: str) -> str:
     return m.group(0)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Bash shell scripts run on POSIX / Linux cluster")
 @pytest.mark.parametrize("value,keeps", [("", False), ("0", False), ("no", False), ("false", False),
                                          ("1", True), ("true", True), ("YES", True)])
 def test_keep_job_keeps_only_for_a_yes(value, keeps):
@@ -116,6 +117,7 @@ def _stale(tmp_path) -> bool:
     return subprocess.run(["bash", "-c", fn + "\nfrontend_packages_stale"], cwd=tmp_path).returncode == 0
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Bash shell scripts run on POSIX / Linux cluster")
 def test_packages_are_installed_when_missing_or_older_than_package_json(tmp_path):
     front = tmp_path / "frontend"
     front.mkdir()

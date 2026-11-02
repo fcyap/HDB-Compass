@@ -26,7 +26,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from agents import supervisor as sv  # noqa: E402
 
-pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="the cluster scripts need bash")
+pytestmark = pytest.mark.skipif(shutil.which("bash") is None or sys.platform == "win32", reason="the cluster scripts need bash and a POSIX environment")
 
 SCRIPTS = ["demo_start.sh", "run_live_eval.sh", "tunnel.sh"]
 LOGIN = "student@cluster.invalid"

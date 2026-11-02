@@ -27,7 +27,7 @@ export interface MapViewport {
 }
 
 // Default radius of the pin circle and facility panel; chat questions about the pin use the same circle.
-export const FACILITY_RADIUS_METERS = 500;
+export const FACILITY_RADIUS_METERS = 1500;
 export const RADIUS_PRESETS: { meters: number; label: string }[] = [
   { meters: 200, label: '200 m' },
   { meters: 500, label: '500 m' },

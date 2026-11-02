@@ -36,7 +36,7 @@ export function App() {
   const currentMsgIdRef = useRef<string | null>(null);
   // The user's last map click; sent with each question so "here" / "this block" resolve to it.
   const pinnedRef = useRef<{ lat: number; lng: number } | null>(null);
-  // Radius set on the map (default 500 m, remembered in this browser); sent with each question as radius_meters.
+  // Radius set on the map (default 1500 m, remembered in this browser); sent with each question as radius_meters.
   const [radiusMeters, setRadiusMeters] = useState<number>(loadSavedRadius);
   const handleRadiusChange = useCallback((meters: number) => {
     setRadiusMeters(meters);
