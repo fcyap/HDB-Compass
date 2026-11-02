@@ -190,3 +190,78 @@ def test_edge_cases_found_by_category_f(text, kind):
 def test_builder_output_matches_the_committed_file():
     from evaluation import build_category_f
     assert build_category_f.build() == _category_f()
+
+
+# ---------------------------------------------------------------------------
+# sanitizer (Layer 0)
+# ---------------------------------------------------------------------------
+from agents import sanitizer as sz   # noqa: E402
+
+
+@pytest.mark.parametrize("text, kinds, must_not_contain", [
+    ("My NRIC is S1234567D, am I eligible?", ["NRIC"], "S1234567D"),
+    ("fin g1234567x", ["NRIC"], "g1234567x"),
+    ("Call me on 9123 4567", ["PHONE"], "9123"),
+    ("whatsapp +65 8123-4567 please", ["PHONE"], "8123"),
+    ("email me at tan.ah.kow@example.com", ["EMAIL"], "tan.ah"),
+    ("my card is 4539 1488 0343 6467", ["CARD"], "4539"),
+    ("card 4539-1488-0343-6467 expires 12/27", ["CARD"], "6467"),
+    ("my bank account number is 123-45678-9", ["BANK_ACCOUNT"], "45678"),
+    ("pay into account 0123456789 at DBS", ["BANK_ACCOUNT"], "0123456789"),
+    ("OCBC 501-123456-001", ["BANK_ACCOUNT"], "123456"),
+    ("my password is hunter2 and my otp: 123456", ["SECRET"], "hunter2"),
+])
+def test_sanitizer_removes_identifiers(text, kinds, must_not_contain):
+    clean, found = sz.redact(text)
+    assert found == kinds, (text, found)
+    assert must_not_contain not in clean
+    assert sz.has_placeholder(clean)
+
+
+def test_sanitizer_is_idempotent():
+    once, _ = sz.redact("NRIC S1234567D and 9123 4567, card 4539 1488 0343 6467")
+    assert sz.redact(once) == (once, [])
+
+
+@pytest.mark.parametrize("text", [
+    "Find 4-room flats in Bishan under $850,000 with 60 years lease",
+    "Schools near 238801", "Our income is $9,000 a month, $90,000 in CPF OA and $30,000 in cash savings",
+    "price of $1,234,567 for Blk 312 Shunfu Rd", "a 4 room at 250 m from the MRT, 2026-11-02", "$80000000 budget",
+])
+def test_sanitizer_leaves_housing_text_alone(text):
+    assert sz.redact(text) == (text, [])
+
+
+def test_a_comma_or_full_stop_after_a_phone_number_does_not_hide_it():
+    for text in ("my phone is 9123 4567, find a flat", "call 91234567.", "(9123 4567)"):
+        assert sz.redact(text)[1] == ["PHONE"], text
+    assert sz.redact("card 4539 1488 0343 6467, expires 12/27")[1] == ["CARD"]
+
+
+def test_a_long_number_that_is_not_a_card_is_still_redacted_not_kept():
+    assert sz.redact("card number 1234 5678 9012 3456")[1]   # privacy first: part of it still looks like a phone number
+
+
+def test_no_benchmark_question_is_changed():
+    n = 0
+    for f in glob.glob(str(EVAL / "category_[a-e]*.json")):
+        data = json.loads(Path(f).read_text(encoding="utf-8"))
+        for item in data if isinstance(data, list) else data.get("queries", []):
+            if isinstance(item, dict) and "query" in item:
+                assert sz.redact(item["query"])[0] == item["query"], item["query"]
+                n += 1
+    assert n > 50
+
+
+def test_state_never_holds_the_raw_identifier():
+    state = sv.initial_state("My NRIC is S1234567D, am I eligible for the EHG?", "C")
+    assert "S1234567D" not in json.dumps(state, default=str)
+    assert "[NRIC]" in state["messages"][-1]["content"]
+    out = g.input_guardrail_node(state)   # the app path: only the placeholder reaches the guardrail
+    assert out["errors"] == ["input_guardrail: pii"]
+
+
+def test_a_remembered_session_stays_clean():
+    first = sv.initial_state("My phone is 9123 4567, find a 4-room in Bishan", "C")
+    second = sv.initial_state("under 800k", "C", previous=first)
+    assert "9123" not in json.dumps(second, default=str)

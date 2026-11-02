@@ -37,7 +37,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from agents.llm import active_profile, get_llm, load_config
 from agents import addons
-from agents import scope
+from agents import sanitizer, scope
 from agents import research_intents as ri
 from agents.schemas import (
     TOOL_OWNER,
@@ -4167,6 +4167,7 @@ def initial_state(query: str, variant: str, map_state: Optional[Dict[str, Any]] 
     open follow-up question carry forward, so a reply such as "we have $25,000 in cash" completes the earlier request.
     fast_path=True (the app) answers fully recognised self-contained questions without model calls; experiments leave
     it off so every variant is measured on its model's own choices."""
+    query = sanitizer.redact(query)[0]   # every entry point (app, evaluation, command line) builds its state here
     history = list((previous or {}).get("messages") or [])
     # a reply to a menu (or to the question one of its options asked) is completed by code: an option's own follow-up
     # question is answered at once, and a bare launch name becomes the full question about it (agents/scope.py)

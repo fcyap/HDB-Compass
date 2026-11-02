@@ -14,7 +14,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from agents import scope
+from agents import sanitizer, scope
 from agents.schemas import AuditorVerdict
 
 
@@ -36,8 +36,6 @@ _SQL = re.compile(
     r"|\bunion\s+(?:all\s+)?select\b|\bselect\b[^.?!]{0,60}\bfrom\b[^.?!]{0,40}\b(?:transactions?|resale|duckdb|information_schema)\b"
     r"|;\s*--|'\s*or\s+'?1'?\s*=\s*'?1|\bor\s+1\s*=\s*1\b|\bxp_cmdshell\b|\battach\s+database\b|\bcopy\s+\w+\s+to\b",
     re.I)
-_NRIC = re.compile(r"\b[STFGM]\d{7}[A-Z]\b", re.I)
-_PHONE = re.compile(r"(?<![\d$,.])(?:\+?65[\s-]?)?[689]\d{3}[\s-]?\d{4}(?![\d,])")
 _SPECULATIVE = re.compile(
     r"\bguarantee[sd]?\b[^.?!]{0,60}\b(?:profit|gains?|returns?|appreciat\w*|money|make|earn)\b"
     r"|\b(?:profit|gains?|returns?|appreciat\w*)\b[^.?!]{0,40}\bguarantee[sd]?\b"
@@ -55,9 +53,10 @@ _OFF_TASK = re.compile(
 
 SQL_REPLY = ("I can't run database commands or change how I work. I only read published HDB resale data through fixed, "
              "read-only queries. Ask me about HDB housing, for example 'median 4-room price in Tampines'.")
-PII_REPLY = ("Your message contains what looks like an NRIC/FIN or phone number. For your privacy I have not processed it, "
-             "and you never need to share one: grant and loan estimates only need your income, citizenship status and "
-             "household details. Please resend your question without it.")
+PII_REPLY = ("Your message contained a personal or financial identifier (an NRIC/FIN, phone number, email, card or bank "
+             "account number). It was removed before I read it, and I have not processed the message. You never need to "
+             "share one: grant and loan estimates only need your income, citizenship status and household details. "
+             "Please resend your question without it.")
 SPECULATIVE_REPLY = ("I can't promise or predict profit on any flat or BTO launch; resale prices depend on location, lease "
                      "and market conditions, and past prices don't guarantee future ones. What I can show is how prices "
                      "have moved: for example 'How have 4-room prices in Tampines changed over the last 5 years?'. "
@@ -78,7 +77,7 @@ def classify_input(text: str, mid_conversation: bool = False) -> Tuple[str, Opti
         return "sql_injection", SQL_REPLY
     if scope.classify(t, mid_conversation) == scope.INJECTION:
         return "prompt_injection", scope.REPLIES[scope.INJECTION]
-    if _NRIC.search(t) or _PHONE.search(t):
+    if sanitizer.redact(t)[1] or sanitizer.has_placeholder(t):   # raw (evaluation) or already redacted (the app)
         return "pii", PII_REPLY
     if _OFF_TASK.search(t):   # a coding or writing job that happens to mention property
         return scope.OFF_TOPIC, scope.REPLIES[scope.OFF_TOPIC]

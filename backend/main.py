@@ -86,6 +86,7 @@ from mcp_server.spatial_onemap_tools import (
 from agents.spatial_agent import geo_agent, GeoAgentState
 from agents.arch_3_specialist_5agent import graph as specialist_5agent_graph, sv
 from agents.llm import model_status
+from agents.sanitizer import redact as sanitize_text
 from agents.tracing import configure_tracing, run_config
 
 app = FastAPI(
@@ -380,7 +381,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 previous = None
                 remember(session_id, None)
                 continue
-            query_text = message.get("query", "").strip()
+            # Identifiers (NRIC, phone, card, bank account...) are removed here, before the graph, the remembered session,
+            # the chat log or a trace can see them (agents/sanitizer.py)
+            query_text, _redacted = sanitize_text(message.get("query", "").strip())
             pinned_lat = message.get("lat")
             pinned_lng = message.get("lng")
             radius = float(message.get("radius_meters", 500.0))
