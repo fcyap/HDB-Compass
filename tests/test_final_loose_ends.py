@@ -213,3 +213,49 @@ def test_a_town_outside_the_named_region_is_still_dropped():
 def test_without_a_region_invented_towns_are_still_dropped():
     c, _ = _model_reading("4-room near Tampines East MRT under 600k", towns=["TAMPINES", "BEDOK"])
     assert c["towns"] == ["TAMPINES"]
+
+
+# --- 7. Category A and C fixes after Experiment 1 (2 Nov) -------------------------------------------------------------
+def test_a_quarter_is_not_the_year_group():
+    year = [M._label_patterns("2026")]
+    assert M._label_spans(M._clean_line("**Resale market, 2026Q3 (latest complete quarter):**"), year) == []
+    assert M._label_spans("In 2026 the median was $630,000", year)
+
+
+def test_the_extra_market_summary_no_longer_fails_a_right_yearly_table():
+    item = next(q for q in __import__("json").load(open(ROOT / "evaluation" / "category_a_queries.json")) if q["id"] == "A3-03")
+    rows = "\n".join(f"| {g['label']} | {g['count']:,} | ${g['median_price']:,.0f} |" for g in item["ground_truth_facts"]["groups"])
+    draft = ("| Year | Sales | Median price |\n|---|---|---|\n" + rows +
+             "\n\n**Resale market, 2026Q3 (latest complete quarter):**\n- All Towns 3 ROOM: median $435,000 ($6,265/sqm, 1579 sales)")
+    assert M.statistics_scores(item, {"draft_response": draft})["success"]
+
+
+def test_a_grouped_statistics_question_keeps_no_distance_limit():
+    q = "Resale prices within 300m of an MRT"
+    c, errors = _model_reading(q, amenity_radii_meters={"mrt": 300})
+    assert c["wants_group_stats"] and "mrt" not in (c.get("amenity_radii_meters") or {})
+    assert [e for e in errors if "grouped statistics question" in e]
+
+
+def test_the_statistics_call_is_grouped_at_the_users_distance():
+    c = sv.rule_based_extract("Resale prices within 300m of an MRT").model_dump()
+    errors = []
+    args = sv.statistics_args({"group_by": ["distance_band"], "near": "mrt", "max_distance_m": 300, "bands": [200, 500, 1000]},
+                              c, errors, "market_sql")
+    assert args["bands"] == [300] and "max_distance_m" not in args and errors
+    same = {"group_by": ["distance_band"], "near": "mrt", "bands": [300]}
+    assert sv.statistics_args(dict(same), c, [], "market_sql") == same
+
+
+def test_the_policy_facts_show_four_passages():
+    assert sv.POLICY_PASSAGES_SHOWN == 4
+
+
+def test_partial_credit_table_lists_each_variant():
+    sys.path.insert(0, str(ROOT / "evaluation"))
+    import analyze_category_e as AN
+    rows = [{"variant": v, "status": "ok", "sub_use_case": "E1", "scores": {"ground_truth": {
+        "blocks_exact": v == "C", "block_precision": p, "block_recall": p, "grants_correct": True,
+        "max_price_correct": v != "A", "success": v == "C"}}} for v, p in (("A", 0.2), ("C", 1.0))]
+    table = AN.partial_credit_table(rows)
+    assert "| A | 1 | 0.20 | 0.20 | 1/1 | 1/1 | 0/1 |" in table and "| C | 1 | 1.00 | 1.00 |" in table

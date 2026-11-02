@@ -1944,6 +1944,14 @@ def _verify_extraction(c: Dict[str, Any], query: str, errors: List[str], from_mo
         c["towns"] = kept
         if invented:
             errors.append(f"extract_constraints: towns not named in the message were dropped: {invented}")
+    if from_model and c.get("wants_group_stats") and c.get("amenity_radii_meters"):
+        # "Resale prices within 300m of an MRT" groups sales by distance; it is not a block search. Code's own reading
+        # leaves these distances out for a grouped question (research_intents.extract_research_fields), so the model's
+        # reading does too: on 2 Nov it kept MRT 300 m and C listed 2,657 blocks above the statistics (A1-04).
+        grouped = {k: v for k, v in c["amenity_radii_meters"].items() if k in ("mrt", "hawker", "supermarket", "school")}
+        if grouped:
+            c["amenity_radii_meters"] = {k: v for k, v in c["amenity_radii_meters"].items() if k not in grouped}
+            errors.append(f"extract_constraints: distances of a grouped statistics question are its groups, not limits: {sorted(grouped)}")
     if from_model and c.get("amenity_radii_meters"):
         # "within 1km of Meridian Primary School" is one limit: a model that also sets MRT, hawker, supermarket, bus
         # stop and park limits of 1,000 m cuts blocks the user never asked to cut. A limit is kept only for an amenity
@@ -2234,6 +2242,19 @@ def _scheme_to_pair(scheme: Optional[str]) -> Tuple[str, bool]:
     return pair, "SECOND" not in s
 
 
+def statistics_args(args: Dict[str, Any], c: Dict[str, Any], errors: List[str], label: str) -> Dict[str, Any]:
+    """'Resale prices within 300m of an MRT' compares sales within 300 m with the rest: one band at the distance the
+    user named, the bands code's own plan passes. A model that grouped by its default bands (0-200, 200-500, ...) and
+    capped the distance answered a different question (A1-04, 2 Nov), so code puts the user's distance back."""
+    d = c.get("stats_distance_m")
+    if not (d and "distance_band" in (args.get("group_by") or []) and not c.get("stats_bands")):
+        return args
+    if list(args.get("bands") or []) == [d] and not args.get("max_distance_m"):
+        return args
+    errors.append(f"{label}: statistics grouped at the {d} m the user named, not the model's bands")
+    return {**{k: v for k, v in args.items() if k != "max_distance_m"}, "bands": [d]}
+
+
 NO_PRICE_LIMIT = 5_000_000   # a block search with no stated budget: above every resale price on record
 
 
@@ -2412,6 +2433,8 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
                             if given:
                                 errors.append(f"{label}: commute blocks that no filter kept were replaced by the filtered blocks")
                             args = {**args, "candidate_blocks": kept}
+                    if name == "query_resale_statistics":
+                        args = statistics_args(args, c, errors, label)
                     if name == "query_resale_blocks_by_criteria":
                         # "4 room" in Tampines states no budget or lease: the model passed null for both and the tool
                         # refused the call; no stated limit is the same no-limit code's own plan uses
@@ -2845,7 +2868,8 @@ def plain_relaxation(constraint: str, original: Any, relaxed: Any) -> Tuple[str,
 # as its section title, the few lines that best answer the question, and the source link. Every line shown is a line
 # of the passage with its list marker and bold marks removed; a table row reads "A: B" (with the passage's own column
 # names) and a line under a bare lead-in carries that lead-in. Nothing else is added and nothing is reworded.
-POLICY_PASSAGES_SHOWN = 3
+POLICY_PASSAGES_SHOWN = 4  # of the search's 5: with 3, the passage that answered was often the 4th (Experiment 1,
+                           # 2 Nov: C1-02, C2-01); A and B's models read all 5, so C's facts should not show far fewer
 POLICY_LINES_SHOWN = 4      # at most; at least 2 when the passage has them
 POLICY_LINE_CHARS = 240     # a longer line keeps its whole sentences that fit; a sentence is never cut…
 POLICY_LINE_MAX = 400       # …unless it alone is longer than this (no real passage line is)

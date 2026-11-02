@@ -523,8 +523,8 @@ def _label_patterns(label: str) -> tuple:
         pats.append(r"(?<![\d.])" + m.group(1) + r"\s*\+")
         pats.append(r"(?:\bover|\babove|\bmore than|\bat least|≥|>=)\s*" + m.group(1) + _YEARS_UNIT)
         pats.append(r"(?<![\d.])" + m.group(1) + _YEARS_UNIT + r"\s*(?:and (?:above|over|more|longer)|or (?:more|longer)|plus)\b")
-    if _re.fullmatch(r"(?:19|20)\d\d", lab):              # a year (never "2021-10", a month)
-        pats = [r"(?<![\w$,./-])" + lab + r"(?![\d]|-\d|/\d)"]
+    if _re.fullmatch(r"(?:19|20)\d\d", lab):              # a year (never "2021-10", a month, or "2026Q3", a quarter)
+        pats = [r"(?<![\w$,./-])" + lab + r"(?![\d]|-\d|/\d|\s*Q[1-4]\b|\s*H[12]\b)"]
     m = _re.fullmatch(r"(\d) ROOM", lab, _re.I)
     if m:                                                   # flat types "4 ROOM" ("4-room"), "EXECUTIVE"
         pats.append(r"(?<![\d.])" + m.group(1) + r"\s*-?\s*room\b")
