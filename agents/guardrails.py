@@ -44,7 +44,13 @@ _SPECULATIVE = re.compile(
     r"|\b(?:sure|risk[- ]?free|can'?t lose|no risk|certain|definite)\b[^.?!]{0,40}\b(?:profit|gains?|money|returns?|win|investment)\b"
     r"|\bwhich\b[^.?!]{0,60}\b(?:will|going to|gonna)\b[^.?!]{0,40}\b(?:make|earn|profit|appreciate|double)\b"
     r"|\b(?:make|earn)\b[^.?!]{0,20}\$?\s?\d[\d,.]*\s?(?:k|m|million|thousand)?\b[^.?!]{0,30}\b(?:profit|gain)\b"
-    r"|\bbest\b[^.?!]{0,30}\b(?:investment|flip)\b|\bquick (?:flip|profit)\b",
+    r"|\bbest\b[^.?!]{0,30}\b(?:investment|flip)\b|\bquick (?:flip|profit)\b"
+    r"|\b(?:profit|gains?|returns?)\b[^.?!]{0,25}\b(?:i|we)\s+(?:will|would|can|could|'ll)\s+(?:make|earn|get|gain)\b"
+    r"|\bhow much (?:profit|money)\b[^.?!]{0,30}\b(?:will|would|can)\b[^.?!]{0,15}\b(?:make|earn|gain)\b",
+    re.I)
+_OFF_TASK = re.compile(
+    r"\b(?:write|create|generate|build|code|debug|fix)\b[^.?!]{0,30}\b(?:python|javascript|java|sql|html|css|script|program|code|"
+    r"function|bot|scraper|essay|poem|story|email|cover letter)\b|\bscrape\w*\b[^.?!]{0,30}\b(?:web|website|listings?|sites?)\b",
     re.I)
 
 SQL_REPLY = ("I can't run database commands or change how I work. I only read published HDB resale data through fixed, "
@@ -74,6 +80,10 @@ def classify_input(text: str, mid_conversation: bool = False) -> Tuple[str, Opti
         return "prompt_injection", scope.REPLIES[scope.INJECTION]
     if _NRIC.search(t) or _PHONE.search(t):
         return "pii", PII_REPLY
+    if _OFF_TASK.search(t):   # a coding or writing job that happens to mention property
+        return scope.OFF_TOPIC, scope.REPLIES[scope.OFF_TOPIC]
+    if scope.classify(t, mid_conversation) == scope.PRIVATE:   # before the speculative check: "best condo for investment"
+        return scope.PRIVATE, scope.REPLIES[scope.PRIVATE]
     if _SPECULATIVE.search(t):
         return "speculative_advice", SPECULATIVE_REPLY
     kind = scope.classify(t, mid_conversation)

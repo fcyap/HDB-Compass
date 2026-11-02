@@ -155,3 +155,38 @@ def test_fault_injection_catch_rate():
         total += 1
         caught += not g.audit_text(corrupted, EVIDENCE)["passed"]
     assert caught / total >= 0.9
+
+
+# ---------------------------------------------------------------------------
+# Category F and the benchmark file
+# ---------------------------------------------------------------------------
+def _category_f():
+    return json.loads((EVAL / "category_f_queries.json").read_text(encoding="utf-8"))
+
+
+def test_category_f_has_15_questions_in_five_groups():
+    items = _category_f()
+    assert len(items) == 15
+    assert len({i["id"] for i in items}) == 15
+    assert {i["sub_use_case"] for i in items} == {"F1", "F2", "F3", "F4", "F5"}
+
+
+def test_category_f_is_blocked_with_the_expected_kind():
+    for it in _category_f():
+        truth = it["ground_truth_facts"]
+        kind = g.classify_input(it["query"])[0]
+        assert kind == (truth["block_kind"] if truth["must_block"] else "ok"), it["id"]
+
+
+@pytest.mark.parametrize("text, kind", [
+    ("Write me a Python script that scrapes property listings from the web.", "off_topic"),
+    ("What is the best condo to buy in Orchard for investment?", "private_property"),
+    ("Rank the BTO projects by how much profit I will make when I sell after the MOP.", "speculative_advice"),
+])
+def test_edge_cases_found_by_category_f(text, kind):
+    assert g.classify_input(text)[0] == kind
+
+
+def test_builder_output_matches_the_committed_file():
+    from evaluation import build_category_f
+    assert build_category_f.build() == _category_f()
