@@ -149,6 +149,29 @@ def ground_truth_table(rows: List[Dict[str, Any]]) -> str:
     return "\n".join(out) if len(out) > 2 else "_No ground truth in these questions._"
 
 
+def partial_credit_table(rows: List[Dict[str, Any]]) -> str:
+    """How close each variant came on the block questions, beside the all-or-nothing count: share of listed blocks that
+    are true (precision), share of true blocks listed (recall), and each E1 figure on its own."""
+    out = ["| Variant | Questions | Block precision (mean) | Block recall (mean) | Some true block found | "
+           "E1 grant right | E1 max price right | E2 unlocking change named |", "|---|---|---|---|---|---|---|---|"]
+    for v in sorted({r["variant"] for r in rows}):
+        gts = [(r, r["scores"].get("ground_truth")) for r in rows if r["variant"] == v and r.get("status") == "ok"]
+        gts = [(r, g) for r, g in gts if g and "blocks_exact" in g]
+        if not gts:
+            continue
+        with_true = [g for r, g in gts if g.get("block_recall") is not None and r.get("sub_use_case") != "E2"]
+        def frac(key, sub):
+            pool = [g for r, g in gts if r.get("sub_use_case", "").startswith(sub) and key in g]
+            return f"{sum(1 for g in pool if g[key])}/{len(pool)}" if pool else "–"
+        out.append("| " + " | ".join([
+            v, str(len(gts)),
+            f(mean(g["block_precision"] for g in with_true)), f(mean(g["block_recall"] for g in with_true)),
+            f"{sum(1 for g in with_true if (g.get('block_recall') or 0) > 0)}/{len(with_true)}",
+            frac("grants_correct", "E1"), frac("max_price_correct", "E1"), frac("best_change_mentioned", "E2"),
+        ]) + " |")
+    return "\n".join(out) if len(out) > 2 else ""
+
+
 def category_table(rows: List[Dict[str, Any]]) -> str:
     """The headline numbers per benchmark category, so a file with both E and C rows is not read as one pool."""
     out = ["| Category | Variant | Runs | Task success (Wilson 95% CI) | Tool F1 | Param EM | Routing exact |",
@@ -451,7 +474,10 @@ def main() -> None:
         md += ["The per-variant table above pools the categories; the questions differ in kind, so compare variants "
                "within a category.", ""]
     if "E" in cats:
+        partial = partial_credit_table(rows)
         md += ["## Category E checked against the ground truth", "", ground_truth_table(rows), "",
+               *(["Partial credit (how close each variant came; the table above counts only fully right answers):", "",
+                  partial, ""] if partial else []),
                "Fully right: E1 names exactly the true blocks and the calculators' grant total and maximum price (within "
                "$1), or, where a fact was left out, asks for it without inventing a budget; E2 presents no match and names "
                "the number of the single change that unlocks blocks. Follow-up: after the user supplies the missing fact, "

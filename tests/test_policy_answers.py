@@ -51,7 +51,7 @@ def test_real_passages_read_as_a_clean_section(qid):
     lines = sv.policy_fact_lines(passages, QUERIES[qid])
     source = "\n".join(p["text"] for p in passages)
     titles = [i for i, line in enumerate(lines) if line.startswith("- **")]
-    assert 1 <= len(titles) <= 3
+    assert 1 <= len(titles) <= sv.POLICY_PASSAGES_SHOWN
     for i, line in enumerate(lines):
         body = line.lstrip(" -")
         assert not body.startswith(("[", "#", "|", "---", "$$")) and "|" not in body and ":---" not in body, line
@@ -81,11 +81,12 @@ def test_header_only_chunks_are_skipped_and_a_section_is_shown_once():
     assert sv.policy_fact_lines([header_only]) == ["- The policy search found no passage that answers this. Please check with HDB."]
 
 
-def test_at_most_three_sections_are_shown():
+def test_at_most_four_sections_are_shown():
     titles = ["4.1 Subsidy Recovery (Clawback) Rate", "4.2 10-Year Minimum Occupation Period (MOP)",
-              "4.3 Lifelong Whole-Flat Rental Prohibition", "5.1 Baseline Parameters"]
+              "4.3 Lifelong Whole-Flat Rental Prohibition", "5.1 Baseline Parameters", "5.3 PHG Grant Quantum Table"]
     shown = sv.shown_policy_passages([chunk(t) for t in titles], "Plus flat rules")
-    assert len(shown) == 3 and shown[-1]["title"] == "Lifelong Whole-Flat Rental Prohibition"
+    assert sv.POLICY_PASSAGES_SHOWN == 4
+    assert len(shown) == 4 and shown[-1]["title"] == "Baseline Parameters"
 
 
 def test_table_rows_read_as_text_and_separators_are_dropped():
