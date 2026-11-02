@@ -261,3 +261,24 @@ def test_partial_credit_table_lists_each_variant():
         "max_price_correct": v != "A", "success": v == "C"}}} for v, p in (("A", 0.2), ("C", 1.0))]
     table = AN.partial_credit_table(rows)
     assert "| A | 1 | 0.20 | 0.20 | 1/1 | 1/1 | 0/1 |" in table and "| C | 1 | 1.00 | 1.00 |" in table
+
+
+def test_a_sentence_the_model_wrote_twice_is_kept_once():
+    from tests.test_code_opening import state_for
+    s = state_for("E2-01")
+    facts = sv.template_response(s)
+    line = "Relaxing the budget unlocks the most blocks; each option is below."
+    kept, dropped = sv.check_model_opening(f"{line} {line}", s, facts)
+    assert kept.count(line) <= 1
+
+
+def test_a_model_sentence_repeating_part_of_codes_answer_is_shown_once():
+    from tests.test_code_opening import Writer, state_for
+    from unittest.mock import patch as _patch
+    s = state_for("E2-05")
+    facts = sv.template_response(s)
+    answer = sv.code_opening(s, facts)[0]
+    second = sv._split_opening(answer)[-1]
+    with _patch.object(sv, "get_llm", return_value=Writer(second)):
+        out = sv.synthesize_node({**s, "draft_response": ""})
+    assert out["draft_response"].split(facts)[0].count(second) == 1

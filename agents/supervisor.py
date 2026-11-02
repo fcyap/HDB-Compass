@@ -4078,7 +4078,8 @@ def check_model_opening(text: str, state: HDBCompassState, facts: str,
     nothing_found = (facts or "").strip() == NO_DATA
     for sentence in _split_opening(text):
         reason = ""
-        if nothing_found or _plain(sentence) in fact_lines:
+        # a sentence the model wrote twice is shown once ("Relaxing the budget unlocks the most blocks; ..." twice)
+        if nothing_found or _plain(sentence) in fact_lines or _plain(sentence) in {_plain(k) for k in kept}:
             # the facts already say it ("I could not find data for that request."), and with nothing found the model
             # has no evidence to add anything from: the line would show twice, or reworded ("I couldn't find any data")
             reason = "restated"
@@ -4322,7 +4323,8 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
                     # code's answer, then code's trade-off unless the model made a (checked) comparison of its own,
                     # then the model's sentences (deduplicating any sentence that repeats code's answer)
                     compares = any(_COMPARISON.search(k) for k in kept)
-                    answer_plains = {_plain(a) for a in answer}
+                    # sentence by sentence: one item of code's answer can hold two ("No block meets ... Relaxing ...")
+                    answer_plains = {_plain(sentence) for a in answer for sentence in _split_opening(a)}
                     unique_kept = [k for k in kept if _plain(k) not in answer_plains]
                     opening = " ".join(answer + ([trade] if trade and not compares else []) + unique_kept)
                 else:
