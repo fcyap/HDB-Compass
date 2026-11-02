@@ -182,6 +182,13 @@ trace then says "Not installed yet (pass-through)". Check the wiring with
 Tests can inject either node without the module: `sv.set_hooks(input_guardrail=..., auditor=...)`.
 Both nodes run in **Variant C and the app only**; Variants A and B have neither (by design).
 
+**Layer 0, before the graph (`agents/sanitizer.py`).** `redact(text)` replaces NRIC/FIN, phone numbers, emails, card
+numbers (Luhn-checked), bank account numbers and "password is ..." values with `[NRIC]`, `[PHONE]`, `[CARD]`,
+`[BANK_ACCOUNT]`, `[EMAIL]`, `[SECRET]`. It runs in the WebSocket handler (`backend/main.py`, on `query_text`) and in
+`supervisor.initial_state`, so the graph, the model, the remembered session, the chat log and traces only ever see the
+placeholder, and `messages` needs no new state key. The input guardrail refuses a message that carries a placeholder
+(`input_guardrail: pii`). Postal codes and money are untouched. Names and street addresses are not detected.
+
 **`input_guardrail_node(state) -> dict`** runs first, before constraint extraction.
 - Read the user's new message with `sv.last_user_query(state)`. `state["messages"]` is a list
   of `{"role", "content"}` dicts and also holds the earlier turns of the same conversation.

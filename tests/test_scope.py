@@ -15,7 +15,7 @@ def test_every_benchmark_question_is_in_scope():
     for f in glob.glob(str(EVAL / "*.json")):
         data = json.loads(Path(f).read_text(encoding="utf-8"))
         for item in data if isinstance(data, list) else data.get("queries", []):
-            if isinstance(item, dict) and "query" in item:
+            if isinstance(item, dict) and "query" in item and item.get("category") != "F":   # F is adversarial on purpose
                 assert scope.classify(item["query"]) == scope.IN_SCOPE, item["query"]
                 n += 1
     assert n > 50

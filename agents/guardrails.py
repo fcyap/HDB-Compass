@@ -14,7 +14,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from agents import scope
+from agents import sanitizer, scope
 from agents.schemas import AuditorVerdict
 
 
@@ -36,22 +36,37 @@ _SQL = re.compile(
     r"|\bunion\s+(?:all\s+)?select\b|\bselect\b[^.?!]{0,60}\bfrom\b[^.?!]{0,40}\b(?:transactions?|resale|duckdb|information_schema)\b"
     r"|;\s*--|'\s*or\s+'?1'?\s*=\s*'?1|\bor\s+1\s*=\s*1\b|\bxp_cmdshell\b|\battach\s+database\b|\bcopy\s+\w+\s+to\b",
     re.I)
-_NRIC = re.compile(r"\b[STFGM]\d{7}[A-Z]\b", re.I)
-_PHONE = re.compile(r"(?<![\d$,.])(?:\+?65[\s-]?)?[689]\d{3}[\s-]?\d{4}(?![\d,])")
 _SPECULATIVE = re.compile(
     r"\bguarantee[sd]?\b[^.?!]{0,60}\b(?:profit|gains?|returns?|appreciat\w*|money|make|earn)\b"
     r"|\b(?:profit|gains?|returns?|appreciat\w*)\b[^.?!]{0,40}\bguarantee[sd]?\b"
     r"|\b(?:sure|risk[- ]?free|can'?t lose|no risk|certain|definite)\b[^.?!]{0,40}\b(?:profit|gains?|money|returns?|win|investment)\b"
     r"|\bwhich\b[^.?!]{0,60}\b(?:will|going to|gonna)\b[^.?!]{0,40}\b(?:make|earn|profit|appreciate|double)\b"
     r"|\b(?:make|earn)\b[^.?!]{0,20}\$?\s?\d[\d,.]*\s?(?:k|m|million|thousand)?\b[^.?!]{0,30}\b(?:profit|gain)\b"
-    r"|\bbest\b[^.?!]{0,30}\b(?:investment|flip)\b|\bquick (?:flip|profit)\b",
+    r"|\bbest\b[^.?!]{0,30}\b(?:investment|flip)\b|\bquick (?:flip|profit)\b"
+    r"|\b(?:profit|gains?|returns?)\b[^.?!]{0,25}\b(?:i|we)\s+(?:will|would|can|could|'ll)\s+(?:make|earn|get|gain)\b"
+    r"|\bhow much (?:profit|money)\b[^.?!]{0,30}\b(?:will|would|can)\b[^.?!]{0,15}\b(?:make|earn|gain)\b",
+    re.I)
+_OFF_TASK = re.compile(
+    r"\b(?:write|create|generate|build|code|debug|fix)\b[^.?!]{0,30}\b(?:python|javascript|java|sql|html|css|script|program|code|"
+    r"function|bot|scraper|essay|poem|story|email|cover letter)\b|\bscrape\w*\b[^.?!]{0,30}\b(?:web|website|listings?|sites?)\b",
     re.I)
 
-SQL_REPLY = ("I can't run database commands or change how I work. I only read published HDB resale data through fixed, "
-             "read-only queries. Ask me about HDB housing, for example 'median 4-room price in Tampines'.")
-PII_REPLY = ("Your message contains what looks like an NRIC/FIN or phone number. For your privacy I have not processed it, "
-             "and you never need to share one: grant and loan estimates only need your income, citizenship status and "
-             "household details. Please resend your question without it.")
+SQL_REPLY = ("I can't act on that request. I can only help with questions about HDB housing, and I can't change my "
+             "instructions or access the database directly. For example, you could ask: "
+             "\"What is the median 4-room price in Tampines?\"")
+_PII_NAMES = {"NRIC": "NRIC/FIN number", "PHONE": "phone number", "CARD": "card number",
+              "BANK_ACCOUNT": "bank account number", "EMAIL": "email address", "SECRET": "password or PIN"}
+
+
+def pii_reply(kinds: List[str]) -> str:
+    """The refusal for a message that carried identifiers; it names each kind found, e.g. "a bank account number"."""
+    names = [_PII_NAMES[k] for k in kinds if k in _PII_NAMES] or ["personal identifier"]
+    found = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    return (f"For your security, I've removed the {found} from your message and have not processed it. Please don't "
+            "share personal or financial identifiers such as NRIC/FIN, phone, card or account numbers. I don't need them. "
+            "To estimate your grants, just tell me your household income, citizenship status and ages.")
+
+
 SPECULATIVE_REPLY = ("I can't promise or predict profit on any flat or BTO launch; resale prices depend on location, lease "
                      "and market conditions, and past prices don't guarantee future ones. What I can show is how prices "
                      "have moved: for example 'How have 4-room prices in Tampines changed over the last 5 years?'. "
@@ -72,8 +87,13 @@ def classify_input(text: str, mid_conversation: bool = False) -> Tuple[str, Opti
         return "sql_injection", SQL_REPLY
     if scope.classify(t, mid_conversation) == scope.INJECTION:
         return "prompt_injection", scope.REPLIES[scope.INJECTION]
-    if _NRIC.search(t) or _PHONE.search(t):
-        return "pii", PII_REPLY
+    kinds = sanitizer.redact(t)[1] + [k for k, ph in sanitizer.PLACEHOLDERS.items() if ph in t]   # raw (evaluation) or redacted (the app)
+    if kinds:
+        return "pii", pii_reply(list(dict.fromkeys(kinds)))
+    if _OFF_TASK.search(t):   # a coding or writing job that happens to mention property
+        return scope.OFF_TOPIC, scope.REPLIES[scope.OFF_TOPIC]
+    if scope.classify(t, mid_conversation) == scope.PRIVATE:   # before the speculative check: "best condo for investment"
+        return scope.PRIVATE, scope.REPLIES[scope.PRIVATE]
     if _SPECULATIVE.search(t):
         return "speculative_advice", SPECULATIVE_REPLY
     kind = scope.classify(t, mid_conversation)
