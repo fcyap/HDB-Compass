@@ -269,6 +269,14 @@ filling `market_summary` / `financial_summary` / `policy_notes` from the
 sub-agent slots. Member 2's `geo_agent` becomes the spatial sub-agent inside it
 (adapter already in `agents/arch_3_specialist_5agent.py`). No frontend change needed.
 
+**Output layer (Member 5, `backend/output_schema.py`).** Every message above leaves through `send_clean`, which validates its shape
+(`STEP_UPDATE`, `ERROR`, `MODEL_STATUS`: a field of the wrong type is dropped and logged, unknown fields pass unchanged), cleans the text
+people read (`summary`, `market_summary`, `financial_summary`, `policy_notes`, `logs[].step/message`, `clarification.question` and its
+chips, a status `message`) of identifiers (agents/sanitizer.py) and of script, style and iframe blocks and `javascript:` links, and never
+sends an exception as text: `ERROR.error` is one of three plain sentences from `safe_error_message`, and the real error stays in the
+server log. Map and card payloads are not touched. New fields need no change here; a new message `type` passes through unchecked until a
+model for it is added to `MODELS`.
+
 ## 5. LLM
 
 Everyone calls `agents.llm.get_llm()`. Never instantiate a chat model directly.
