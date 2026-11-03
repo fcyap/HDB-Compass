@@ -87,6 +87,7 @@ from agents.spatial_agent import geo_agent, GeoAgentState
 from agents.arch_3_specialist_5agent import graph as specialist_5agent_graph, sv
 from agents.llm import model_status
 from agents.sanitizer import redact as sanitize_text
+from backend.output_schema import safe_error_message, send_clean
 from agents.tracing import configure_tracing, run_config
 
 app = FastAPI(
@@ -401,7 +402,7 @@ async def websocket_endpoint(websocket: WebSocket):
             if not query_text and pinned_lat is None:
                 continue
 
-            await websocket.send_json({"type": "AGENT_STARTED"})
+            await send_clean(websocket, {"type": "AGENT_STARTED"})
 
             try:
                 # -------------------------------------------------------------
@@ -409,9 +410,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 # -------------------------------------------------------------
                 if query_text:
                     model_info = await asyncio.to_thread(model_status)
-                    await websocket.send_json({"type": "MODEL_STATUS", **model_info})
+                    await send_clean(websocket, {"type": "MODEL_STATUS", **model_info})
                     if model_info["status"] == "error":
-                        await websocket.send_json({"type": "ERROR", "error": model_info["message"]})
+                        await send_clean(websocket, {"type": "ERROR", "error": model_info["message"]})
                         continue
                     map_state = {}
                     if pinned_lat is not None and pinned_lng is not None:
@@ -459,7 +460,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 any(marker in str(error) for marker in ("LLM", "rule-based fallback used", "deterministic plan used"))
                                 for error in node_errors
                             ):
-                                await websocket.send_json({
+                                await send_clean(websocket, {
                                     "type": "MODEL_STATUS", **model_info,
                                     "status": "fallback",
                                     "message": "A model step failed or produced no valid tool call; rule-based processing was used for part of this answer.",
@@ -577,7 +578,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                     current_summary = msgs[-1].get("content", current_summary)
                                 step_desc = "Multi-agent decision support results finalized."
 
-                            await websocket.send_json({
+                            await send_clean(websocket, {
                                 "type": "STEP_UPDATE",
                                 "node": node_name,
                                 "geojson_buffer": current_buffer,
@@ -627,7 +628,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             if lat is not None and lng is not None:
                                 viewport = {"lat": float(lat), "lng": float(lng), "zoom": 14.5}
 
-                            await websocket.send_json({
+                            await send_clean(websocket, {
                                 "type": "STEP_UPDATE",
                                 "node": node_name,
                                 "geojson_buffer": node_output.get("geojson_buffer"),
@@ -640,13 +641,13 @@ async def websocket_endpoint(websocket: WebSocket):
                             })
                             await asyncio.sleep(0.05)
 
-                await websocket.send_json({"type": "AGENT_FINISHED"})
+                await send_clean(websocket, {"type": "AGENT_FINISHED"})
 
             except Exception as e:
                 print(f"[WebSocket] Execution error: {e}")
-                await websocket.send_json({
+                await send_clean(websocket, {
                     "type": "ERROR",
-                    "error": str(e)
+                    "error": safe_error_message(e)   # the real error stays in the server log above
                 })
 
     except WebSocketDisconnect:
