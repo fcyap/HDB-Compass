@@ -320,3 +320,39 @@ def test_a_state_without_model_opening_still_audits_the_whole_draft(monkeypatch)
     monkeypatch.setenv("LLM_PROFILE", "none")
     v = g.runtime_auditor_node(_state("x", variant="B", draft_response="Blk 312 is 150m away.", **_EVID))["auditor_verdict"]
     assert v["passed"] is False
+
+
+# ---------------------------------------------------------------------------
+# weaknesses found by evaluation/auditor_fault_injection.py
+# ---------------------------------------------------------------------------
+_EV2 = json.dumps({"candidate_blocks_intersection": [{"block": "336", "street": "CLEMENTI AVE 4", "median_price": 748000.0,
+                                                       "nearest_mrt_m": 420.0, "median_remaining_lease_years": 72.58}],
+                   "financial_breakdown": {"years": 9, "count": 58, "postal": "238999"}})
+
+
+def test_an_invented_block_number_is_not_hidden_inside_a_larger_number():
+    assert g.audit_text("Blk 999 is nearby.", _EV2)["passed"] is False     # 999 only occurs inside postal 238999
+    assert g.audit_text("Blk 58 is nearby.", _EV2)["passed"] is True       # 58 is a whole token (the count)
+    assert g.audit_text("Blk 336 is nearby.", _EV2)["passed"] is True
+
+
+def test_a_plain_price_is_not_matched_against_evidence_numbers_scaled_by_a_thousand():
+    assert g.audit_text("The grant is $9,000.", _EV2)["passed"] is False   # evidence only holds 9, not 9000
+    assert g.audit_text("Median $748,000 or about $748k.", _EV2)["passed"] is True
+
+
+def test_a_distance_in_metres_is_not_matched_against_scaled_evidence():
+    assert g.audit_text("It is 9000m away.", _EV2)["passed"] is False
+    assert g.audit_text("About 0.42 km from the MRT.", _EV2)["passed"] is True
+    assert g.audit_text("About 420m from the MRT.", _EV2)["passed"] is True
+
+
+def test_a_lease_shown_rounded_is_still_grounded():
+    assert g.audit_text("73 years of lease left.", _EV2)["passed"] is True
+    assert g.audit_text("60 years of lease left.", _EV2)["passed"] is False
+
+
+def test_a_figure_written_in_the_evidence_word_for_word_is_grounded():
+    ev = json.dumps({"rag_policy_passages": [{"text": "Maximum Income Ceiling: $14,000/mo ($21k extended)"}]})
+    assert g.audit_text("The ceiling is $14,000, or $21k when extended.", ev)["passed"] is True
+    assert g.audit_text("The ceiling is $19k when extended.", ev)["passed"] is False

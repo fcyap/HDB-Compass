@@ -235,6 +235,11 @@ placeholder, and `messages` needs no new state key. The input guardrail refuses 
   `retry_count` = number of rejections so far (previous value + 1 on each rejection; keep the
   previous value on a pass). With `architecture.auditor_max_retries` = 2 the draft is rewritten
   after rejections 1 and 2 and the third rejection ends the loop (3 auditor calls at most).
+- **After the last allowed rejection** (`retry_count` > `auditor_max_retries`) the graph ends with the refused text still
+  in `draft_response`, so the auditor then also returns `draft_response` without the model's sentences and
+  `model_opening: ""` (and adds `runtime_auditor: model sentences removed after N rejections` to `errors`). Code's answer
+  sentence, the facts section and the disclaimer stay; the verdict keeps `passed: False` so the evaluation still sees the
+  failure. `tests/test_auditor_loop.py` runs this through the whole graph with a scripted writer.
 
 **Both nodes:**
 - Get the model only from `agents.llm.get_llm()`, so the benchmark uses one model. It returns
