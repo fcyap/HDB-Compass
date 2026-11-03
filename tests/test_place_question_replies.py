@@ -144,7 +144,7 @@ def test_a_model_block_search_with_no_budget_or_lease_runs_with_no_limit():
 def test_when_every_model_call_fails_code_runs_its_own_plan():
     from langchain_core.messages import AIMessage
     bad = AIMessage(content="", tool_calls=[{"name": "query_resale_blocks_by_criteria", "id": "c1",
-                                             "args": {"towns": "not a list", "flat_types": 7}}])
+                                             "args": {"towns": "not a list", "flat_types": 7, "block_keys": "x"}}])
     c = sv.rule_based_extract("4-room in Tampines under $600k").model_dump()
     with patch.object(sv, "get_llm", return_value=FakeLLM(script=[bad])):
         outputs, log, errors, _ = sv.run_react("market_sql", ["query_resale_blocks_by_criteria"], "sys",

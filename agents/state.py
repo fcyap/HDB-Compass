@@ -67,6 +67,9 @@ class HDBCompassState(TypedDict, total=False):
     menu_followup: Optional[Dict[str, Any]]          # the answer to a menu choice, set by initial_state (agents/scope.py)
     prior_constraints: Optional[Dict[str, Any]]
     pending_clarification: Optional[Dict[str, Any]]
+    # the blocks the previous turn listed, in order ("Blk 627 ANG MO KIO AVE 9"), so "the first one" or "that block"
+    # in a follow-up names one of them
+    prior_blocks: Optional[List[str]]
     # The model's own constraint reading before code fills gaps or overrides money facts (None without a model).
     # Scored separately, so a result shows how much the model read and how much code supplied.
     model_constraints: Optional[Dict[str, Any]]

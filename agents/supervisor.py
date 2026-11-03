@@ -25,6 +25,7 @@ import json
 import os
 import re
 import sys
+from datetime import date as _date
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -75,7 +76,7 @@ TOWN_SHORT = {"AMK": "ANG MO KIO", "TPY": "TOA PAYOH", "JE": "JURONG EAST", "JW"
 NO_DATA = "I could not find data for that request."   # the facts section when no tool found anything
 FLAT_TYPES = ("1 ROOM", "2 ROOM", "3 ROOM", "4 ROOM", "5 ROOM", "EXECUTIVE", "MULTI-GENERATION")   # as in the resale data
 NUMBER_WORDS = {"two": "2", "three": "3", "four": "4", "five": "5"}
-AMENITY_WORDS = {"mrt": "mrt", "train": "mrt", "hawker": "hawker", "bus stop": "bus_stop", "bus": "bus_stop",
+AMENITY_WORDS = {"mrt": "mrt", "lrt": "mrt", "train": "mrt", "hawker": "hawker", "bus stop": "bus_stop", "bus": "bus_stop",
                  "supermarket": "supermarket", "park": "park", "school": "school", "clinic": "clinic"}
 
 
@@ -241,6 +242,44 @@ def named_towns(text: str, any_case_short: bool = False) -> List[str]:
     return towns
 
 
+def misspelt_towns(text: str) -> List[Tuple[str, str]]:
+    """Words that are a near spelling of one HDB town ("Tampenis" -> TAMPINES, "Sengkand" -> SENGKANG), as
+    (the user's word, the town). Only a word of 5+ letters that is not itself an English word in the message's other
+    readings, and only a single close match, so "Jurong" (East or West) is not guessed."""
+    import difflib
+    names = {t.replace("/", " "): t for t in HDB_TOWNS}
+    found: List[Tuple[str, str]] = []
+    words = re.findall(r"[A-Za-z]+", text)
+    for n in (2, 1):
+        for i in range(len(words) - n + 1):
+            w = " ".join(words[i:i + n])
+            if len(w.replace(" ", "")) < 5 or w.upper() in names:
+                continue
+            close = [c for c in difflib.get_close_matches(w.upper(), list(names), n=2, cutoff=0.75)
+                     if difflib.SequenceMatcher(None, w.upper(), c).ratio() >= 0.84
+                     or (c[:2] == w.upper()[:2] and abs(len(c) - len(w)) <= 1)]   # "Tampenis", not "question"
+            if len(close) == 1 and names[close[0]] not in [t for _, t in found]:
+                found.append((w, names[close[0]]))
+    return found
+
+
+def stated_towns(text: str, any_case_short: bool = False) -> Tuple[List[str], List[str]]:
+    """The towns a message states, and notes for the user: the towns it names, else a region's towns ("in the east"),
+    else a near spelling of one town ("Tampenis"). The regex reading and the check on a model's reading use this one
+    reading, so a region or a misspelt town the model read right is kept."""
+    towns = named_towns(text, any_case_short=any_case_short)
+    if towns:
+        return towns, []
+    region = ri.region_towns(text)
+    if region:
+        # the same note the grouped-statistics reading gives (research_intents), so it is shown once
+        return list(region[1]), [f"'The {region[0]}' was taken as {', '.join(t.title() for t in region[1])} (URA planning regions)."]
+    guess = misspelt_towns(text)
+    if guess:
+        return [t for _, t in guess], [f"Read “{w}” as {t.title()}." for w, t in guess]
+    return [], []
+
+
 # A school's name: up to four words before School/Primary/High ("Ai Tong School", "St. Hilda's Primary School",
 # "CHIJ St. Nicholas Girls' School", "Anglo-Chinese School (Junior)"). A bare "High" is a whole word in name casing
 # ("Catholic High") and not a floor ("MRT high-floor", "high up", "pref high flr").
@@ -398,7 +437,18 @@ _POLICY_WORDING = re.compile(
     r"|what (?:is|are) (?:the |an? )?(?:ehg|phg|enhanced (?:cpf )?housing grant|proximity (?:housing )?grant|family grant|step-up grant|half-housing grant)"
     r"|rules (?:for|on|about) (?:buying|selling|owning|renting|subletting|applying)"
     r"|(?:can|may) (?:i|we) use (?:my |our )?cpf (?:for|to)"
-    r"|(?:can|may) (?:i|we) (?:rent out|sublet)|rent out (?:my|our|the) (?:whole )?(?:flat|room|bedroom|unit)|buyback)\b", re.I)
+    r"|(?:can|may) (?:i|we) (?:rent out|sublet)|rent out (?:my|our|the) (?:whole )?(?:flat|room|bedroom|unit)|buyback"
+    # loan, letter and purchase-step rules asked in other words (QA sweep, 3 Nov: these got the menu)
+    r"|ltv|loan[- ]to[- ]value|hfe letter|(?:apply|applying|get|getting|need|needs|have)\s+(?:for\s+)?(?:an?\s+|the\s+|my\s+)?hfe\b(?!-)|flat eligibility letter|option to purchase|otp|cash over valuation|cov"
+    r"|(?:do|does|will|would|must|pay|paying|charged?)\b[^.?]{0,30}\b(?:absd|additional buyer'?s? stamp duty)|resale levy|lease buyback|age (?:of )?95|cover (?:me|us|them) (?:up )?to (?:age )?95"
+    r"|who (?:can|may|is allowed to|are allowed to)\s+(?:buy|apply|get|qualif\w*|rent|own)|who qualif\w*"
+    r"|\b(?:do|does|can|could|will|would|am|are|is)\b[^.?]{0,25}\bqualif\w* for (?:an? |the )?"
+    r"(?:ehg|phg|proximity|enhanced|family grant|step-up|half-housing|[\w-]+ scheme|bto|hdb loan)[^.]*\?"
+    r"|how long (?:must|do|should|will|would|have) (?:i|we) (?:have to )?(?:stay|live|wait|keep)"
+    r"|sell (?:it|my flat|our flat|the flat|my bto|our bto) (?:before|after|within)|minimum age"
+    r"|(?:pr|prs|permanent residents?|singles?|foreigners?) (?:couples? )?(?:buy|apply|own|purchase|get)\b"
+    r"|(?:max(?:imum)?|how much) (?:hdb )?loan (?:can|may) (?:i|we) (?:get|take)\b(?=.*\b(?:rule|ltv|limit|percent|%))"
+    r"|valid(?:ity)?\b.{0,20}\b(?:hfe|letter)|(?:hfe|letter)\b.{0,20}\bvalid)\b", re.I)
 # "What grants can we get?" asks which grants exist when the user gives no figures, but with income, CPF or ages stated
 # it is the grant calculator's question (Category E: "what grants do we get and what's our max budget?")
 _OWN_GRANT_ASK = re.compile(r"\b(?:what|which) (?:housing |cpf )?grants? (?:can|could|do|would|will|might) (?:we|i)\b", re.I)
@@ -424,18 +474,59 @@ def town_first_block(text: str) -> str:
     return _TOWN_THEN_BLOCK.sub(lambda m: f"Blk {m.group(2)} {m.group(1)}", text)
 
 
+_MONEY_NUM = r"(?:S?\$|SGD\s?)?\s?(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million|mil)?\b"
+# a price a search is held to, in words the "under 650k" reading misses: "between 500k and 600k" (the upper end),
+# "600k max", "for 600k", "make it 800k", "800k instead", "raise the budget to 800k", or a bare "$600k" / "600k" in a
+# flat search (a town or flat type named) that is not a price being checked, an income or savings
+_NOT_A_BUDGET = re.compile(r"\b(?:fair|worth|asking|offer\w*|sold|selling|sell|income|salary|earn\w*|savings?|cash|cpf|"
+                           r"loan|grants?|stamp|duty|paid|bought|valuation|cov|profit|debt|too much|too high|overpriced|"
+                           r"reasonable|expensive|good (?:price|deal))\b", re.I)
+
+
+def _budget_phrase(q: str) -> Optional[float]:
+    pats = (r"\bbetween\s+" + _MONEY_NUM + r"\s*(?:and|to|-|–)\s*" + _MONEY_NUM,
+            _MONEY_NUM + r"\s*(?:max(?:imum)?|tops|or less|and below|or below|cap)\b",
+            r"\b(?:make it|change (?:it|the budget|budget) to|(?:increase|raise|lower|reduce|up|drop|bump)\s+(?:the\s+|my\s+)?"
+            r"(?:budget|price|limit|max)?\s*to|budget to|for)\s+" + _MONEY_NUM,
+            _MONEY_NUM + r"\s+instead\b")
+    for i, pat in enumerate(pats):
+        m = re.search(pat, q, re.I)
+        if not m:
+            continue
+        num, unit = (m.group(3), m.group(4)) if i == 0 else (m.group(1), m.group(2))
+        if not unit and not re.search(r"[$,]", m.group(0)) and float(num.replace(",", "")) < 50_000:
+            continue
+        if (unit or "").lower() == "m" and not re.search(r"\$", m.group(0)) and float(num.replace(",", "")) >= 10:
+            continue                                                     # metres
+        value = _money(f"{num}{unit or ''}")
+        if value and value >= 50_000:
+            return value
+    if (named_towns(q) or re.search(r"\b[2-5]\s*[- ]?\s*(?:room|rm)\b|\bexecutive\b", q, re.I)) and not _NOT_A_BUDGET.search(q):
+        m = re.search(r"(?:S?\$|SGD\s?)\s?(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million|mil)?\b|\b(\d[\d,]*(?:\.\d+)?)\s*(k|thousand)\b", q, re.I)
+        if m:
+            num, unit = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+            value = _money(f"{num}{unit or ''}")
+            if value and 50_000 <= value <= 3_000_000:
+                return value
+    return None
+
+
 def rule_based_extract(query: str) -> ExtractedConstraints:
     """Regex extractor: the no-LLM path and the safety net when structured output fails."""
     nearby = school_location_request(query)
     if nearby is not None:
         return ExtractedConstraints(nearby_schools=nearby)
     q = town_first_block(query)
-    towns = named_towns(q)
+    towns, notes = named_towns(q), []
     for word, digit in NUMBER_WORDS.items():
         q = re.sub(rf"\b{word}(?=[- ]?(?:room|rm)\b)", digit, q, flags=re.I)
     # "4-room", "4rm"; not a room count ("at least 2 rooms", "3 bedrooms")
     flat_types = [f"{m.group(1)} ROOM" for m in re.finditer(r"\b([2-5])\s*[- ]?\s*(?:room|rm)s?\b", q, re.I)
                   if not re.search(r"(?:at least|min(?:imum)?|more than|over|minimum of)\s*$", q[:m.start()], re.I)]
+    # "3 or 4 room", "4/5-room", "3-4 room", "3 to 5 room": every type in the range
+    for m in re.finditer(r"\b([2-5])\s*(?:,|or|and|/|-|–|to)\s*([2-5])\s*[- ]?\s*(?:room|rm)s?\b", q, re.I):
+        lo, hi = sorted((int(m.group(1)), int(m.group(2))))
+        flat_types = [f"{n} ROOM" for n in range(lo, hi + 1)] + flat_types
     if re.search(r"\bexecutive\b", q, re.I):
         flat_types.append("EXECUTIVE")
     flat_types = list(dict.fromkeys(flat_types))
@@ -451,6 +542,8 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
         if value and value >= 50_000:                                    # an HDB budget, not a distance or an age
             budget = value
             break
+    if budget is None:
+        budget = _budget_phrase(q)
     if budget is None:
         # "my budget is 600k", "budget: $650,000", "budget around 650k", "650k budget"
         m = re.search(r"\bbudget\b\s*(?:is|of|:|=|around|about|approx\.?|approximately|roughly|~|\s)*\s*(?:S?\$|SGD\s?)?\s?"
@@ -474,6 +567,20 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
         if m:
             lease = int(m.group(1))
             break
+    if lease is None and re.search(r"\blease\b", q, re.I):
+        # "remaining lease more than 70 years", "lease > 80 years", "lease above 65 yrs", "over 70 years of lease"
+        m = re.search(r"(?:more than|over|above|>|≥|>=|no less than|not less than)\s*(\d{2})\s*(?:years?|yrs?)\b", q, re.I)
+        if m:
+            lease = int(m.group(1))
+    if lease is None:
+        # "built after 2015", "completed after 2010", "flats from 2012 onwards": the lease left on a flat whose 99-year
+        # lease started that year (stated as an assumption: HDB leases start at completion, roughly)
+        m = re.search(r"\b(?:built|completed|lease (?:started|commenced)|from)\s+(?:after|since|in or after)?\s*((?:19|20)\d\d)\b"
+                      r"(?:\s+onwards)?", q, re.I)
+        if m and re.search(r"\b(?:built|completed|lease|onwards|after)\b", m.group(0), re.I):
+            year = int(m.group(1))
+            lease = max(0, 99 - (_date.today().year - year))
+            notes.append(f"Read “{m.group(0).strip()}” as at least {lease} years of lease left (a 99-year lease from {year}).")
 
     radii: Dict[str, int] = {}
     for m in re.finditer(r"(?:within\s*)?(\d+(?:\.\d+)?)\s*(km|m)\b\s*(?:of|from|to)\s+(?:an?\s+|the\s+)?([a-z /-]+?)(?=[,.;?!]|\s+(?:with|within|that|which|under|over|have|has)\b|\s+and\s+(?:\d|have|has|at\s+least|within|no more than|max|≤|<)|$)", q, re.I):
@@ -485,8 +592,26 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
             if word in targets:
                 radii[key] = int(dist)
     # "MRT within 400m"; never across "and", so "mrt and within 500m of a hawker centre" is not read as the MRT limit
-    for m in re.finditer(r"\b(mrt|hawker|supermarket|bus stop|park)(?:(?!\band\b)[a-z ])*?within\s*(\d+)\s*m\b", q, re.I):
+    for m in re.finditer(r"\b(mrt|lrt|hawker|supermarket|bus stop|park)(?:(?!\band\b)[a-z ])*?within\s*(\d+)\s*m\b", q, re.I):
         radii[AMENITY_WORDS[m.group(1).lower()]] = int(m.group(2))
+    # "MRT 300m", "near mrt 400m", "LRT < 300 m", "hawker 0.5km"
+    for m in re.finditer(r"\b(mrt|lrt|hawker|supermarket)(?:\s+(?:station|centre|center))?\s*(?:<|≤|<=|:)?\s*(\d+(?:\.\d+)?)\s*(km|m|metres?|meters?)\b",
+                         q, re.I):
+        dist = float(m.group(2)) * (1000 if m.group(3).lower() == "km" else 1)
+        if dist >= 20:
+            radii.setdefault(AMENITY_WORDS[m.group(1).lower()], int(dist))
+    # "within 300m of LRT 4-room in Punggol": the amenity right after the distance, whatever follows it
+    for m in re.finditer(r"(\d+(?:\.\d+)?)\s*(km|m|metres?|meters?)\s*(?:of|from|to)\s+(?:an?\s+|the\s+)?(mrt|lrt|train|hawker|supermarket)\b", q, re.I):
+        dist = float(m.group(1)) * (1000 if m.group(2).lower() == "km" else 1)
+        if dist >= 20:
+            radii.setdefault(AMENITY_WORDS[m.group(3).lower()], int(dist))
+    # "5 min walk to MRT", "10-minute walk from a hawker centre": about 80 m a minute (stated as an assumption)
+    for m in re.finditer(r"\b(\d{1,2})[- ]?(?:mins?|minutes?)\s*(?:walk|walking)\s*(?:distance\s*)?(?:to|from|of)?\s*(?:an?\s+|the\s+)?"
+                         r"(mrt|lrt|train|hawker|supermarket)", q, re.I):
+        key = AMENITY_WORDS[m.group(2).lower()]
+        if key not in radii:
+            radii[key] = int(m.group(1)) * 80
+            notes.append(f"Read a {m.group(1)}-minute walk as {radii[key]} m (about 80 m a minute).")
     # "≤400m MRT", "no more than 400 metres from an MRT station", "max 500m to a hawker centre"
     for m in re.finditer(r"(?:≤|<=|<|within|max(?:imum)?|no more than|at most)\s*(\d+(?:\.\d+)?)\s*(km|m|metres?|meters?)\b"
                          r"\s*(?:of|from|to)?\s*(?:an?\s+|the\s+)?(mrt|train|hawker|supermarket|bus stop|park|clinic)", q, re.I):
@@ -529,10 +654,20 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
         towns=towns, flat_types=flat_types, max_budget_sgd=budget, min_remaining_lease_years=lease,
         amenity_radii_meters=radii, household_income=income, citizenship_scheme=scheme, cpf_oa_balance=cpf,
         school_name=school, work_destinations=work, max_commute_minutes=max_commute, policy_question=policy,
-        wants_price_trend=bool(re.search(r"trend|appreciat|per sqm|psm|over the (?:last|past)|median price|price changes?|prices? (?:have |has )?(?:changed|moved|risen|rise|fallen|fall)", q, re.I)),
-        wants_bto_comparison=bool(re.search(r"\bbto\b.*(?:vs|versus|against|compar)|compar.*\bbto\b", q, re.I)),
+        wants_price_trend=bool(re.search(r"trend|appreciat|per sqm|psm|over the (?:last|past)|median price|price changes?|prices? (?:have |has )?(?:changed|moved|risen|rise|fallen|fall)"
+                                         r"|\b(?:gone|went|going) (?:up|down)\b|\b(?:increased|decreased|dropped|risen|climbed)\b", q, re.I)),
+        wants_bto_comparison=bool(re.search(r"\bbto\b.*(?:vs|versus|against|compar|cheaper|pricier|more expensive)"
+                                            r"|compar.*\bbto\b|\bresale\b.*\b(?:cheaper|pricier|more expensive) than\b.*\bbto\b", q, re.I)),
     )
     base.update(ri.extract_research_fields(q, base))
+    if not base.get("towns"):
+        # a region ("in the east") or a misspelt town ("Tampenis") when the research reading (which groups a region's
+        # towns itself for statistics) left the towns empty: a flat search there
+        found, more = stated_towns(q)
+        if found:
+            base["towns"], notes = found, notes + more
+    if notes:
+        base["assumptions"] = list(dict.fromkeys(list(base.get("assumptions") or []) + notes))
     return ExtractedConstraints(**base)
 
 
@@ -984,6 +1119,11 @@ def parse_clarification_answer(text: str, needed: List[str], conversation: str =
             found["youngest_core_member_age"] = young
     if no_debts_stated(statements(text or "")) and "monthly_debt_obligations" in needed:
         found["monthly_debt_obligations"] = 0.0
+    if "interest_rate" in needed:
+        # "The interest rate is 3%.", "3%", "rate 2.6% p.a." in reply to the question that asked for it
+        m = re.search(r"(?:^|\b(?:rate|interest)\b[^%\d]{0,15})(\d{1,2}(?:\.\d+)?)\s*%", (text or "").strip(), re.I)
+        if m and 0 < float(m.group(1)) < 15:
+            found["interest_rate"] = float(m.group(1))
     return {sec: {f: v for f, v in found.items() if f in _section_fields(sec)} for sec in FIN_SECTIONS
             if any(f in _section_fields(sec) for f in found)}
 
@@ -1034,6 +1174,40 @@ _NOT_CONTINUOUS_WORK = (r"(?:\bnot|n't|\bnever)\s+(?:\w+\s+){0,3}(?:continuous(?
                         r".{0,40}\b(?:12|twelve)\s*(?:months?|mths?)\b")
 
 
+# Grant, loan and proximity-grant eligibility, each read per sentence as confirmed (True) or not confirmed (False). The
+# household form sends "Our grant eligibility is (not) confirmed.", "Our HDB loan eligibility is (not) confirmed." and
+# "Our proximity grant eligibility is (not) confirmed."; a "not confirmed" answer must be read too, or the app asks
+# again forever, and the proximity sentence is not the general grant eligibility.
+_GRANT_ELIGIBILITY = (r"eligibility for (?:the )?(?:housing )?grants?.{0,40}\bconfirmed\b"
+                      r"|(?<!proximity )(?<!proximity housing )\bgrants?\b.{0,30}\beligibility\b.{0,25}\bconfirmed\b"
+                      r"|\bconfirmed (?:our|my) eligibility for (?:the )?grants?"
+                      r"|\bconfirmed (?:that )?(?:we are|we're|i am|i'm|we|i) (?:are |am )?eligible for (?:the )?(?:housing )?grants?")
+_LOAN_ELIGIBILITY = (r"eligibility for .{0,30}\b(?:HDB |bank )?loan (?:is |has been |has not been |is not |isn't )?(?:yet )?confirmed"
+                     r"|\b(?:HDB |bank )?loan\b.{0,15}\beligibility\b.{0,25}\bconfirmed\b"
+                     r"|\b(?:HDB|bank) loan(?: eligibility)? (?:is |has been |is not |has not been )?confirmed"
+                     r"|\bconfirmed (?:our|my) eligibility for (?:the )?(?:grants? and (?:an? |the )?)?(?:HDB |bank )?loan"
+                     r"|\bconfirmed (?:that )?(?:we are|we're|i am|i'm) eligible for (?:the )?(?:grants? and (?:an? |the )?)?(?:HDB |bank )?loan")
+_PROXIMITY_ELIGIBILITY = r"\bproximity (?:housing )?grant\b.{0,40}\bconfirmed\b|\bconfirmed\b.{0,40}\bproximity\b"
+_NOT_CONFIRMED = re.compile(r"\bnot (?:yet )?(?:been )?confirmed\b|n't (?:been )?confirmed\b|\bunconfirmed\b|"
+                            r"\bnot sure\b|\bpending\b|\b(?:nobody|no one|never)\b[^.]{0,30}\bconfirmed\b", re.I)
+
+
+def confirmations(statement_text: str) -> Dict[str, bool]:
+    out: Dict[str, bool] = {}
+    for sent in re.split(r"(?<=[.!?;])\s+|\n+", statement_text):
+        no = bool(_NOT_CONFIRMED.search(sent))
+        if re.search(_PROXIMITY_ELIGIBILITY, sent, re.I):
+            out["proximity_eligibility_confirmed"] = not no
+            # "our proximity grant eligibility is confirmed" says nothing about the general grant eligibility
+            if not re.search(r"\bgrants? and\b|\band (?:the |our |my )?(?:housing )?grants?\b", sent, re.I):
+                continue
+        if re.search(_GRANT_ELIGIBILITY, sent, re.I) and not re.search(r"\bproximity\b", sent.split("grant")[0], re.I):
+            out["eligibility_confirmed"] = not no
+        if re.search(_LOAN_ELIGIBILITY, sent, re.I):
+            out["loan_eligibility_confirmed"] = not no
+    return out
+
+
 def said_not_continuously_employed(statement_text: str) -> bool:
     """The buyers state they have not worked the 12 months (_stated_match skips negated matches, so this looks itself)."""
     return any(re.search(_NOT_CONTINUOUS_WORK, c, re.I) for c in _clauses_of(statement_text))
@@ -1081,14 +1255,7 @@ def stated_financial_inputs(text: str, context: str = "") -> Dict[str, Dict[str,
     elif _stated_match(_CONTINUOUS_WORK, s) and not _JOB_LOSS.search(s):
         f["continuous_employment_12_months"] = True
     # "eligibility for the grants is confirmed", "HDB has confirmed our eligibility for the grants"
-    if _stated_match(r"eligibility for (?:the )?grants?.{0,40}\bconfirmed\b|\bgrants?\b.{0,30}\beligibility\b.{0,25}\bconfirmed\b"
-                     r"|\bconfirmed (?:our|my) eligibility for (?:the )?grants?", s):
-        f["eligibility_confirmed"] = True
-    if _stated_match(r"eligibility for .{0,30}\b(?:HDB|bank) loan (?:is |has been )?confirmed"
-                     r"|\b(?:HDB|bank) loan\b.{0,15}\beligibility\b.{0,25}\bconfirmed\b"
-                     r"|\b(?:HDB|bank) loan(?: eligibility)? (?:is |has been )?confirmed"
-                     r"|\bconfirmed (?:our|my) eligibility for (?:the )?(?:grants? and (?:an? |the )?)?(?:HDB|bank) loan", s):
-        f["loan_eligibility_confirmed"] = True
+    f.update(confirmations(s))
     if re.search(r"\bbank loan\b", t, re.I):
         f["loan_type"] = "bank"
     elif re.search(r"\bHDB loan\b", t, re.I):
@@ -1099,15 +1266,13 @@ def stated_financial_inputs(text: str, context: str = "") -> Dict[str, Dict[str,
         f["proximity"] = "with"
     elif _parents_clause(_PARENTS_NEAR, t):
         f["proximity"] = "near"
-    if _stated_match(r"\bproximity (?:housing )?grant\b.{0,40}\bconfirmed\b|\bconfirmed\b.{0,40}\bproximity\b", s) \
-            and not re.search(r"\bnot confirmed\b", s, re.I):
-        f["proximity_eligibility_confirmed"] = True
     if re.search(r"\bno (?:housing )?grants\b", s, re.I):
         f["total_grants"] = 0.0
     m = re.search(_CALC_LEASE, s, re.I)
     if m:
         f["remaining_lease_years"] = float(next(g for g in m.groups() if g))
-    m = _stated_match(r"interest rate of (\d+(?:\.\d+)?)\s*%|(\d+(?:\.\d+)?)\s*%\s*(?:p\.a\.|per annum|interest)", s)
+    m = _stated_match(r"interest rate (?:of|is|at|:)?\s*(\d+(?:\.\d+)?)\s*%|(\d+(?:\.\d+)?)\s*%\s*(?:p\.a\.|per annum|interest)", s) \
+        or _stated_match(r"\b(?:bank |loan )?rate (?:is|of|at)\s*(\d+(?:\.\d+)?)\s*%()", s)
     if m:
         f["interest_rate"] = float(m.group(1) or m.group(2))
     m = _stated_match(r"tenure of (\d{1,2}) years|(\d{1,2})[- ]year (?:loan )?tenure", s)
@@ -1130,6 +1295,13 @@ def stated_financial_inputs(text: str, context: str = "") -> Dict[str, Dict[str,
             if m:
                 upfront["purchase_price"] = _amount(m)
                 break
+        else:
+            # "stamp duty on $650k?", "BSD for a 0.65m flat", "stamp duty of 1.2m": the price the duty is asked on
+            m = re.search(r"\b(?:on|for|of)\s+(?:an?\s+|the\s+|my\s+|our\s+)?(?:S?\$\s?)?(\d[\d,]*(?:\.\d+)?)\s*"
+                          r"(k|m|mil|million|thousand)?\b(?!\s*(?:sqm|years?|yrs?|metres?|meters?|mins?))", t, re.I)
+            value = _money(f"{m.group(1)}{m.group(2) or ''}") if m else None
+            if value and value >= 50_000:
+                upfront["purchase_price"] = value
     for field, pattern in (("market_valuation", r"valued at " + _AMOUNT), ("loan_amount", r"loan of " + _AMOUNT),
                            ("legal_and_valuation_fees", r"fees of " + _AMOUNT)):
         m = re.search(pattern, s, re.I)
@@ -1329,10 +1501,10 @@ def fact_is_grounded(field: str, value: Any, text: str) -> bool:
         return value == citizenship_stated(t)
     if field == "first_timer_status":
         return value == first_timer_stated(t)
-    if field == "eligibility_confirmed":
-        return value is True and stated(r"\beligib", r"\bconfirmed\b")
-    if field == "loan_eligibility_confirmed":
-        return value is True and stated(r"\bloan\b", r"\beligib|\bapprov", r"\bconfirmed\b|\bapproved\b")
+    if field in ("eligibility_confirmed", "loan_eligibility_confirmed", "proximity_eligibility_confirmed"):
+        # only what the user said of that eligibility, per sentence: a proximity-grant confirmation is not the general
+        # grant eligibility, and "not confirmed" is an answer (False)
+        return confirmations(s).get(field) is value
     if field == "continuous_employment_12_months":
         if value is False:
             return said_not_continuously_employed(s)
@@ -1346,8 +1518,6 @@ def fact_is_grounded(field: str, value: Any, text: str) -> bool:
         if value == "with":
             return _parents_clause(_PARENTS_WITH, t)
         return value in ("near", True) and (_parents_clause(_PARENTS_NEAR, t) or _parents_clause(_PARENTS_WITH, t))
-    if field == "proximity_eligibility_confirmed":
-        return value is True and stated(r"\bproximity\b", r"\bconfirmed\b")
     return False
 
 
@@ -1497,8 +1667,12 @@ def guard_financial_args(name: str, args: Dict[str, Any], c: Dict[str, Any], out
     grant total is passed forward, running the grant calculator first if the model has not."""
     sec = FIN_TOOL_SECTION.get(name)
     fin = c.get("financial_inputs") or {}
-    if sec is None or not has_financial_facts(c):
+    if sec is None:
         return args
+    if not has_financial_facts(c):
+        # nothing stated: the model's household figures are its own inventions (live, 3 Nov: SC_SC, $12,000 income,
+        # $80k CPF for "How much grant can we get?"), so they are left out and the calculator asks for them
+        return {k: v for k, v in args.items() if k not in FACT_FIELDS}
     stated = fin.get(sec) or {}
     out = {k: v for k, v in args.items() if k not in FACT_FIELDS}
     out.update(stated)
@@ -1555,6 +1729,19 @@ def lenient_constraints(data: Dict[str, Any]) -> Tuple[ExtractedConstraints, Lis
             if not changed:
                 break
     return ExtractedConstraints(), dropped + ["(everything)"]
+
+
+EXTRACTION_MAX_TOKENS = int(os.getenv("HDB_EXTRACTION_MAX_TOKENS", "1536"))
+
+
+def capped(llm: Any, max_tokens: int) -> Any:
+    """The same client with a lower output limit (a copy; the shared client keeps its own)."""
+    try:
+        if llm is not None and (getattr(llm, "max_tokens", None) or 0) > max_tokens:
+            return llm.model_copy(update={"max_tokens": max_tokens})
+    except Exception:  # noqa: BLE001 — a client that cannot be copied keeps its own limit
+        pass
+    return llm
 
 
 def read_constraints_with_model(llm: Any, messages: List[Any],
@@ -1624,7 +1811,9 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
             fast["extraction_source"] = FAST_PATH_SOURCE
             return {"user_constraints": fast, "errors": []}
     prior = state.get("prior_constraints")
-    llm = get_llm()
+    # the constraint JSON is a few hundred tokens: a reading that runs on to the 4,096-token limit is a runaway
+    # (live, 3 Nov: 30 of 166 turns, about 30 s each, before the json_mode retry succeeded), so it is cut off early
+    llm = capped(get_llm(), EXTRACTION_MAX_TOKENS)
     extracted: Optional[ExtractedConstraints] = None
     model_reading: Optional[Dict[str, Any]] = None
     model_policy = False
@@ -1692,10 +1881,175 @@ _MONEY_ASK = re.compile(r"\b(?:grants?|ehg|phg|cpf|loans?|borrow\w*|mortgage|int
                         r"|\b(?:can|could) (?:we|i) afford\b|\bhow much (?:can|could|should) (?:we|i) (?:afford|pay|spend)\b", re.I)
 
 
+# a question about the buyer's own amounts ("how much can I borrow", "what's our max budget", "what grants can we get",
+# "stamp duty on $650k"): the calculators answer it, and ask for the household facts they need, instead of the menu
+_MONEY_AMOUNT_ASK = re.compile(
+    r"\bhow much\b.{0,30}\b(?:borrow|loan|grants?|afford|budget|stamp duty|bsd|cash|cpf|downpayment|down payment|"
+    r"instalments?|installments?|monthly)\b|\bwhat(?:'s| is| are)?\s+(?:our|my)\s+(?:max(?:imum)?\s+)?(?:budget|loan|grants?)\b"
+    r"|\b(?:max(?:imum)?|how big a?)\s+(?:hdb\s+|bank\s+|housing\s+)?(?:loan|budget)\b"
+    r"|\b(?:stamp duty|bsd)\b.{0,25}\b(?:on|for|of)\b.{0,15}\d|\bcan (?:we|i) afford\b|\bhow much can (?:we|i) (?:get|borrow)\b", re.I)
+
+
+def _stamp_duty_only(state: Dict[str, Any]) -> Optional[float]:
+    """The buyer's stamp duty when the message asks only for the duty (not the cash needed), and the calculator gave it."""
+    q = last_user_query(state)
+    if not re.search(r"\bstamp dut(?:y|ies)\b|\bbsd\b", q, re.I) or \
+            re.search(r"\bcash\b|\bup[- ]?front\b|\bdown ?payment\b|\boutlay\b|\bcosts?\b|\bcpf\b", q, re.I):
+        return None
+    up = (state.get("financial_breakdown") or {}).get("calculate_bsd_and_upfront_outlay") or {}
+    return up.get("buyer_stamp_duty")
+
+
 def money_question(query: str, c: Dict[str, Any]) -> bool:
     """Whether the message asks about the buyer's money (grants, loan, stamp duty, CPF, what they can afford). A budget
     or "afford" also counts when the user gave calculator facts ("we earn 9k, what's our budget?")."""
     return bool(_MONEY_ASK.search(query)) or (has_financial_facts(c) and bool(re.search(r"\b(?:budget|afford\w*)\b", query, re.I)))
+
+
+SEARCH_KEYS = ("towns", "flat_types", "max_budget_sgd", "min_remaining_lease_years", "amenity_radii_meters", "mrt_station",
+               "school_name", "work_destinations", "max_commute_minutes")
+_NEW_SEARCH = re.compile(r"^\W*(?:(?:can you |could you |please |pls |now |ok(?:ay)?,? |also )*)(?:find|search|show|list|look(?:ing)? for|"
+                         r"any|get|give)\b", re.I)
+# "remove the MRT limit", "no lease limit", "drop the budget", "without the hawker centre", "any budget"
+_REMOVE = re.compile(r"\b(?:remove|drop|without|no|forget|ignore|skip|don'?t need|do not need|don'?t care about|any|clear)\b"
+                     r"(?:\s+(?:the|my|a|an|that|limit on|filter on|need for))?\s+"
+                     r"(mrt|lrt|train|hawker|supermarket|school|commute|travel|budget|price|lease|distance)", re.I)
+_REMOVES = {"mrt": ("amenity_radii_meters", "mrt"), "lrt": ("amenity_radii_meters", "mrt"),
+            "train": ("amenity_radii_meters", "mrt"), "hawker": ("amenity_radii_meters", "hawker"),
+            "supermarket": ("amenity_radii_meters", "supermarket"), "school": ("school_name", None),
+            "commute": ("max_commute_minutes", None), "travel": ("max_commute_minutes", None),
+            "budget": ("max_budget_sgd", None), "price": ("max_budget_sgd", None),
+            "lease": ("min_remaining_lease_years", None), "distance": ("amenity_radii_meters", None)}
+_BARE_DISTANCE = re.compile(r"^\W*(?:(?:what|how) about|try|make it|change (?:it )?to|ok(?:ay)?|and|then|or)?\s*"
+                            r"(?:within|under|less than|below|<|up to)?\s*(\d+(?:\.\d+)?)\s*(km|m|metres?|meters?)\b"
+                            r"(?:\s+(?:instead|then|only|radius|away))?\W*$", re.I)
+_SHORT_FOLLOWUP = re.compile(r"^\W*(?:(?:and|so|ok(?:ay)?|then)\W+)?(?:what|how) about\b|^\W*and (?:for|if|what|with)\b"
+                             r"|^\W*(?:what|how) if\b|^\W*same (?:for|with)\b|^\W*(?:and|also) (?:the )?\w+\s*(?:flats?)?\s*\?*\s*$", re.I)
+_REFINE_WORDS = re.compile(r"\b(?:cheap\w*|expensive|nicer|better|bigger|smaller|larger|closer|nearer|further|more|less|"
+                           r"relax\w*|loosen|tighten|increase|decrease|raise|lower|change|instead|only|without|add|remove|"
+                           r"drop|within|under|over|below|above|budget|lease|mrt|hawker|room|rm|newer|older)\b", re.I)
+UNCHANGED_NOTE = ("I couldn't tell what to change, so this is the same search as before. You can say, for example, "
+                  "\"within 300m\", \"under $700k\", \"5-room instead\" or \"drop the MRT limit\".")
+
+
+def refine_search(carried: Dict[str, Any], fresh: Dict[str, Any], query: str) -> Dict[str, Any]:
+    """The earlier search, changed the way a follow-up message asks (no open question): a complete new search starts
+    afresh; "also within 500m of a hawker centre" adds a limit; "within 300m" alone changes the one distance limit;
+    "remove the MRT limit" removes it; "cheaper" lowers the budget by 10%; a second workplace joins the first.
+    Code's own reading of the message is used for these words, so the live model's reading changes nothing here."""
+    out = dict(carried)
+    out.pop("commute_unlimited", None)
+    if not carried.get("towns") and not carried.get("addresses"):
+        return out
+    if fresh.get("towns") and fresh.get("flat_types") and (
+            _NEW_SEARCH.search(query) or fresh.get("max_budget_sgd") or fresh.get("min_remaining_lease_years")):
+        for k in SEARCH_KEYS:          # "Find 3-room flats in Clementi": not the last search's budget and MRT limit
+            out.pop(k, None)
+        return out
+    radii = dict(out.get("amenity_radii_meters") or {})
+    new_radii = dict(fresh.get("amenity_radii_meters") or {})
+    m = _BARE_DISTANCE.search(query)
+    if m and not new_radii:
+        dist = int(float(m.group(1)) * (1000 if m.group(2).lower() == "km" else 1))
+        if len(radii) == 1:
+            new_radii = {next(iter(radii)): dist}          # "within 300m" after "within 500m of an MRT"
+    for rm in _REMOVE.finditer(query):
+        if re.search(r"\d", query[rm.start():rm.end() + 12]):
+            continue                                      # "no more than 400m of an MRT" is a limit, not a removal
+        key, sub = _REMOVES[rm.group(1).lower()]
+        if key == "amenity_radii_meters":
+            if sub:
+                radii.pop(sub, None)
+            else:
+                radii = {k: v for k, v in radii.items() if k == "school"}
+        else:
+            out[key] = None
+            if key == "school_name":
+                radii.pop("school", None)
+    if new_radii and not re.search(r"\b(?:instead|only)\b", query, re.I):
+        radii.update(new_radii)                           # "also within 500m of a hawker centre" keeps the MRT limit
+    elif new_radii:
+        radii = new_radii
+    out["amenity_radii_meters"] = radii
+    if not new_radii:
+        fresh["amenity_radii_meters"] = radii             # the merge keeps the fresh (empty) value otherwise
+    else:
+        fresh["amenity_radii_meters"] = radii
+    if re.search(r"^\W*(?:any(?:thing)?\s+)?cheaper\b|\bcheaper (?:ones?|options?|flats?|blocks?)\b|\blower (?:the )?(?:budget|price)\b",
+                 query, re.I) and not fresh.get("max_budget_sgd") and out.get("max_budget_sgd"):
+        out["max_budget_sgd"] = round(out["max_budget_sgd"] * 0.9, -3)
+        fresh["assumptions"] = list(fresh.get("assumptions") or []) + [
+            f"Lowered the budget by 10%, to ${out['max_budget_sgd']:,.0f}."]
+    relax = re.search(r"\b(?:relax|loosen|increase|raise|bump up|higher)\b(?:\s+(?:the|my|our))?\s+(budget|price|lease|distance|mrt|hawker)", query, re.I)
+    if relax:                                             # one relaxation step, the same steps the sweep tries
+        steps = load_config()["architecture"]["relaxation_steps"]
+        what = relax.group(1).lower()
+        if what in ("budget", "price") and out.get("max_budget_sgd") and not fresh.get("max_budget_sgd"):
+            out["max_budget_sgd"] = round(out["max_budget_sgd"] * (1 + steps["max_budget_sgd_pct"] / 100), -3)
+            note = f"Raised the budget to ${out['max_budget_sgd']:,.0f}."
+        elif what == "lease" and out.get("min_remaining_lease_years"):
+            out["min_remaining_lease_years"] = max(0, out["min_remaining_lease_years"] - steps["min_remaining_lease_years"])
+            note = f"Lowered the minimum lease to {out['min_remaining_lease_years']} years."
+        elif radii:
+            keys = [k for k in radii if k != "school" and (what == "distance" or k == what)]
+            for k in keys:
+                radii[k] += steps["amenity_radius_meters"]
+            fresh["amenity_radii_meters"] = out["amenity_radii_meters"] = radii
+            note = f"Widened the distance limit{'s' if len(keys) > 1 else ''} by {steps['amenity_radius_meters']} m." if keys else ""
+        else:
+            note = ""
+        if note:
+            fresh["assumptions"] = list(fresh.get("assumptions") or []) + [note]
+    work = list(fresh.get("work_destinations") or [])
+    if len(work) == 1 and len(out.get("work_destinations") or []) == 1 and work != out["work_destinations"] \
+            and not re.search(r"\binstead\b", query, re.I):
+        if out.get("max_commute_minutes") or fresh.get("max_commute_minutes"):
+            fresh["work_destinations"] = list(out["work_destinations"]) + work   # "my wife works at Changi Business Park"
+        else:
+            # no commute limit was stated: the two-workplace check needs one, and a default would cut blocks unasked
+            fresh["work_destinations"] = list(out["work_destinations"]) + work
+            out["max_commute_minutes"] = None
+            fresh["assumptions"] = list(fresh.get("assumptions") or []) + [
+                "Tell me the longest commute you'd accept (for example \"under 40 minutes\") and I'll check the travel "
+                "time to both workplaces; no commute limit has been applied yet."]
+            fresh["commute_unlimited"] = True
+    return out
+
+
+def _search_unchanged(prior: Dict[str, Any], merged: Dict[str, Any], fresh: Dict[str, Any], query: str) -> bool:
+    """A short follow-up to a search that changed nothing code can read ("something nicer?"), so the same search
+    would run again without saying why."""
+    if not prior.get("towns") or prior.get("addresses") or len(query.split()) > 12 or not _REFINE_WORDS.search(query):
+        return False
+    if any(fresh.get(k) for k in SEARCH_KEYS + ("addresses", "policy_question", "map_pin", "nearby_schools")):
+        return False
+    if any(v for k, v in fresh.items() if k.startswith("wants_")) or any(stated_financial_inputs(query).values()):
+        return False
+    if _REMOVE.search(query) or re.search(r"\bcheaper\b|\b(?:relax|loosen|increase|raise)\b", query, re.I):
+        return False
+    return all((merged.get(k) or None) == (prior.get(k) or None) for k in SEARCH_KEYS)
+
+
+# the distance limits the spatial index has places for; any other ("within 200m of a park") would pass every block
+CHECKABLE_DISTANCES = {"mrt", "lrt", "mrt_only", "mrt_lrt", "hawker", "supermarket", "school"}
+_UNMAPPED_PLACES = re.compile(r"\b(parks?|bus stops?|mosques?|churche?s?|temples?|(?:poly)?clinics?|malls?|shopping (?:centre|center|mall)s?|"
+                              r"librar(?:y|ies)|community (?:club|centre|center)s?|hospitals?|markets?|gyms?|swimming pools?|playgrounds?)\b", re.I)
+
+
+def _note_unchecked_places(c: Dict[str, Any], query: str) -> None:
+    """A distance to a kind of place the app has no locations for is not applied, and the answer says so, rather
+    than listing every block as meeting it (QA sweep, 3 Nov: "within 200m of a park" passed 208 blocks)."""
+    radii = c.get("amenity_radii_meters") or {}
+    dropped = sorted(k for k in radii if k not in CHECKABLE_DISTANCES)
+    if dropped:
+        c["amenity_radii_meters"] = {k: v for k, v in radii.items() if k in CHECKABLE_DISTANCES}
+    named = [m.group(1).lower() for m in _UNMAPPED_PLACES.finditer(query)
+             if re.search(r"\b(?:near|within|close to|next to|walking distance|nearby|\d+\s*k?m)\b", query, re.I)]
+    kinds = list(dict.fromkeys([k.replace("_", " ") for k in dropped] + named))
+    if kinds and (c.get("towns") or c.get("flat_types") or dropped):
+        c["assumptions"] = list(c.get("assumptions") or []) + [
+            f"I can't measure distances to these places: {_join_words(kinds)} (there is no location data for them), so that limit was "
+            "not applied. Distances can be checked to MRT/LRT stations, hawker centres, supermarkets and schools."]
 
 
 def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCompassState, errors: List[str],
@@ -1706,6 +2060,7 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     filled policy_question (not the regex merge that fills what the model left empty)."""
     prior = state.get("prior_constraints") if with_history else None
     pending = state.get("pending_clarification") if with_history else None
+    answered_money = False
     # calculator facts come from the user's own words in every turn so far, never from the model's reading of them
     turns = [m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user"]
     if not with_history or not turns:
@@ -1719,6 +2074,13 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     constraints["amenity_radii_meters"] = {k: v for k, v in (constraints.get("amenity_radii_meters") or {}).items()
                                            if v is not None and v > 0}
     _verify_extraction(constraints, query, errors, from_model=from_model)
+    _note_unchecked_places(constraints, query)
+    if from_model and constraints.get("policy_question") and not policy_wording(query, money_stated=calculator_facts(constraints)) \
+            and (_MONEY_AMOUNT_ASK.search(query) or any(stated_financial_inputs(query).values())):
+        # "How much grant can we get?" / a reply with household facts: the calculators' question, not a rule search
+        # (live, 3 Nov: the model filed "grant_eligibility" and the answer added "I couldn't find an HDB rule")
+        constraints["policy_question"] = None
+        errors.append("extract_constraints: model's policy reading dropped: a money question, not a rule question")
     if from_model and constraints.get("policy_question") and not scope.mentions_policy_topic(query) \
             and not (model_policy and policy_wording(query, money_stated=calculator_facts(constraints))):
         # the model filed a vague question ("Should I buy BTO or resale?") as a policy question; the policy search
@@ -1730,6 +2092,7 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     if pending and pending.get("kind", "financial") == "financial":
         conversation = " ".join(m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict))
         answers = parse_clarification_answer(query, pending["needed"], conversation)
+        answered_money = bool(answers)
         if answers:
             constraints = merge_constraints(constraints, {"financial_inputs": answers})
     # the place an earlier turn named is a candidate even for a self-contained question ("what's near there?")
@@ -1744,11 +2107,20 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         # question); a reply to an open question keeps them, since it completes that request.
         carried = {k: v for k, v in prior.items()
                    if k not in ri.ALWAYS_FRESH_KEYS and (pending or k not in ri.TURN_ONLY_KEYS)}
+        if not pending:
+            carried = refine_search(carried, constraints, query)
         constraints = merge_constraints(carried, constraints)
+        if not pending and prior.get("policy_question") and len(str(constraints.get("policy_question") or "").split()) <= 3 \
+                and _SHORT_FOLLOWUP.search(query) and not any(fresh_constraints.get(k) for k in SEARCH_KEYS):
+            # "what about Plus?" after "Can I rent out my whole Prime flat after the MOP?": the same rule question
+            constraints["policy_question"] = f"{prior['policy_question']} {query}"
+        if not pending and _search_unchanged(prior, constraints, fresh_constraints, query):
+            constraints["assumptions"] = list(constraints.get("assumptions") or []) + [UNCHANGED_NOTE]
     if pending and pending.get("kind") == "place":
         answer_place_question(constraints, query)
     elif prior and not pending:
         narrow_block_question(constraints, prior, query)
+        listed_block_reference(constraints, query, state.get("prior_blocks") or [], fresh_constraints, prior)
 
     if constraints.get("policy_question") and not scope.mentions_data(query):
         for key in (
@@ -1766,18 +2138,48 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
             vals.pop(k, None)
     if constraints.get("wants_flat_affordability"):
         _add_flat_purchase(constraints)
+        if not constraints.get("flat_purchase"):
+            _assume_flat_basics(constraints)   # the block's own facts are unknown: the same 4-room default as any estimate
     elif constraints.get("wants_area_affordability"):
         _add_area_purchase(constraints)
     elif constraints.get("household_income") or any((constraints.get("financial_inputs") or {}).get(sec)
                                                     for sec in ("grants", "affordability")):
         _assume_flat_basics(constraints)   # "how much can we afford?": no flat chosen, so no lease or type to ask for
+    # the calculators run when this message is about money (asks it, states a fact, or answers the open money
+    # question), not on every later search because an earlier turn gave an income: that repeated the whole household
+    # question under each new search
+    grants = (constraints.get("financial_inputs") or {}).get("grants") or {}
+    if grants.get("proximity_eligibility_confirmed") is False and grants.get("proximity") in ("near", "with"):
+        # the calculator refuses every grant while a PHG is unconfirmed; the other grants do not depend on it
+        grants["proximity"] = "none"
+        grants.pop("proximity_eligibility_confirmed", None)
+        constraints["assumptions"] = list(constraints.get("assumptions") or []) + [
+            "The Proximity Housing Grant is left out because your eligibility for it is not confirmed."]
+    constraints["money_intent"] = bool(_MONEY_AMOUNT_ASK.search(query))
+    # this message itself describes a flat search (not only limits carried from earlier turns)
+    constraints["search_stated"] = bool(any(fresh_constraints.get(k) for k in SEARCH_KEYS))
+    constraints["islandwide"] = bool(re.search(r"\b(?:anywhere|island[- ]?wide|all (?:of )?(?:the )?towns|any town|whole (?:of )?singapore|all over singapore)\b",
+                                               query, re.I)) and not constraints.get("towns")
+    constraints["money_asked"] = bool(
+        not prior or answered_money or money_question(query, constraints)
+        # a reply to the open money question that code could not read ("We are both PRs.") is still about money
+        or (pending and pending.get("kind", "financial") == "financial"
+            and not any(fresh_constraints.get(k) for k in SEARCH_KEYS + ("addresses", "policy_question")))
+        # "what about a 5 room?" after a grant estimate with no search: the estimate again, for that flat
+        or (prior and not prior.get("towns") and not prior.get("addresses") and has_financial_facts(prior)
+            and not fresh_constraints.get("towns") and not fresh_constraints.get("addresses"))
+        or constraints.get("wants_flat_affordability") or constraints.get("wants_area_affordability")
+        or any(stated_financial_inputs(query).values()))
     # a data question no specific intent recognised goes to the market agent's analysis tools instead of the menu
     constraints["analysis_mode"] = False
     if (with_history and not pending and not constraints.get("clarifications") and not constraints.get("place_options")
             and not constraints.get("addresses") and not constraints.get("map_pin") and scope.mentions_data(query)
             and not money_question(query, constraints)
             and addons.offered_in(state.get("variant"), bool(state.get("fast_path")))
-            # nothing specific was recognised; a town on its own (which only started a block search) does not count
+            # nothing specific was recognised; a town on its own (which only started a block search) does not count, but
+            # a town with a budget, a lease or a distance is a block search ("cheap 4-room flats in Bedok under 500k")
+            and not (constraints.get("towns") and (constraints.get("max_budget_sgd") or constraints.get("min_remaining_lease_years")
+                                                   or constraints.get("amenity_radii_meters") or constraints.get("school_name")))
             and not decide_routing({**constraints, "towns": []})):
         constraints["analysis_mode"] = True
     # read by code from every user message so far, so an ask in the first turn still counts after a follow-up reply
@@ -1833,6 +2235,59 @@ def narrow_block_question(c: Dict[str, Any], prior: Dict[str, Any], query: str) 
 
 
 PLACE_QUESTION = "What would you like to know about"   # research_intents.place_clarification
+
+
+_ORDINALS = {"first": 0, "1st": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2, "fourth": 3, "4th": 3, "fifth": 4, "5th": 4,
+             "top": 0, "last": -1}
+_LISTED_REF = re.compile(r"\b(?:the\s+)?(first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|top|last)\s+(?:one|block|flat|option|result|listing)\b"
+                         r"|\b(?:that|this|the same)\s+(?:block|flat|one)\b|\b(?:blk|block)\s+(\d{1,4}[a-z]?)\b(?!\s+\w)", re.I)
+
+
+def listed_block_reference(c: Dict[str, Any], query: str, listed: List[str], fresh: Dict[str, Any],
+                           prior: Optional[Dict[str, Any]] = None) -> None:
+    """"tell me more about the first one", "past sales of that block", "how far is Blk 627 from MRT?" after a search:
+    the block the previous answer listed, as the place this message asks about. The place question then reads what
+    is asked (past sales, a price check, what is near it) or asks it. Not when the message names its own place."""
+    bare = [re.fullmatch(r"\s*(?:blk|block)?\.?\s*(\d{1,4}[a-z]?)\s*", str(a), re.I) for a in fresh.get("addresses") or []]
+    if bare and all(bare) and listed:
+        # the model copied "blk 627" from "is $650k fair for blk 627?": the block just listed with that number
+        query = f"{query} blk {bare[0].group(1)}"
+        fresh = {**fresh, "addresses": []}
+        c["addresses"] = []
+    if fresh.get("addresses") or fresh.get("map_pin") or fresh.get("towns"):
+        return
+    last = [a for a in (prior or {}).get("addresses") or [] if a]
+    if len(last) == 1 and re.search(r"\b(?:it|its|there|that (?:block|flat|one|place)|the same (?:block|flat|place))\b", query, re.I) \
+            and not re.search(r"\b(?:first|second|third|1st|2nd|3rd|last|top)\s+(?:one|block|flat)\b", query, re.I):
+        listed = last                     # "how far is it from MRT" after a question about one block: that block
+    if not listed:
+        return
+    m = _LISTED_REF.search(query) or (re.search(r"\b(?:it|its|there)\b", query, re.I) if listed == last else None)
+    if not m:
+        return
+    if m.re is not _LISTED_REF:
+        block = listed[0]
+    elif m.group(1):
+        i = _ORDINALS[m.group(1).lower()]
+        block = listed[i] if -len(listed) <= i < len(listed) else None
+    elif m.group(2):
+        block = next((b for b in listed if b.split()[1].upper() == m.group(2).upper()), None)
+    else:
+        block = listed[0] if len(listed) == 1 else None
+    if block is None:
+        if not m.group(2):
+            c["clarifications"] = list(c.get("clarifications") or []) + [
+                "Which block do you mean? Say, for example, \"the first one\" or its block number."]
+        return
+    c["addresses"] = [block]
+    for k in SEARCH_KEYS:
+        c[k] = None if k not in ("amenity_radii_meters", "towns", "flat_types", "work_destinations") else (
+            {} if k == "amenity_radii_meters" else [])
+    answer_place_question(c, query, default=False)
+    if not any(c.get(k) for k, _ in _PLACE_REPLY) and re.search(r"\b(?:how far|distance|near|mrt|hawker|amenit)", query, re.I):
+        c["wants_nearby_amenities"] = True
+    elif not any(c.get(k) for k, _ in _PLACE_REPLY) and re.search(r"\b(?:more|details?|about|tell me)\b", query, re.I):
+        c["wants_block_history"] = True
 
 
 def answer_place_question(c: Dict[str, Any], query: str, default: bool = True) -> None:
@@ -1953,18 +2408,66 @@ def _station_key(name: Any) -> str:
     return " ".join(re.sub(r"\b(?:mrt|lrt|station)\b|[^a-z0-9]+", " ", str(name or "").lower()).split())
 
 
+def _amount_in(value: Any, text: str) -> bool:
+    """Whether a money amount appears in the text in any usual form ("$650,000", "650k", "0.65m", "650 thousand")."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return False
+    t = re.sub(r"[$,]|\bS\$|\bSGD\b", "", text, flags=re.I).lower()
+    forms = {f"{v:.0f}", f"{v / 1000:g}k", f"{v / 1000:g} k", f"{v / 1000:g} thousand", f"{v / 1e6:g}m", f"{v / 1e6:g} m",
+             f"{v / 1e6:g} million", f"{v / 1e6:g} mil"}
+    return any(re.search(rf"(?<![\d.]){re.escape(f)}(?![\d])", t) for f in forms)
+
+
+def _drop_unstated(c: Dict[str, Any], query: str, errors: List[str]) -> None:
+    """The model's reading keeps a limit, place or fact only when the user's words contain it. A runaway reading
+    (live, 3 Nov: 9 turns where every field was filled) invented a lease, a commute limit, a school, an income and
+    every intent, and the search then found nothing."""
+    rb = rule_based_extract(query)
+    dropped = []
+    if c.get("min_remaining_lease_years") and not re.search(rf"\b{int(c['min_remaining_lease_years'])}\b", query) \
+            and not rb.min_remaining_lease_years:
+        dropped.append("min_remaining_lease_years"); c["min_remaining_lease_years"] = None
+    if c.get("max_commute_minutes") and not re.search(rf"\b{int(c['max_commute_minutes'])}\b", query):
+        dropped.append("max_commute_minutes"); c["max_commute_minutes"] = None
+    for k in ("max_budget_sgd", "household_income", "cpf_oa_balance", "cash_savings"):
+        if c.get(k) and not _amount_in(c[k], query) and getattr(rb, k, None) != c[k]:
+            dropped.append(k); c[k] = None
+    words = lambda s: [w for w in re.findall(r"[a-z]{4,}", str(s).lower()) if w not in ("school", "primary", "high", "secondary")]
+    if c.get("school_name") and not any(w in query.lower() for w in words(c["school_name"])):
+        dropped.append("school_name"); c["school_name"] = None
+        (c.get("amenity_radii_meters") or {}).pop("school", None)
+    if c.get("bto_project_name") and not any(w in query.lower() for w in words(c["bto_project_name"])):
+        dropped.append("bto_project_name"); c["bto_project_name"] = None
+    if c.get("work_destinations"):
+        kept = [w for w in c["work_destinations"] if any(x in query.lower() for x in words(w) or [str(w).lower()])]
+        if kept != list(c["work_destinations"]):
+            dropped.append("work_destinations"); c["work_destinations"] = kept
+    flags = [k for k, v in c.items() if k.startswith("wants_") and v]
+    if len(flags) > 3:
+        # a question asks for one or two things; a reading that wants everything is a runaway: code's intents instead
+        for k in flags:
+            c[k] = bool(getattr(rb, k, False))
+        dropped.append(f"{len(flags)} intents")
+    if dropped:
+        errors.append(f"extract_constraints: model's reading not in the message was dropped: {dropped}")
+
+
 def _verify_extraction(c: Dict[str, Any], query: str, errors: List[str], from_model: bool = True) -> None:
     """Drop extracted facts the user did not actually supply."""
     comp = c.get("comparable_resale")
     if from_model and comp and not all(re.search(re.escape(f"{float(comp[k]):.3f}")[:-1], query) for k in ("latitude", "longitude")):
         c["comparable_resale"] = None
         errors.append("extract_constraints: comparable coordinates were not in the message; dropped")
+    if from_model:
+        _drop_unstated(c, query, errors)
     if from_model and c.get("towns"):
         # the same names, aliases and short forms ("JE", "AMK", "TPY") the prompt teaches and the regex reads; a model
         # that splits "Kallang/Whampoa" into KALLANG and WHAMPOA gets the HDB town both names stand for. A region the
         # user named ("in the east", "the north-east region") states its towns (research_intents.REGION_TOWNS): the model
         # that read "in the east" as Bedok, Pasir Ris and Tampines read it right (Experiment 1, 2 Nov: A1-05, A2-04, A3-05)
-        stated = set(named_towns(query, any_case_short=True))
+        stated = set(named_towns(query, any_case_short=True)) | set(stated_towns(query, any_case_short=True)[0])
         region = ri.region_towns(query)
         if region:
             stated |= set(region[1])
@@ -1974,7 +2477,7 @@ def _verify_extraction(c: Dict[str, Any], query: str, errors: List[str], from_mo
             kept.extend(s for s in same if s not in kept)
             if not same:
                 invented.append(t)
-        c["towns"] = kept
+        c["towns"] = kept or [t for t in stated_towns(query)[0]]   # "CLEMENI", "THE EAST": code's own reading
         if invented:
             errors.append(f"extract_constraints: towns not named in the message were dropped: {invented}")
     if from_model and c.get("wants_group_stats") and c.get("amenity_radii_meters"):
@@ -2046,18 +2549,25 @@ def decide_routing(c: Dict[str, Any], pending: Optional[Dict[str, Any]] = None) 
     if c.get("nearby_schools"):
         return ["spatial"]
     active: List[str] = []
-    if c.get("comparable_resale") or (c.get("towns") and (c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or c.get("flat_types")
+    if c.get("comparable_resale") or ((c.get("towns") or c.get("islandwide")) and (c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or c.get("flat_types")
                            or c.get("wants_price_trend") or c.get("wants_bto_comparison"))):
         active.append("market_sql")
-    if c.get("amenity_radii_meters") or c.get("school_name") or len(c.get("work_destinations") or []) >= 2:
+    # a commute check times the blocks of a search: two workplaces with no town or block would time the whole island
+    # (QA sweep, 3 Nov: a long message mentioning where a couple works listed 1,832 blocks)
+    if c.get("amenity_radii_meters") or c.get("school_name") or (
+            len(c.get("work_destinations") or []) >= 2 and not c.get("commute_unlimited") and (
+                c.get("towns") or c.get("addresses") or c.get("flat_types") or c.get("max_budget_sgd")
+                or c.get("min_remaining_lease_years") or not c.get("policy_question"))):
         active.append("spatial")
     if ri.needs_market_agent(c) and "market_sql" not in active:
         active.append("market_sql")
     if ri.needs_spatial_agent(c) and "spatial" not in active:
         active.append("spatial")
     financial_facts = has_financial_facts(c) if (pending or {}).get("kind") == "financial" else calculator_facts(c)
-    if financial_facts or c.get("household_income") or c.get("cpf_oa_balance") or (c.get("citizenship_scheme") and c.get("max_budget_sgd")) \
-            or c.get("wants_area_affordability"):
+    if c.get("money_asked", True) and (
+            financial_facts or c.get("household_income") or c.get("cpf_oa_balance")
+            or (c.get("citizenship_scheme") and c.get("max_budget_sgd"))
+            or c.get("wants_area_affordability") or c.get("wants_flat_affordability") or c.get("money_intent")):
         active.append("financial")
     if c.get("policy_question"):
         active.append("policy_rag")
@@ -2072,6 +2582,19 @@ def decide_routing(c: Dict[str, Any], pending: Optional[Dict[str, Any]] = None) 
     return active
 
 
+WHICH_TOWN = ("Which town or area should I search? For example \"Tampines\", \"Ang Mo Kio\" or \"the east\" "
+              "(I'll keep your other limits).")
+
+
+def _distance_label(key: str, value: float) -> str:
+    """'mrt_dist_m' 379 -> 'mrt 379m' (the form the auditor reads); 'commute_a_mins' 41 -> 'commute to workplace 1:
+    41 min', not 'commute_a_mins 41m', which read as metres."""
+    m = re.match(r"commute_([a-z])_mins?$", key)
+    if m:
+        return f"commute to workplace {ord(m.group(1)) - 96}: {value:.0f} min"
+    return f"{key.replace('_dist_m', '')} {value:.0f}m"
+
+
 def route_node(state: HDBCompassState) -> Dict[str, Any]:
     c = state.get("user_constraints", {})
     active = decide_routing(c, state.get("pending_clarification"))
@@ -2083,6 +2606,12 @@ def route_node(state: HDBCompassState) -> Dict[str, Any]:
         if active:
             return {"active_subagents": active, "user_constraints": picked}
         return {"active_subagents": active, "user_constraints": {**c, "clarifications": [ri.place_clarification(c)]}}
+    if not active and not c.get("clarifications") and not c.get("towns") and not c.get("policy_question") \
+            and not c.get("islandwide") \
+            and c.get("search_stated", True) and not (c.get("money_asked") and has_financial_facts(c)) and (
+            c.get("flat_types") or c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or c.get("amenity_radii_meters")):
+        # "I want a 4-room flat under $600k": a search with no place yet, so ask where rather than show the menu
+        return {"active_subagents": active, "user_constraints": {**c, "clarifications": [WHICH_TOWN]}}
     if not active and not c.get("clarifications"):
         menu = scope.menu_for(last_user_query(state))
         return {"active_subagents": active,
@@ -2275,6 +2804,34 @@ def _scheme_to_pair(scheme: Optional[str]) -> Tuple[str, bool]:
     return pair, "SECOND" not in s
 
 
+def search_args(name: str, args: Dict[str, Any], c: Dict[str, Any], errors: List[str], label: str) -> Dict[str, Any]:
+    """A search call as the model wrote it, held to the limits code read and checked: the model chooses the call, but
+    not a different budget, lease, town, flat type or distance (live, 3 Nov: a monthly income of $9,000 passed as the
+    price cap; the MRT limit left out of "also within 500m of a hawker"; a 1-2 km ring for "within 2km")."""
+    out = dict(args)
+    if name == "query_resale_blocks_by_criteria" and not out.get("block_keys"):
+        want = {"max_price": c.get("max_budget_sgd") or NO_PRICE_LIMIT, "min_lease_years": c.get("min_remaining_lease_years") or 0}
+        if c.get("towns"):
+            want["towns"] = list(c["towns"])
+        if c.get("flat_types"):
+            want["flat_types"] = list(c["flat_types"])
+    elif name == "filter_blocks_by_amenity_proximity":
+        radii = {k: v for k, v in (c.get("amenity_radii_meters") or {}).items() if k != "school"}
+        want = {"amenity_constraints": radii} if radii else {}
+        if c.get("towns"):
+            want["towns"] = list(c["towns"])
+    elif name == "verify_primary_school_distance" and c.get("school_name"):
+        r = (c.get("amenity_radii_meters") or {}).get("school") or 1000
+        want = {"school_name": c["school_name"], "bracket": "2km" if r >= 2000 else "1km"}
+    else:
+        return out
+    changed = sorted(k for k, v in want.items() if out.get(k) != v)
+    if changed:
+        errors.append(f"{label}: {name} arguments held to the stated limits: {', '.join(changed)}")
+        out.update(want)
+    return out
+
+
 def statistics_args(args: Dict[str, Any], c: Dict[str, Any], errors: List[str], label: str) -> Dict[str, Any]:
     """'Resale prices within 300m of an MRT' compares sales within 300 m with the rest: one band at the distance the
     user named, the bands code's own plan passes. A model that grouped by its default bands (0-200, 200-500, ...) and
@@ -2301,7 +2858,7 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
     if agent == "market_sql":
         if c.get("comparable_resale") and asked_for("query_comparable_resale_transactions", c, query):
             plan.append(("query_comparable_resale_transactions", c["comparable_resale"]))
-        if towns and ri.is_block_search(c, query):
+        if (towns or c.get("islandwide")) and ri.is_block_search(c, query):
             plan.append(("query_resale_blocks_by_criteria", dict(
                 towns=towns, flat_types=c.get("flat_types") or ["4 ROOM"],
                 max_price=c.get("max_budget_sgd") or NO_PRICE_LIMIT, min_lease_years=c.get("min_remaining_lease_years") or 0)))
@@ -2313,6 +2870,9 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
             plan.extend(ri.analysis_fallback(c, query))
         if c.get("wants_bto_comparison") and not c.get("bto_project_name"):
             m = re.search(r"([A-Z][A-Za-z]+(?: [A-Z][A-Za-z]+)*)\s+(?:BTO|launch)", query)
+            if m and re.fullmatch(r"(?:Is|Are|Was|Which|What|How|Does|Do|Compare|Should|Can|The|A|An|Any|New|Upcoming|Recent|Latest)"
+                                  r"(?: [A-Z][A-Za-z]+)*", m.group(1)):
+                m = None                  # "Is BTO cheaper than resale in Sembawang?": no project named
             plan.append(("compare_bto_launch_vs_resale", dict(bto_project_name=m.group(1) if m else (towns[0] if towns else "Recent BTO"), radius_meters=500)))
     elif agent == "spatial":
         if c.get("nearby_schools"):
@@ -2473,6 +3033,7 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
                         # refused the call; no stated limit is the same no-limit code's own plan uses
                         args = {**args, "max_price": NO_PRICE_LIMIT if args.get("max_price") is None else args["max_price"],
                                 "min_lease_years": 0 if args.get("min_lease_years") is None else args["min_lease_years"]}
+                    args = search_args(name, args, c, errors, label)
                     guarded = guard_financial_args(name, args, c, outputs, runners)   # may run the grant calculator (code)
                     runners[name].source = "model"
                     try:
@@ -3213,12 +3774,22 @@ def template_response(state: HDBCompassState) -> str:
     partial = partly_checked(state)
     if searched:
         if blocks:
-            lines.append(f"**{len(blocks)} candidate block(s)** match "
-                         f"{'the constraints that could be checked' if partial else 'all stated constraints'}:")
+            meta = ((state.get("sql_market_results") or {}).get("query_resale_blocks_by_criteria") or {}).get("metadata") or {}
+            total = meta.get("total_matching_blocks")
+            cut = bool(meta.get("truncated")) and isinstance(total, int) and total > len(blocks) \
+                and state.get("spatial_block_candidates") is None
+            if cut:
+                # the price search stops at its limit (cheapest first): say so, rather than calling the limit the total
+                lines.append(f"**The {len(blocks)} cheapest of {total} matching blocks** "
+                             f"(narrow the search, e.g. a lower budget or a distance limit, to see the rest), "
+                             f"meeting {'the constraints that could be checked' if partial else 'all stated constraints'}:")
+            else:
+                lines.append(f"**{len(blocks)} candidate block(s)** match "
+                             f"{'the constraints that could be checked' if partial else 'all stated constraints'}:")
             for b in blocks[:LISTED_BLOCKS]:
                 price = f" — median ${b['median_resale_price']:,.0f}" if b.get("median_resale_price") else ""
                 lease = f", {b['median_remaining_lease_years']:.0f} yrs lease" if b.get("median_remaining_lease_years") else ""
-                dist = ", ".join(f"{k.replace('_dist_m','')} {v:.0f}m" for k, v in (b.get("distances") or {}).items())
+                dist = ", ".join(_distance_label(k, v) for k, v in (b.get("distances") or {}).items())
                 kind = f" {b['flat_type']}" if b.get("flat_type") and len({x.get("flat_type") for x in blocks}) > 1 else ""
                 town = f" ({b['town']})" if b.get("town") else ""
                 lines.append(f"- Blk {b['block']} {b['street']}{town}{kind}{price}{lease}{(' — ' + dist) if dist else ''}")
@@ -3291,6 +3862,11 @@ def template_response(state: HDBCompassState) -> str:
                 lines.append(f"- {label}: calculation unavailable.")
                 continue
             if value.get("status", "ok") != "ok":
+                if name == "calculate_bsd_and_upfront_outlay" and _stamp_duty_only(state) is not None:
+                    # "stamp duty on $650k?": the duty needs only the price; the funding facts were not asked for
+                    lines.append(f"- Buyer's stamp duty: **${value['buyer_stamp_duty']:,.0f}** (on the purchase price; "
+                                 "charged on the valuation instead if that is higher)")
+                    continue
                 detail = ", ".join(field.replace("_", " ") for field in value.get("missing_inputs", [])) or "; ".join(value.get("notes", []))
                 status = "more information needed" if value.get("status") == "needs_information" else "scenario unavailable"
                 lines.append(f"- {label}: {status} — {detail}")
@@ -3934,6 +4510,8 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
         if clar:
             sentences.append(f"{'The rest of y' if done else 'Y'}our grant and budget estimate needs a few more facts, "
                              "asked for at the end.")
+        elif fin and not done and _stamp_duty_only(state) is not None:
+            sentences.append("Here is the buyer's stamp duty on the price you gave.")
         elif fin and not done:
             sentences.append("Your estimate could not be worked out in full; what is missing is said below.")
         sql = state.get("sql_market_results") or {}
@@ -4577,6 +5155,10 @@ def initial_state(query: str, variant: str, map_state: Optional[Dict[str, Any]] 
             "auditor_verdict": {}, "model_opening": "", "tool_call_log": [], "errors": [], "subagent_notes": [],
             "prior_constraints": (previous or {}).get("user_constraints"),
             "pending_clarification": (previous or {}).get("clarification"), "clarification": None,
+            # the last list shown stays the reference through a turn that listed none ("tell me more about the first one")
+            "prior_blocks": [f"Blk {b.get('block')} {b.get('street')}" for b in
+                             ((previous or {}).get("candidate_blocks_intersection") or [])[:LISTED_BLOCKS]]
+                            or list((previous or {}).get("prior_blocks") or []),
             "fast_path": fast_path}
 
 
