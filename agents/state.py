@@ -70,6 +70,8 @@ class HDBCompassState(TypedDict, total=False):
     # the blocks the previous turn listed, in order ("Blk 627 ANG MO KIO AVE 9"), so "the first one" or "that block"
     # in a follow-up names one of them
     prior_blocks: Optional[List[str]]
+    # the same blocks' median price, lease and nearest listed distance, for "which of those is cheapest?"
+    prior_block_facts: Optional[List[Dict[str, Any]]]
     # The model's own constraint reading before code fills gaps or overrides money facts (None without a model).
     # Scored separately, so a result shows how much the model read and how much code supplied.
     model_constraints: Optional[Dict[str, Any]]
