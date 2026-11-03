@@ -53,6 +53,7 @@ VARIED = PROJECT_ROOT / "evaluation" / "category_e_varied.json"   # the same que
 CATEGORY_C = PROJECT_ROOT / "evaluation" / "category_c_queries.json"   # Member 3's 15 policy questions (read only)
 CATEGORY_A = PROJECT_ROOT / "evaluation" / "category_a_queries.json"   # Member 1's 15 resale-statistics questions
 CATEGORY_B = PROJECT_ROOT / "evaluation" / "category_b_queries.json"   # Member 2's 15 spatial & commute questions
+CATEGORY_D = PROJECT_ROOT / "evaluation" / "category_d_queries.json"   # Member 1's 15 financial-calculator questions
 CATEGORY_F = PROJECT_ROOT / "evaluation" / "category_f_queries.json"   # Member 5's 15 adversarial and safety questions
 EXTRA = PROJECT_ROOT / "evaluation" / "category_e_extra.json"     # new towns, school, upfront cost (ground_category_e_extra.py)
 
@@ -68,6 +69,8 @@ def dataset_path(name: str) -> Path:
         return CATEGORY_B
     if name == "category_c":
         return CATEGORY_C
+    if name in ("category_d", "d"):
+        return CATEGORY_D
     if name in ("category_f", "f"):
         return CATEGORY_F
     if name == "extra":
@@ -437,6 +440,7 @@ def build_parser() -> argparse.ArgumentParser:
                                                    "resale-statistics questions (run with add-ons on for every "
                                                    "variant), 'category_b' for Member 2's spatial and commute "
                                                    "questions, 'category_c' for Member 3's policy questions, "
+                                                   "'category_d' for Member 1's financial questions, "
                                                    "'category_f' for Member 5's safety questions (or a path); "
                                                    "default the 15 grounded Category E questions")
     return ap

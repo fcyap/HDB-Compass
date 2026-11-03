@@ -1026,6 +1026,17 @@ _WORKED = r"(?:employ\w*|working|(?:have|has|'ve)\s+(?:both\s+|each\s+|all\s+)?w
 _CONTINUOUS_WORK = (rf"(?:continuous(?:ly)?\s+(?:employ\w*|working)|{_WORKED}\s+(?:\w+\s+){{0,2}}continuously)"
                     r".{0,40}\b(?:12|twelve)\s*(?:months?|mths?)\b"
                     rf"|{_WORKED}\s+(?:12|twelve)\s*(?:months?|mths?)\s+continuously")
+# the buyers say they have NOT worked the 12 months (the household form's "No": "We have not worked continuously for the
+# past 12 months"; "I haven't been employed continuously for 12 months"; "not continuously employed for 12 months")
+_NOT_CONTINUOUS_WORK = (r"(?:\bnot|n't|\bnever)\s+(?:\w+\s+){0,3}(?:continuous(?:ly)?|consistently)\s+(?:\w+\s+){0,2}"
+                        r"(?:employ\w*|working|worked|work)\b.{0,40}\b(?:12|twelve)\s*(?:months?|mths?)\b"
+                        r"|(?:\bnot|n't|\bnever)\s+(?:\w+\s+){0,2}(?:employ\w*|working|worked)\s+(?:\w+\s+){0,2}continuously\b"
+                        r".{0,40}\b(?:12|twelve)\s*(?:months?|mths?)\b")
+
+
+def said_not_continuously_employed(statement_text: str) -> bool:
+    """The buyers state they have not worked the 12 months (_stated_match skips negated matches, so this looks itself)."""
+    return any(re.search(_NOT_CONTINUOUS_WORK, c, re.I) for c in _clauses_of(statement_text))
 
 
 def _amount(m: re.Match) -> float:
@@ -1065,7 +1076,9 @@ def stated_financial_inputs(text: str, context: str = "") -> Dict[str, Dict[str,
         f["monthly_debt_obligations"] = _amount(m)
     if (m := _stated_match(_YOUNGEST_OCCUPANT, statements(t, keep=("plan",)))):   # "who will live in the flat"
         f["youngest_core_member_age"] = float(m.group(1))
-    if _stated_match(_CONTINUOUS_WORK, s) and not _JOB_LOSS.search(s):
+    if said_not_continuously_employed(s):
+        f["continuous_employment_12_months"] = False      # a stated "no" is an answer: asking again would loop
+    elif _stated_match(_CONTINUOUS_WORK, s) and not _JOB_LOSS.search(s):
         f["continuous_employment_12_months"] = True
     # "eligibility for the grants is confirmed", "HDB has confirmed our eligibility for the grants"
     if _stated_match(r"eligibility for (?:the )?grants?.{0,40}\bconfirmed\b|\bgrants?\b.{0,30}\beligibility\b.{0,25}\bconfirmed\b"
@@ -1321,7 +1334,10 @@ def fact_is_grounded(field: str, value: Any, text: str) -> bool:
     if field == "loan_eligibility_confirmed":
         return value is True and stated(r"\bloan\b", r"\beligib|\bapprov", r"\bconfirmed\b|\bapproved\b")
     if field == "continuous_employment_12_months":
+        if value is False:
+            return said_not_continuously_employed(s)
         return value is True and not _JOB_LOSS.search(t) and not _NOT_CONTINUOUS.search(s) and \
+            not said_not_continuously_employed(s) and \
             stated(r"\b(?:employ\w*|working|work|worked|job)\b", r"\b(?:12|twelve)\s*(?:months?|mths?)\b|\b(?:a|one|1|past) year\b")
     if field in ("proximity", "near_parents_4km"):
         none = bool(re.search(_NO_PROXIMITY + r"|\bno proximity\b|\bnot (?:buying |living |staying )?near (?:my|our) parents\b", s, re.I))
@@ -4526,6 +4542,22 @@ def finalize_node(state: HDBCompassState) -> Dict[str, Any]:
     return {"messages": [{"role": "assistant", "content": state.get("draft_response", "")}]}
 
 
+def refused_by_guardrail(state: Optional[Dict[str, Any]]) -> bool:
+    return any(str(e).startswith("input_guardrail:") for e in (state or {}).get("errors") or [])
+
+
+def before_refused_turn(previous: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """A turn the input guardrail refused carries nothing forward: the conversation continues from the turn before it
+    (its messages, constraints and open question), so a refused "guaranteed profit on a BTO launch" does not make the
+    next grants question read as a BTO purchase."""
+    if not refused_by_guardrail(previous):
+        return previous
+    msgs = list(previous.get("messages") or [])
+    users = [i for i, m in enumerate(msgs) if isinstance(m, dict) and m.get("role") == "user"]
+    return {"messages": msgs[:users[-1]] if users else [], "user_constraints": previous.get("prior_constraints"),
+            "clarification": previous.get("pending_clarification")}
+
+
 def initial_state(query: str, variant: str, map_state: Optional[Dict[str, Any]] = None,
                   previous: Optional[Dict[str, Any]] = None, fast_path: bool = False) -> HDBCompassState:
     """previous: the final state of the last turn in the same conversation. Its messages, constraints and any
@@ -4533,6 +4565,7 @@ def initial_state(query: str, variant: str, map_state: Optional[Dict[str, Any]] 
     fast_path=True (the app) answers fully recognised self-contained questions without model calls; experiments leave
     it off so every variant is measured on its model's own choices."""
     query = sanitizer.redact(query)[0]   # every entry point (app, evaluation, command line) builds its state here
+    previous = before_refused_turn(previous)
     history = list((previous or {}).get("messages") or [])
     # a reply to a menu (or to the question one of its options asked) is completed by code: an option's own follow-up
     # question is answered at once, and a bare launch name becomes the full question about it (agents/scope.py)
