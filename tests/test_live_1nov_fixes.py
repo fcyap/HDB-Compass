@@ -140,7 +140,8 @@ def test_a_school_question_keeps_only_the_school_limit(query):
 @pytest.mark.parametrize("query,reading,kept", [
     (CAT_E["E1-03"], {"mrt": 400, "hawker": 500}, {"mrt": 400, "hawker": 500}),
     ("4-room in Bedok within 300m of a food centre and near a station", {"hawker": 300, "mrt": 500}, {"hawker": 300, "mrt": 500}),
-    ("5rm in Tampines, walk to NTUC and bus stop", {"supermarket": 500, "bus_stop": 300}, {"supermarket": 500, "bus_stop": 300}),
+    # the bus stop is mentioned, but there are no bus-stop locations to measure to: not applied, and said so
+    ("5rm in Tampines, walk to NTUC and bus stop", {"supermarket": 500, "bus_stop": 300}, {"supermarket": 500}),
     ("4-room near Sengkang LRT under 550k", {"mrt": 500}, {"mrt": 500}),
 ])
 def test_limits_the_user_mentioned_are_kept(query, reading, kept):

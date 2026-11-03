@@ -135,7 +135,10 @@ def test_zero_distance_limits_are_not_constraints():
         # the message mentions a park, so the model's park limit is one the user asked for (a limit for an amenity the
         # message never mentions is dropped: tests/test_live_1nov_fixes.py)
         out = sv.extract_constraints_node({"messages": [{"role": "user", "content": "Can we apply for a BTO near a park?"}]})
-    assert out["user_constraints"]["amenity_radii_meters"] == {"park": 400}
+    # zero limits are gone; the park limit is one the user asked for, but there are no park locations to measure to,
+    # so it is not applied and the answer says so (QA sweep, 3 Nov: it passed every block)
+    assert out["user_constraints"]["amenity_radii_meters"] == {}
+    assert any("park" in a for a in out["user_constraints"]["assumptions"])
 
 
 def test_never_ask_the_user_for_the_grant_total():
@@ -532,7 +535,9 @@ def test_confirmed_before_the_noun_worked_and_lease_wordings_are_read():
     assert f["eligibility_confirmed"] and f["loan_eligibility_confirmed"] and f["continuous_employment_12_months"]
     assert f["proximity"] == "none" and f["remaining_lease_years"] == 80
     assert _facts("Work out the grants on a 70-year remaining lease.")["remaining_lease_years"] == 70
-    assert "eligibility_confirmed" not in _facts("HDB has not confirmed our eligibility for the grants.")
+    # a "not confirmed" answer is read (False), so the app stops asking it (the household form's "No" looped, 3 Nov)
+    assert _facts("HDB has not confirmed our eligibility for the grants.")["eligibility_confirmed"] is False
+    assert _facts("Nobody has confirmed our eligibility for the grants.")["eligibility_confirmed"] is False
     assert "proximity" not in _facts("Do we qualify for the proximity grant?")
 
 
@@ -553,7 +558,6 @@ def test_new_wordings_never_read_someone_elses_facts_or_a_search_filter():
                      ("My sister doesn't qualify for the proximity grant but we live with our parents.", "proximity"),
                      ("Our agent says we're not eligible for the PHG, but we think we are.", "proximity"),
                      ("I confirmed with HDB that eligibility for the grants depends on our income.", "eligibility_confirmed"),
-                     ("Nobody has confirmed our eligibility for the grants.", "eligibility_confirmed"),
                      ("We've confirmed our eligibility for the grants and are deciding on an HDB loan.", "loan_eligibility_confirmed"),
                      ("My husband worked continuously for 12 months in 2019 and is now self-employed.", "continuous_employment_12_months")):
         assert field not in _facts(text := t), text
