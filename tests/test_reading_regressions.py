@@ -169,7 +169,9 @@ def test_school_guard_lets_st_and_hyphenated_names_through():
     ("4-room in Bishan, commute to one-north and to NUS under 25 min", ["one-north", "NUS"], 25),
     ("Find flats in Bishan within 10 min walk to MRT with short commute", [], None),
     ("What is the commute time from Tampines to Raffles Place, and to MRT?", ["Raffles Place"], None),
-    ("Within 10 min walk to MRT, under 40 min to CBD", [], 40),
+    # a minutes limit to a place is a commute without the word "commute" (SEM-28: "below 30 minutes to Raffles
+    # Place"), so "to CBD" is the workplace; the MRT walk still is not
+    ("Within 10 min walk to MRT, under 40 min to CBD", ["CBD"], 40),
 ])
 def test_commute_destinations_are_places_only(query, work, minutes):
     c = sv.rule_based_extract(query)

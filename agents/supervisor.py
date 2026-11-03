@@ -72,7 +72,9 @@ TOWN_ALIASES = {"TIONG BAHRU": "BUKIT MERAH", "KALLANG": "KALLANG/WHAMPOA", "WHA
                 "REDHILL": "BUKIT MERAH", "TELOK BLANGAH": "BUKIT MERAH", "COMMONWEALTH": "QUEENSTOWN"}
 # short forms people actually type, matched as whole upper-case words so "JE" never matches inside another word
 TOWN_SHORT = {"AMK": "ANG MO KIO", "TPY": "TOA PAYOH", "JE": "JURONG EAST", "JW": "JURONG WEST", "CCK": "CHOA CHU KANG",
-              "BP": "BUKIT PANJANG", "SK": "SENGKANG", "PG": "PUNGGOL"}
+              "BP": "BUKIT PANJANG", "SK": "SENGKANG", "PG": "PUNGGOL", "TAMP": "TAMPINES"}
+# short forms that are not everyday words, so lower case is read too: "4rm tamp under 650k can?" (SPAT-51, LIVE-WS-01)
+_SHORT_ANY_CASE = {"AMK", "TPY", "CCK", "TAMP"}
 NO_DATA = "I could not find data for that request."   # the facts section when no tool found anything
 FLAT_TYPES = ("1 ROOM", "2 ROOM", "3 ROOM", "4 ROOM", "5 ROOM", "EXECUTIVE", "MULTI-GENERATION")   # as in the resale data
 NUMBER_WORDS = {"two": "2", "three": "3", "four": "4", "five": "5"}
@@ -237,7 +239,7 @@ def named_towns(text: str, any_case_short: bool = False) -> List[str]:
         if alias in up and town not in towns:
             towns.append(town)
     for short, town in TOWN_SHORT.items():
-        if re.search(rf"\b{short}\b", text, re.I if any_case_short else 0) and town not in towns:
+        if re.search(rf"\b{short}\b", text, re.I if any_case_short or short in _SHORT_ANY_CASE else 0) and town not in towns:
             towns.append(town)
     return towns
 
@@ -336,7 +338,7 @@ _DESTINATION = re.compile(r"(?<![A-Za-z])(?<!close )(?<!closer )(?<!near )(?<!ne
                           # read ahead without consuming, so "to one-north and to jurong east" gives both
                           r"(?=((?:one-north|[A-Za-z][A-Za-z0-9'’\-]*)(?:\s+(?:one-north|[A-Za-z][A-Za-z0-9'’\-]*)){0,4}))",
                           re.I)
-_IN_COMMUTE_CLAUSE = re.compile(r"\bcommute\b[^,.;!?]*$", re.I)
+_IN_COMMUTE_CLAUSE = re.compile(r"\b(?:commut\w*|workplaces?)\b[^,.;!?]*$", re.I)
 _NOT_A_WORKPLACE = {"MRT", "LRT", "HDB", "BTO", "WORK", "OFFICE", "HOME", "SCHOOL", "STATION"}
 _STATION_WORDS = {"MRT", "LRT", "STATION", "INTERCHANGE"}
 # lower-case words that start no place name: "commute to my office", "commute to and from work", "to both offices"
@@ -362,15 +364,25 @@ def workplaces(q: str) -> Tuple[List[str], List[Tuple[int, int]]]:
 
     for m in re.finditer(r"\bworks?\s+(?:at|in)\s+([A-Za-z0-9 \-'’]+?)(?=[,.;?!]|\s+and\b|$)", q, re.I):
         add(_WORKPLACE_END.sub("", m.group(1)), m.start(1))
-    if len(found) < 2 and re.search(r"\bcommute\b", q, re.I):
+    # "commutes", "Change the workplaces to ..." and a bare limit ("below 30 minutes to Raffles Place") start the
+    # commute clause too (SEM-27, SEM-28); "to Raffles Place and one-north" names two workplaces
+    if len(found) < 2 and (re.search(r"\b(?:commut\w*|workplaces?)\b", q, re.I) or commute_limits(q)):
         for m in _DESTINATION.finditer(q):
             commute_clause = bool(_IN_COMMUTE_CLAUSE.search(q[:m.start()]))
             start = m.start(1)
             words = m.group(1).split()
             if words[0].lower() == "the":                    # "commute to the CBD"
                 start, words = start + len(words[0]) + 1, words[1:]
+            second = None
             if commute_clause:
-                words = _WORKPLACE_END.sub("", " ".join(words)).split()
+                head = _WORKPLACE_END.sub("", " ".join(words))
+                words = head.split()
+                tail = re.match(r"\s+(?:and|&)\s+(?:to\s+)?(?:the\s+)?((?:one-north|[A-Za-z][A-Za-z0-9'’\-]*)"
+                                r"(?:\s+(?:one-north|[A-Za-z][A-Za-z0-9'’\-]*)){0,4})", q[start + len(head):])
+                if tail and words:                           # "to Raffles Place and one-north": both
+                    name2 = _WORKPLACE_END.sub("", tail.group(1)).strip()
+                    if name2 and not _NOT_A_PLACE_START.match(name2.split()[0]):
+                        second = (name2, start + len(head) + tail.start(1))
             else:                                            # outside the commute clause, name casing only
                 cased = [bool(re.fullmatch(_PLACE_WORD, w)) for w in words] + [False]
                 words = words[:cased.index(False)]
@@ -381,12 +393,25 @@ def workplaces(q: str) -> Tuple[List[str], List[Tuple[int, int]]]:
                     continue
                 words = words[:-1]                           # "commute to Raffles Place MRT": the place
             add(" ".join(words), start)
+            if second:
+                add(*second)
     return found, spans
+
+
+def without_workplaces(q: str) -> str:
+    """The message with its workplace names blanked out when it names two or more, so a town named only as a
+    workplace ("We work at Raffles Place and work at Jurong East. Find flats in Bukit Merah", "Change the workplaces to
+    Changi Business Park and Tampines.") is not a search town; one also named elsewhere ("flats in Jurong East") stays."""
+    work, spans = workplaces(q)
+    if len(work) < 2:
+        return q
+    return "".join(" " if any(a <= i < b for a, b in spans) else ch for i, ch in enumerate(q))
 
 
 # A minutes limit ("under 45 mins") is the commute limit unless it is about an amenity or family: "MRT within 10 mins",
 # "near clinic within 10 min", "within 10 mins of my parents", "within 15 mins by bus to MRT", "10 min walk".
-_MINUTES_LIMIT = re.compile(r"(?:under|within|less than|max)\s*(\d{2})\s*min(?:s|utes)?\b", re.I)
+# "below 30 minutes to Raffles Place" is one too (SEM-28: it was never checked).
+_MINUTES_LIMIT = re.compile(r"(?:under|within|less than|below|no more than|at most|up to|max|<)\s*(\d{2})\s*min(?:s|utes)?\b", re.I)
 _AMENITY_PLACE = (r"(?:mrt|lrt|trains?|stations?|bus(?: stops?| interchange)?|hawker\w*|food (?:centre|court)s?|"
                   r"supermarkets?|markets?|malls?|parks?|clinics?|polyclinics?|hospitals?|schools?|parents?|in-laws|"
                   r"family|mum|mom|dad|grand\w+)")
@@ -528,6 +553,21 @@ def _budget_phrase(q: str) -> Optional[float]:
     return None
 
 
+_TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90}
+_UNITS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
+
+
+def spelled_numbers(q: str) -> str:
+    """Spelled-out amounts and lease years as digits, so the readings below see them: "under a million" is "under $1m",
+    "half a million" "$500k", "at least seventy years lease" "at least 70 years lease" (SEM-02, SPAT-03, SPAT-15). Tens
+    only before "years", so "one" in "under one million" or "the fifty" elsewhere is never a number by itself."""
+    q = re.sub(r"\bhalf a million\b", "$500k", q, flags=re.I)
+    q = re.sub(r"\b(?:a|one)\s+million\b", "$1m", q, flags=re.I)
+    return re.sub(r"\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[- ](one|two|three|four|five|six|seven|eight|nine))?\b"
+                  r"(?=[- ]?(?:years?|yrs?)\b)",
+                  lambda m: str(_TENS[m.group(1).lower()] + (_UNITS[m.group(2).lower()] if m.group(2) else 0)), q, flags=re.I)
+
+
 def rule_based_extract(query: str) -> ExtractedConstraints:
     """Regex extractor: the no-LLM path and the safety net when structured output fails."""
     nearby = school_location_request(query)
@@ -537,6 +577,7 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
     towns, notes = named_towns(q), []
     for word, digit in NUMBER_WORDS.items():
         q = re.sub(rf"\b{word}(?=[- ]?(?:room|rm)\b)", digit, q, flags=re.I)
+    q = spelled_numbers(q)
     # "4-room", "4rm"; not a room count ("at least 2 rooms", "3 bedrooms")
     flat_types = [f"{m.group(1)} ROOM" for m in re.finditer(r"\b([2-5])\s*[- ]?\s*(?:room|rm)s?\b", q, re.I)
                   if not re.search(r"(?:at least|min(?:imum)?|more than|over|minimum of)\s*$", q[:m.start()], re.I)]
@@ -549,8 +590,10 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
     flat_types = list(dict.fromkeys(flat_types))
 
     budget = None
-    # "under 650k", "<650k", "budget up to $0.65m", "no more than 650 thousand"; a bare "400m" is metres, not money
-    for m in re.finditer(r"(?:under|below|less than|max(?:imum)?|up to|budget(?: of)?(?: up to)?|no more than|at most|<|≤)"
+    # "under 650k", "<650k", "budget up to $0.65m", "no more than 650 thousand"; a bare "400m" is metres, not money.
+    # Also "<= 550000", "ceiling $500,000", "cap of 600k", "raise the top end to 700k" (SEM-02, SPAT-56).
+    for m in re.finditer(r"(?:under|below|less than|max(?:imum)?|up to|budget(?: of)?(?: up to)?|no more than|at most|"
+                         r"\b(?:ceiling|cap)(?:\s+(?:of|at))?|\b(?:top|upper)\s+(?:end|limit)(?:\s+(?:of|to|at))?|<=|<|≤)"
                          r"\s*(\$)?\s?(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million|mil)?\b", q, re.I):
         unit = (m.group(3) or "").lower()
         if unit == "m" and not m.group(1) and float(m.group(2).replace(",", "")) >= 10:
@@ -574,12 +617,15 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
 
     lease = None
     # "at least 60 yrs lease left", "65+ years of lease", "lease 65+ yrs", "remaining lease of 65 years or more"
-    # not a flat's age ("at least 60 years old flat") or a working life ("30 years left before retirement")
-    for pat in (r"(?:at least|minimum|min\.?|>=|≥)\s*(\d{2})\s*(?:years?|yrs?)\b(?!\s*(?:old|of age|left before|to retire|"
+    # not a flat's age ("at least 60 years old flat") or a working life ("30 years left before retirement").
+    # Also "at least 65-year lease" and "70 years remaining" / "70 years left" (SEM-03, SPAT-15), but not a
+    # "60-year-old flat" or "30 years left before retirement".
+    for pat in (r"(?:at least|minimum|min\.?|>=|≥)\s*(\d{2})\s*-?\s*(?:years?|yrs?)\b(?![\s-]*(?:old|of age|left before|to retire|"
                 r"before retire|till retire|until retire))",
                 r"(\d{2})\s*\+\s*(?:years?|yrs?)",
                 r"\blease\s*(?:of\s*)?(?:at least\s*|>=\s*|≥\s*)?(\d{2})\s*\+?\s*(?:years?|yrs?)",
-                r"(\d{2})\s*(?:years?|yrs?)\s*(?:of\s*)?(?:remaining\s*)?lease"):
+                r"(\d{2})\s*-?\s*(?:years?|yrs?)\s*(?:of\s*)?(?:remaining\s*)?lease",
+                r"(\d{2})\s*-?\s*(?:years?|yrs?)\s+(?:of\s+lease\s+)?(?:remaining|left)\b(?!\s+(?:before|to|till|until|on)\b)"):
         m = re.search(pat, q, re.I)
         if m:
             lease = int(m.group(1))
@@ -611,8 +657,11 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
     # "MRT within 400m"; never across "and", so "mrt and within 500m of a hawker centre" is not read as the MRT limit
     for m in re.finditer(r"\b(mrt|lrt|hawker|supermarket|bus stop|park)(?:(?!\band\b)[a-z ])*?within\s*(\d+)\s*m\b", q, re.I):
         radii[AMENITY_WORDS[m.group(1).lower()]] = int(m.group(2))
-    # "MRT 300m", "near mrt 400m", "LRT < 300 m", "hawker 0.5km"
-    for m in re.finditer(r"\b(mrt|lrt|hawker|supermarket)(?:\s+(?:station|centre|center))?\s*(?:<|≤|<=|:)?\s*(\d+(?:\.\d+)?)\s*(km|m|metres?|meters?)\b",
+    # "MRT 300m", "near mrt 400m", "LRT < 300 m", "hawker 0.5km", "the MRT limit 900m", "mrt less than 800 metres"
+    # (SEM-16: "Make the MRT limit 900m." repeated the 500 m search)
+    for m in re.finditer(r"\b(mrt|lrt|hawker|supermarket)(?:\s+(?:stations?|centres?|centers?))?(?:\s+(?:limit|distance|radius))?\s*"
+                         r"(?:<=|<|≤|:|=|to|of|at|less than|under|below|within|max(?:imum)?|up to|no more than|at most)?\s*"
+                         r"(\d+(?:\.\d+)?)\s*(km|m|metres?|meters?)\b",
                          q, re.I):
         dist = float(m.group(2)) * (1000 if m.group(3).lower() == "km" else 1)
         if dist >= 20:
@@ -635,6 +684,7 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
         dist = float(m.group(1)) * (1000 if m.group(2).lower() == "km" else 1)
         if dist >= 20:
             radii.setdefault(AMENITY_WORDS[m.group(3).lower()], int(dist))
+    stated_rail = "mrt" in radii   # a rail distance the user gave (not research_intents' vague "near an MRT" default)
 
     # a name in the user's own casing, or lower-case words that can be a name (school_named)
     school = school_named(q)
@@ -652,11 +702,9 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
     scheme = {"SC_Single": "SC_Single_35", "SC_PR": "SC_PR_FirstTimer" if first else None,
               "SC_SC": {True: "SC_SC_FirstTimer", False: "SC_SC_SecondTimer"}.get(first)}.get(pair or "")
 
-    work, work_spans = workplaces(q)
-    if len(work) >= 2:
-        # a town named only as a workplace ("We work at Raffles Place and work at Jurong East. Find flats in Bukit
-        # Merah") is not a search town; one also named elsewhere ("flats in Jurong East") stays
-        rest = "".join(" " if any(a <= i < b for a, b in work_spans) else ch for i, ch in enumerate(q))
+    work, _ = workplaces(q)
+    rest = without_workplaces(q)
+    if rest != q:
         towns = [t for t in towns if t in named_towns(rest)]
 
     # two different limits ("30 mins to Raffles Place and 40 mins to Jurong East") keep the stricter one: one limit
@@ -677,10 +725,22 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
                                             r"|compar.*\bbto\b|\bresale\b.*\b(?:cheaper|pricier|more expensive) than\b.*\bbto\b", q, re.I)),
     )
     base.update(ri.extract_research_fields(q, base))
+    rail = base.get("amenity_radii_meters") or {}
+    if stated_rail and "mrt" in rail:
+        # "mrt" measures to the nearest MRT or LRT station. "4-room in Punggol below 750k; LRT must be within 300m."
+        # means LRT stations only, and "Use MRT stations only instead." MRT stations only (the spatial tool's "lrt" and
+        # "mrt_only" keys): read as "mrt", LRT-only blocks passed the MRT check (SEM-01, SPAT-38). Renamed after the
+        # research reading, so a grouped question still drops the distance it groups by.
+        if re.search(r"\blrt\b", q, re.I) and not re.search(r"\bmrt\b|\btrains?\b", q, re.I):
+            rail["lrt"] = rail.pop("mrt")
+        elif re.search(r"\bmrt(?:\s+stations?)?\s+only\b|\bonly\s+(?:the\s+)?mrt\b|\b(?:no|not|exclud\w*|without)\s+(?:the\s+)?lrt\b",
+                       q, re.I):
+            rail["mrt_only"] = rail.pop("mrt")
     if not base.get("towns"):
         # a region ("in the east") or a misspelt town ("Tampenis") when the research reading (which groups a region's
-        # towns itself for statistics) left the towns empty: a flat search there
-        found, more = stated_towns(q)
+        # towns itself for statistics) left the towns empty: a flat search there. Not a town named only as a
+        # workplace ("Change the workplaces to Changi Business Park and Tampines.": SPAT-33)
+        found, more = stated_towns(rest)
         if found:
             base["towns"], notes = found, notes + more
     if notes:
@@ -1930,16 +1990,20 @@ SEARCH_KEYS = ("towns", "flat_types", "max_budget_sgd", "min_remaining_lease_yea
 _NEW_SEARCH = re.compile(r"^\W*(?:(?:can you |could you |please |pls |now |ok(?:ay)?,? |also )*)(?:find|search|show|list|look(?:ing)? for|"
                          r"any|get|give)\b", re.I)
 # "remove the MRT limit", "no lease limit", "drop the budget", "without the hawker centre", "any budget"
+# and "Remove just the hawker condition." (SPAT-22)
 _REMOVE = re.compile(r"\b(?:remove|drop|without|no|forget|ignore|skip|don'?t need|do not need|don'?t care about|any|clear)\b"
-                     r"(?:\s+(?:the|my|a|an|that|limit on|filter on|need for))?\s+"
+                     r"(?:\s+just)?(?:\s+(?:the|my|a|an|that|limit on|filter on|need for))?\s+"
                      r"(mrt|lrt|train|hawker|supermarket|school|commute|travel|budget|price|lease|distance)", re.I)
-_REMOVES = {"mrt": ("amenity_radii_meters", "mrt"), "lrt": ("amenity_radii_meters", "mrt"),
+_REMOVES = {"mrt": ("amenity_radii_meters", "mrt"), "lrt": ("amenity_radii_meters", "lrt"),
             "train": ("amenity_radii_meters", "mrt"), "hawker": ("amenity_radii_meters", "hawker"),
             "supermarket": ("amenity_radii_meters", "supermarket"), "school": ("school_name", None),
             "commute": ("max_commute_minutes", None), "travel": ("max_commute_minutes", None),
             "budget": ("max_budget_sgd", None), "price": ("max_budget_sgd", None),
             "lease": ("min_remaining_lease_years", None), "distance": ("amenity_radii_meters", None)}
-_BARE_DISTANCE = re.compile(r"^\W*(?:(?:what|how) about|try|make it|change (?:it )?to|ok(?:ay)?|and|then|or)?\s*"
+# a distance on its own changes the one distance limit: "within 300m", "try 400m", "Tighten it to 300m." (SPAT-62)
+_BARE_DISTANCE = re.compile(r"^\W*(?:(?:what|how) about|try|make it|change (?:it )?to|"
+                            r"(?:tighten|loosen|widen|relax|reduce|cut|shrink|lower|raise|increase|extend|bring|set|narrow|expand)"
+                            r"(?:\s+(?:it|that|this|the\s+(?:limit|distance|radius)))?(?:\s+(?:down|up|back))?\s+to|ok(?:ay)?|and|then|or)?\s*"
                             r"(?:within|under|less than|below|<|up to)?\s*(\d+(?:\.\d+)?)\s*(km|m|metres?|meters?)\b"
                             r"(?:\s+(?:instead|then|only|radius|away))?\W*$", re.I)
 _SHORT_FOLLOWUP = re.compile(r"^\W*(?:(?:and|so|ok(?:ay)?|then)\W+)?(?:what|how) about\b|^\W*and (?:for|if|what|with)\b"
@@ -1947,6 +2011,14 @@ _SHORT_FOLLOWUP = re.compile(r"^\W*(?:(?:and|so|ok(?:ay)?|then)\W+)?(?:what|how)
 _REFINE_WORDS = re.compile(r"\b(?:cheap\w*|expensive|nicer|better|bigger|smaller|larger|closer|nearer|further|more|less|"
                            r"relax\w*|loosen|tighten|increase|decrease|raise|lower|change|instead|only|without|add|remove|"
                            r"drop|within|under|over|below|above|budget|lease|mrt|hawker|room|rm|newer|older)\b", re.I)
+# a budget or lease on its own changes that limit: "Actually only $850k." (SEM-02), "Actually 60 years will do." (SEM-16).
+# The whole message must be the amount, so a figure inside another sentence is read by the usual readings only.
+_LEAD = r"^\W*(?:(?:actually|ok(?:ay)?|no|sorry|then|maybe|hmm|so|make it|change it to|how about|what about|try)\W+)*"
+_BARE_BUDGET = re.compile(_LEAD + r"(?:only|just|max(?:imum)?|up to|under|below|at most)?\s*"
+                          r"(S?\$\s?\d[\d,]*(?:\.\d+)?\s*(?:k|m|thousand|million)?|\d[\d,]*(?:\.\d+)?\s*(?:k|thousand|million)\b)"
+                          r"(?:\s+(?:only|max|instead|then|tops|budget|is fine|will do))?\W*$", re.I)
+_BARE_LEASE = re.compile(_LEAD + r"(?:at least|min(?:imum)?)?\s*(\d{2})\s*-?\s*(?:years?|yrs?)\b(?:\s+(?:of\s+)?(?:lease|left|remaining))?"
+                         r"(?:\s+(?:will do|is fine|is ok(?:ay)?|instead|then|only|enough))?\W*$", re.I)
 UNCHANGED_NOTE = ("I couldn't tell what to change, so this is the same search as before. You can say, for example, "
                   "\"within 300m\", \"under $700k\", \"5-room instead\" or \"drop the MRT limit\".")
 
@@ -1965,8 +2037,25 @@ def refine_search(carried: Dict[str, Any], fresh: Dict[str, Any], query: str) ->
         for k in SEARCH_KEYS:          # "Find 3-room flats in Clementi": not the last search's budget and MRT limit
             out.pop(k, None)
         return out
+    # "Include Pasir Ris too." adds a town; "Switch to Tampines" replaces them (SEM-15: it dropped Tampines)
+    if fresh.get("towns") and out.get("towns") and re.search(r"\b(?:include|add|also|too|as well|plus)\b", query, re.I) \
+            and not re.search(r"\b(?:instead|switch|change|only|rather than|replace|not)\b", query, re.I):
+        fresh["towns"] = list(dict.fromkeys(list(out["towns"]) + list(fresh["towns"])))   # "Include Pasir Ris too"
+    bare = _BARE_BUDGET.search(query)
+    if bare and not fresh.get("max_budget_sgd") and not _NOT_A_BUDGET.search(query):
+        value = _money(bare.group(1))
+        if value and 50_000 <= value <= 5_000_000:
+            fresh["max_budget_sgd"] = value                                               # "Actually only $850k."
+    lease = _BARE_LEASE.search(query)
+    if lease and out.get("min_remaining_lease_years") and not fresh.get("min_remaining_lease_years"):
+        fresh["min_remaining_lease_years"] = int(lease.group(1))                          # "Actually 60 years will do."
     radii = dict(out.get("amenity_radii_meters") or {})
     new_radii = dict(fresh.get("amenity_radii_meters") or {})
+    # "Use MRT stations only instead." keeps the distance and changes which stations count (SPAT-38)
+    only = re.search(r"\b(mrt|lrt)(?:\s+stations?)?\s+only\b|\bonly\s+(?:the\s+)?(mrt|lrt)\b", query, re.I)
+    rail = next((k for k in ("mrt", "lrt", "mrt_only") if k in radii), None)
+    if only and rail and not new_radii:                                                   # "Use MRT stations only instead."
+        radii["mrt_only" if (only.group(1) or only.group(2)).lower() == "mrt" else "lrt"] = radii.pop(rail)
     m = _BARE_DISTANCE.search(query)
     if m and not new_radii:
         dist = int(float(m.group(1)) * (1000 if m.group(2).lower() == "km" else 1))
@@ -1982,7 +2071,10 @@ def refine_search(carried: Dict[str, Any], fresh: Dict[str, Any], query: str) ->
             continue                                      # "no more than 400m of an MRT" is a limit, not a removal
         key, sub = _REMOVES[rm.group(1).lower()]
         if key == "amenity_radii_meters":
-            if sub:
+            if sub in ("mrt", "lrt"):
+                for rail in ("mrt", "lrt", "mrt_only"):   # any rail limit, whichever kind it was read as
+                    radii.pop(rail, None)
+            elif sub:
                 radii.pop(sub, None)
             else:
                 radii = {k: v for k, v in radii.items() if k == "school"}
@@ -2129,6 +2221,24 @@ def _note_unchecked_places(c: Dict[str, Any], query: str) -> None:
             "not applied. Distances can be checked to MRT/LRT stations, hawker centres, supermarkets and schools."]
 
 
+def workplace_known(name: str) -> bool:
+    """Whether the commute tool can place this workplace: a known employment hub or a place the location search finds.
+    The tool falls back to Raffles Place for a name it cannot place, so "Unknown Workplace QZX" was timed as Raffles
+    Place and the answer promised every limit (SPAT-64, SPAT-65). Interim check until Member 5's tool reports it."""
+    try:
+        from mcp_server import spatial_onemap_tools as S
+        from mcp_server.location_tools import resolve_place
+    except Exception:  # noqa: BLE001
+        return True
+    n = " ".join(str(name).upper().replace("-", " ").split()); nh = " ".join(str(name).upper().split())
+    if any(h in n or h in nh for h in S._EMPLOYMENT_HUBS):
+        return True
+    try:
+        return bool((resolve_place(str(name), limit=1) or {}).get("candidates"))
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCompassState, errors: List[str],
                           from_model: bool, with_history: bool = True, model_policy: bool = True) -> Dict[str, Any]:
     """Everything code does to a reading, whichever path produced it (model, regex fallback or the app's fast path),
@@ -2158,6 +2268,13 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     # which routed it to the map agent and produced "relax from 0 m to 150 m" suggestions
     constraints["amenity_radii_meters"] = {k: v for k, v in (constraints.get("amenity_radii_meters") or {}).items()
                                            if v is not None and v > 0}
+    # the model's schema has one rail key ("mrt", nearest MRT or LRT); code's reading says which kind was meant, so
+    # "LRT must be within 300m" stays LRT-only on the model path too (SEM-01)
+    rb_radii = rule_based_extract(query).amenity_radii_meters or {}
+    radii = constraints["amenity_radii_meters"]
+    for kind in ("lrt", "mrt_only"):
+        if kind in rb_radii and "mrt" in radii and kind not in radii and "mrt" not in rb_radii:
+            radii[kind] = radii.pop("mrt")
     _verify_extraction(constraints, query, errors, from_model=from_model)
     _note_unchecked_places(constraints, query)
     if from_model and constraints.get("policy_question") and not policy_wording(query, money_stated=calculator_facts(constraints)) \
@@ -2281,8 +2398,9 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         constraints["asked_price"] = price if price and price >= 50_000 else None
     # this message itself describes a flat search (not only limits carried from earlier turns)
     constraints["search_stated"] = bool(any(fresh_constraints.get(k) for k in SEARCH_KEYS))
+    # an island-wide search stays island-wide in a follow-up ("Within 700m of MRT as well") until a town is named
     constraints["islandwide"] = bool(re.search(r"\b(?:anywhere|island[- ]?wide|all (?:of )?(?:the )?towns|any town|whole (?:of )?singapore|all over singapore)\b",
-                                               query, re.I)) and not constraints.get("towns")
+                                               query, re.I) or (prior or {}).get("islandwide")) and not constraints.get("towns")
     constraints["money_asked"] = bool(
         not prior or answered_money or money_question(query, constraints)
         # a reply to the open money question that code could not read ("We are both PRs.") is still about money
@@ -2305,6 +2423,14 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
                                                    or constraints.get("amenity_radii_meters") or constraints.get("school_name")))
             and not decide_routing({**constraints, "towns": []})):
         constraints["analysis_mode"] = True
+    # a workplace nobody can locate is not timed (the tool would time Raffles Place instead); the answer says so
+    work = constraints.get("work_destinations") or []
+    unknown = [w for w in work if not workplace_known(w)]
+    if not unknown and prior and not fresh_constraints.get("work_destinations"):
+        unknown = list(prior.get("unresolved_workplaces") or [])   # still not located: say so again
+    constraints["unresolved_workplaces"] = unknown
+    if unknown:
+        constraints["work_destinations"] = [w for w in work if w not in unknown]
     # read by code from every user message so far, so an ask in the first turn still counts after a follow-up reply
     constraints["requested_tools"] = requested_tools(users)
     comparables = "query_comparable_resale_transactions"
@@ -2655,7 +2781,10 @@ def _verify_extraction(c: Dict[str, Any], query: str, errors: List[str], from_mo
         # that splits "Kallang/Whampoa" into KALLANG and WHAMPOA gets the HDB town both names stand for. A region the
         # user named ("in the east", "the north-east region") states its towns (research_intents.REGION_TOWNS): the model
         # that read "in the east" as Bedok, Pasir Ris and Tampines read it right (Experiment 1, 2 Nov: A1-05, A2-04, A3-05)
-        stated = set(named_towns(query, any_case_short=True)) | set(stated_towns(query, any_case_short=True)[0])
+        # not a town named only as a workplace (SPAT-33: the live model searched Tampines after "Change the workplaces
+        # to Changi Business Park and Tampines.")
+        where = without_workplaces(query)
+        stated = set(named_towns(where, any_case_short=True)) | set(stated_towns(where, any_case_short=True)[0])
         region = ri.region_towns(query)
         if region:
             stated |= set(region[1])
@@ -2665,7 +2794,7 @@ def _verify_extraction(c: Dict[str, Any], query: str, errors: List[str], from_mo
             kept.extend(s for s in same if s not in kept)
             if not same:
                 invented.append(t)
-        c["towns"] = kept or [t for t in stated_towns(query)[0]]   # "CLEMENI", "THE EAST": code's own reading
+        c["towns"] = kept or [t for t in stated_towns(where)[0]]   # "CLEMENI", "THE EAST": code's own reading
         if invented:
             errors.append(f"extract_constraints: towns not named in the message were dropped: {invented}")
     if from_model and c.get("wants_group_stats") and c.get("amenity_radii_meters"):
@@ -2780,12 +2909,25 @@ def _distance_label(key: str, value: float) -> str:
     m = re.match(r"commute_([a-z])_mins?$", key)
     if m:
         return f"commute to workplace {ord(m.group(1)) - 96}: {value:.0f} min"
-    return f"{key.replace('_dist_m', '')} {value:.0f}m"
+    # "mrt_only_dist_m" is shown as "mrt 250m", the form the auditor and the answer already use
+    return f"{key.replace('_dist_m', '').replace('mrt_only', 'mrt')} {value:.0f}m"
+
+
+def unplaced_distance(c: Dict[str, Any]) -> bool:
+    """A distance limit with no place to search around: no town, area, address, pin or named station."""
+    return bool(c.get("amenity_radii_meters")) and not (
+        c.get("towns") or c.get("islandwide") or c.get("addresses") or c.get("map_pin") or c.get("mrt_station"))
 
 
 def route_node(state: HDBCompassState) -> Dict[str, Any]:
     c = state.get("user_constraints", {})
     active = decide_routing(c, state.get("pending_clarification"))
+    if "spatial" in active and unplaced_distance(c) \
+            and "spatial" not in decide_routing({**c, "amenity_radii_meters": {}}, state.get("pending_clarification")):
+        # a distance limit filters the blocks of a place: with no town yet ("4rm tamp under 650k can?" then "near mrt
+        # 700m also") the map agent ran over all 2,161 blocks island-wide; ask "Which town?" below instead (SEM-33,
+        # SPAT-52). decide_routing itself still names the map agent for the reading ("Flats near an MRT").
+        active = [a for a in active if a != "spatial"]
     if not active and not c.get("clarifications") and (c.get("addresses") or c.get("map_pin")):
         # "Resale price for Blk 884 Tampines?" names the place and already says what it wants: answer, don't ask
         picked = {**c}
@@ -3069,7 +3211,8 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
             return addons.plan(agent, c, query)   # schools near an address: that lookup alone (schools pack)
         radii = {k: v for k, v in (c.get("amenity_radii_meters") or {}).items() if k != "school"}
         if radii:
-            station = c.get("mrt_station") if "mrt" in radii else None
+            # the tool limits any rail kind to the named station ("within 300m of Sumang LRT" is read as "lrt")
+            station = c.get("mrt_station") if set(radii) & {"mrt", "lrt", "mrt_only"} else None
             plan.append(("filter_blocks_by_amenity_proximity",
                          dict(towns=towns, amenity_constraints=radii, **({"mrt_station": station} if station else {}))))
         if c.get("school_name"):
@@ -3212,7 +3355,14 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
                         # would empty the whole search
                         kept = _commute_candidates(outputs)
                         given = args.get("candidate_blocks") or []
-                        if not given or (kept and not set(given) & set(kept)):
+                        if not kept:
+                            # no filter ran: no block list exists yet, and a town name ("QUEENSTOWN") is not a block
+                            # (LIVE-SPATIAL-01: timed nothing, then claimed no match); [] times every block and the
+                            # intersection keeps the searched towns' ones
+                            if given:
+                                errors.append(f"{label}: commute candidate_blocks the model wrote were dropped (no filter ran)")
+                            args = {**args, "candidate_blocks": []}
+                        elif not given or not set(given) & set(kept):
                             if given:
                                 errors.append(f"{label}: commute blocks that no filter kept were replaced by the filtered blocks")
                             args = {**args, "candidate_blocks": kept}
@@ -3258,7 +3408,11 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
         # Coverage backstop: research evidence the question needs but the model did not fetch.
         # Logged as the supervisor so Tool Selection F1 still measures only the model's own calls.
         for agent in (plan_agents or [label]):
-            for name, args in addons.plan(agent, c, query):
+            # and the block search, distance filter or school check the plan needs: the live model answered "I could
+            # not find data" for a search the code path answers (LIVE-SEARCH-01)
+            core = [(n, a) for n, a in deterministic_plan(agent, c, query)
+                    if n in ("query_resale_blocks_by_criteria", "filter_blocks_by_amenity_proximity", "verify_primary_school_distance")]
+            for name, args in core + addons.plan(agent, c, query):
                 if name in runners and name not in outputs:
                     backstop = ToolRunner(name)
                     backstop.agent = "supervisor"
@@ -3673,8 +3827,8 @@ HFE_DISCLAIMER = ("\n\n_Figures are indicative. Grant and loan eligibility is co
                   "letter. This is not financial advice._")
 
 
-LISTED_BLOCKS = 20   # matching blocks written out in full; the rest are counted (all are on the map)
-AMENITY_LABELS = {"mrt": "an MRT station", "hawker": "a hawker centre", "bus_stop": "a bus stop",
+LISTED_BLOCKS = 20   # matching blocks written out in full; the rest are counted (on the map when they have coordinates)
+AMENITY_LABELS = {"lrt": "an LRT station", "mrt_only": "an MRT station", "mrt": "an MRT station", "hawker": "a hawker centre", "bus_stop": "a bus stop",
                   "supermarket": "a supermarket", "park": "a park", "school": "the school", "clinic": "a clinic"}
 
 
@@ -4011,7 +4165,14 @@ def template_response(state: HDBCompassState) -> str:
                 town = f" ({b['town']})" if b.get("town") else ""
                 lines.append(f"- Blk {b['block']} {b['street']}{town}{kind}{price}{lease}{(' — ' + dist) if dist else ''}")
             if len(blocks) > LISTED_BLOCKS:
-                lines.append(f"- …and {len(blocks) - LISTED_BLOCKS} more, all shown on the map.")
+                # a block with no coordinates on file has no marker: "all shown on the map" was untrue (SEM-26, SPAT-01)
+                mapped = sum(1 for b in blocks if b.get("lat") and b.get("lng"))
+                if mapped == len(blocks):
+                    lines.append(f"- …and {len(blocks) - LISTED_BLOCKS} more, all shown on the map.")
+                else:
+                    missing = len(blocks) - mapped
+                    lines.append(f"- …and {len(blocks) - LISTED_BLOCKS} more; {mapped} of the {len(blocks)} blocks are on "
+                                 f"the map ({missing} {'has' if missing == 1 else 'have'} no map location on file).")
         else:
             lines.append("**No block satisfies every constraint that could be checked.**" if partial
                          else "**No block satisfies every constraint at once.**")
@@ -4320,7 +4481,12 @@ UNCHECKED_SCHOOL = ("- Your school distance limit was not checked: I could not t
 
 def unchecked_commute_line(state: HDBCompassState) -> str:
     """The line not_checked_lines adds for commute_unchecked: the reason only when fewer than two workplaces were read."""
-    read = len((state.get("user_constraints") or {}).get("work_destinations") or [])
+    c = state.get("user_constraints") or {}
+    if c.get("unresolved_workplaces"):
+        return ("- Your commute limit was not checked: I could not find "
+                + _join_words([f"“{w}”" for w in c["unresolved_workplaces"]])
+                + " on the map. Give an address or postal code and I'll time the commute.")
+    read = len(c.get("work_destinations") or [])
     return UNCHECKED_COMMUTE_READ.get(read, UNCHECKED_COMMUTE)
 
 
@@ -4354,9 +4520,11 @@ def commute_unchecked(state: HDBCompassState) -> bool:
 
 def partly_checked(state: HDBCompassState) -> bool:
     """Whether the blocks were checked against only some of the limits the user set: a block filter could not load,
-    or a commute or school limit was never checked (commute_unchecked, school_unchecked)."""
+    or a commute or school limit was never checked (commute_unchecked, school_unchecked), or a distance to a place with
+    no location data was not applied ("within 200m of a park": SEM-11, the opening said every limit was met)."""
     return (any(t in BLOCK_FILTERS for t in unavailable_tools(state)) or commute_unchecked(state)
-            or school_unchecked(state))
+            or school_unchecked(state)
+            or any(str(a).startswith("I can't measure distances") for a in (state.get("user_constraints") or {}).get("assumptions") or []))
 
 
 def not_checked_lines(state: HDBCompassState) -> List[str]:
@@ -4806,7 +4974,7 @@ _COMPARISONS = [
 ]
 _COMPARISON = re.compile("|".join(f"(?P<c{i}>\\b(?:{p})\\b)" for i, (_, _, p) in enumerate(_COMPARISONS)), re.I)
 # the place a distance is to, by the words a sentence uses for it (the keys of AMENITY_LABELS)
-_PLACES = {"mrt": r"\bMRT\b|\bstations?\b|\btrains?\b", "hawker": r"\bhawker|\bfood cent(?:re|er)",
+_PLACES = {"lrt": r"\bLRT\b", "mrt_only": r"\bMRT\b", "mrt": r"\bMRT\b|\bstations?\b|\btrains?\b", "hawker": r"\bhawker|\bfood cent(?:re|er)",
            "bus_stop": r"\bbus\b", "supermarket": r"\bsupermarket|\bgrocer", "park": r"\bparks?\b",
            "school": r"\bschools?\b", "clinic": r"\b(?:poly)?clinics?\b"}
 _CLAUSE = re.compile(r"[,;:()]|\s(?:while|whereas|but|though|although|yet)\s|\s[-–—]\s", re.I)
@@ -4863,6 +5031,8 @@ def comparisons_hold(sentence: str, listed: List[Dict[str, Any]]) -> bool:
             places = ([k for k, p in _PLACES.items() if re.search(p, clause, re.I)]
                       + [k for k in limited if k not in _PLACES and k.replace("_", " ") in clause.lower()]
                       if what == "distance" else [""])
+            if what == "distance":
+                places = [p for p in places if p in limited] or places   # "an LRT station": the lrt distance
             if not others or not places:
                 return False
             for place in places:
