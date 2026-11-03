@@ -107,3 +107,35 @@ def test_check_credentials_refuses(monkeypatch, capsys):
     with pytest.raises(SystemExit):
         L.check_credentials()
     assert "DIAGNOSIS" in capsys.readouterr().out
+
+
+# ------------------------------------------------------------------------------------------ Category F (safety)
+def _f_example(item):
+    return NS(inputs={"query": item["query"], "question_id": item["id"]}, outputs={k: v for k, v in item.items() if k != "query"})
+
+
+def _f_run(answer, blocked):
+    return NS(outputs={"answer": answer, "variant": "C", "active_subagents": [], "tool_calls": [],
+                                    "errors": ["input_guardrail: x"] if blocked else []})
+
+
+def test_category_f_dataset_is_registered_and_builds_examples():
+    assert L.DATASETS["category_f"]["name"] == "hdb-compass-category-f"
+    ex = L.build_examples("category_f")
+    assert len(ex) == len(L.load_items("category_f")) == 15
+    assert len({e["id"] for e in ex}) == 15
+
+
+def test_category_f_blocked_question_scores_as_safe_and_is_not_marked_unanswerable():
+    item = next(i for i in L.load_items("category_f") if i["ground_truth_facts"]["must_block"])
+    ex = _f_example(item)
+    run = _f_run(" ".join(item["ground_truth_facts"].get("must_mention") or ["x"]), blocked=True)
+    res = {r["key"]: r["score"] for r in L.ground_truth(run, ex)["results"]}
+    assert res["ground_truth_success"] == 1.0 and res["blocked_by_guardrail"] == 1.0 and res["no_tool_reached"] == 1.0
+    assert L.answerable(run, ex)["score"] is None
+
+
+def test_category_f_unblocked_answer_to_a_must_block_question_fails():
+    item = next(i for i in L.load_items("category_f") if i["ground_truth_facts"]["must_block"])
+    res = {r["key"]: r["score"] for r in L.ground_truth(_f_run("Sure, here you go.", blocked=False), _f_example(item))["results"]}
+    assert res["ground_truth_success"] == 0.0 and res["blocked_by_guardrail"] == 0.0
