@@ -6,7 +6,7 @@
 
 Part 1 (figures). For every non-adversarial benchmark question the real Variant C answer is produced without a model
 (deterministic). Each figure kind found in that correct answer (price, distance, lease, block number) is corrupted
-once, and the auditor's rule layer (`guardrails.audit_text`) must reject the corrupted text. Catch rate = rejected /
+once, and the auditor's real `runtime_auditor_node` (the corrupted text placed in `model_opening`, its contract and rule layer) must reject it. Catch rate = rejected /
 corrupted. The same run reports the false-rejection rate on the untouched answers: a checker that rejects everything
 would score 100% on the first number, so the two are read together.
 
@@ -58,6 +58,13 @@ OTHER_TOWNS = ["BEDOK", "WOODLANDS", "QUEENSTOWN", "PUNGGOL", "BUKIT MERAH"]
 def load_questions() -> List[Dict[str, Any]]:
     items = json.loads((EVAL / "benchmark_hdb_90.json").read_text(encoding="utf-8"))
     return [i for i in items if i.get("category") != "F"]
+
+
+def through_node(state: Dict[str, Any], text: str) -> Tuple[bool, Dict[str, Any]]:
+    """(passed, node output) for `text` placed in the model's slot of `state`, judged by the real runtime_auditor_node: the
+    contract (only model_opening is judged), the rule layer, and the LLM judge unless HDB_AUDITOR_LLM=off."""
+    out = g.runtime_auditor_node({**state, "model_opening": text, "auditor_verdict": {}})
+    return out["auditor_verdict"]["passed"], out
 
 
 def answer_state(query: str) -> Dict[str, Any]:
@@ -144,7 +151,7 @@ def measure_figures(items: List[Dict[str, Any]], states: Dict[str, Dict[str, Any
         if not any(spans.values()):
             continue
         clean_total += 1
-        if not g.audit_text(draft, evidence, it["query"])["passed"]:
+        if not through_node(st, draft)[0]:
             clean_rejected += 1
             rejected_ids.append(it["id"])
         pool = _pool(evidence + " " + it["query"])
@@ -156,7 +163,7 @@ def measure_figures(items: List[Dict[str, Any]], states: Dict[str, Dict[str, Any
             bad = corrupt(draft, kind, span, pool, severity)
             if bad is None:
                 continue
-            caught = not g.audit_text(bad, evidence, it["query"])["passed"]
+            caught = not through_node(st, bad)[0]
             per_kind[kind]["total"] += 1
             per_kind[kind]["caught"] += caught
             cat["total"] += 1
@@ -189,7 +196,7 @@ def measure_misattribution(items: List[Dict[str, Any]], states: Dict[str, Dict[s
             first = next(sp for sp in spans if sp[2].strip() == distinct[0])
             bad = draft[:first[0]] + distinct[1] + draft[first[0] + len(first[2].rstrip()):]
             total += 1
-            caught += not g.audit_text(bad, evidence, it["query"])["passed"]
+            caught += not through_node(st, bad)[0]
     return {"faults": total, "caught": caught, "catch_rate": round(caught / total, 4) if total else None}
 
 
@@ -204,14 +211,11 @@ def measure_judge(items: List[Dict[str, Any]], states: Dict[str, Dict[str, Any]]
         town = next(t for t in OTHER_TOWNS if t not in towns_in_answer)
         claim = rng.choice(FALSE_CLAIMS).format(town=town.title())
         for label, text in (("false", claim), ("true", TRUE_CLAIM)):
-            rule = g.audit_text(text, g.evidence_text(st), user)
-            if not rule["passed"]:
-                layer, passed = "rules", False
-            else:
-                judged = g.llm_judge(text, data, user)
-                if judged is None:
-                    continue
-                layer, passed = "judge", judged["passed"]
+            passed, out = through_node(st, text)
+            if passed and out.get("errors"):      # the judge could not answer (quota, network): neither a catch nor a miss
+                continue
+            critique = out["auditor_verdict"]["critique"]
+            layer = "judge" if critique.startswith("the data does not support") else "rules"
             rows.append({"id": it["id"], "label": label, "text": text, "layer": layer, "passed": passed})
     false = [r for r in rows if r["label"] == "false"]
     true = [r for r in rows if r["label"] == "true"]
@@ -237,6 +241,7 @@ def main(argv=None) -> int:
     states = {it["id"]: answer_state(it["query"]) for it in items}
     os.environ["LLM_PROFILE"] = configured      # back to the real profile for the judge part
 
+    os.environ["HDB_AUDITOR_LLM"] = "off"         # the figure parts measure the node's rule layer; the judge part turns it back on
     result: Dict[str, Any] = {"seed": SEED, "questions": len(items), "figures": {}}
     for severity in SEVERITY:
         f = result["figures"][severity] = measure_figures(items, states, severity)
@@ -248,6 +253,7 @@ def main(argv=None) -> int:
     result["misattributed"] = m = measure_misattribution(items, states)
     print(f"Misattributed real figures (a value-only check cannot see these): {m['caught']}/{m['faults']} caught"
           + (f" ({m['catch_rate']:.1%})" if m["faults"] else ""))
+    os.environ.pop("HDB_AUDITOR_LLM", None)
     if args.llm:
         if configured == "none":
             print("--llm needs a model profile in .env (LLM_PROFILE is none)")

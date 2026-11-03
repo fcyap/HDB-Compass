@@ -264,6 +264,18 @@ def _judge_data(state: Dict[str, Any]) -> str:
     return facts or evidence_text(state)
 
 
+def _max_retries() -> int:
+    from agents.llm import load_config
+    return int(load_config()["architecture"]["auditor_max_retries"])
+
+
+def _without_sentences(draft: str, model_text: str) -> str:
+    """`draft` without the sentences of `model_text` (the model's own), the rest of the answer unchanged."""
+    for sentence in sv._split_opening(model_text) or [model_text]:
+        draft = draft.replace(sentence, "")
+    return re.sub(r"[ \t]{2,}", " ", draft).strip()
+
+
 def runtime_auditor_node(state: Dict[str, Any]) -> Dict[str, Any]:
     prev = state.get("auditor_verdict") or {}
     retries = int(prev.get("retry_count", 0))
@@ -281,10 +293,18 @@ def runtime_auditor_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 judged, errors = None, [f"runtime_auditor: llm_judge {type(e).__name__}"]
             if judged is not None:
                 verdict = judged
+        rejected = not verdict["passed"]
         out = AuditorVerdict(passed=verdict["passed"], critique=verdict["critique"],
-                             retry_count=retries if verdict["passed"] else retries + 1,
+                             retry_count=retries + 1 if rejected else retries,
                              ungrounded_claims=verdict["ungrounded_claims"]).model_dump()
-        return {"auditor_verdict": out, **({"errors": errors} if errors else {})}
+        update: Dict[str, Any] = {"auditor_verdict": out, **({"errors": errors} if errors else {})}
+        if rejected and out["retry_count"] > _max_retries():
+            # the last rewrite was rejected too and the graph now ends: do not ship what the auditor refused. Only the
+            # model's own sentences go; code's answer sentence and the facts section stay (docs/INTERFACES.md section 3)
+            update["draft_response"] = _without_sentences(state.get("draft_response") or "", opening)
+            update["model_opening"] = ""
+            update["errors"] = errors + [f"runtime_auditor: model sentences removed after {out['retry_count']} rejections"]
+        return update
     except Exception as e:  # noqa: BLE001 — an auditor fault must not stop the answer
         return {"auditor_verdict": AuditorVerdict(passed=True, critique="auditor error (pass-through)",
                                                   retry_count=retries).model_dump(),
