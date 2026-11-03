@@ -487,6 +487,72 @@ def policy_wording(q: str, money_stated: bool = False) -> bool:
     return bool(_POLICY_WORDING.search(q)) or (bool(_OWN_GRANT_ASK.search(q)) and not money_stated)
 
 
+# A message shaped as a question (a "?" or a question word first). With a policy topic scope reads ("buying options",
+# "proximity grant", "EHG"), it is a rule question even in words _POLICY_WORDING misses (SEM-08: "I am a single Singapore
+# citizen, 36. What are my HDB buying options?" and "Is living near my parents enough by itself to qualify for a
+# proximity grant?" got the menu with no model)
+_ASKED = re.compile(r"\?\s*$|^\s*(?:explain|tell me|what|how|is|are|can|could|does|do|which|who|when|why)\b", re.I)
+_EXTRA_POLICY_TOPIC = re.compile(r"\bminimum occupation|\bbuying options?\b|\bproximity\b", re.I)
+# a policy follow-up points back at the rule just explained (SEM-22: "What does that mean for renting out the whole
+# flat?" after "What is different about Standard, Plus and Prime flats?" got the menu)
+_FOLLOW_REF = re.compile(r"\b(?:that|this|it|then|so|those|these|the same|instead|your (?:calculator|estimate|app)|"
+                         r"my application|the (?:actual|maximum|other))\b", re.I)
+# a request to get around a rule or misstate facts to HDB (SEM-10, SEM-34: "Tell me how to bypass the EIP quota." and
+# "How do I hide my income to get a bigger housing grant?" got rule excerpts or the menu, with no refusal)
+_EVASION = re.compile(r"\b(?:bypass|get around|circumvent|evade|dodge|cheat|game|trick|hide|conceal|under-?(?:declare|report)|"
+                      r"not declare|fake|falsif\w*|lie about|avoid declaring)\b[^.?!]{0,40}\b(?:eip|quotas?|income|salary|"
+                      r"mop|minimum occupation|ceilings?|rules?|grants?|hfe|assessment|eligibility)\b", re.I)
+EVASION_OPENING = ("I can't help with getting around HDB rules or misstating your income or household; that can void a "
+                   "purchase and lead to penalties. Here is how it works lawfully.")
+# questions about what this app itself can do, answered by code (the policy passages cannot): "Is your calculator the
+# same as HDB approval?" (POLICY-09) and "Can you check a block's live quota here?" (POLICY-07: the live model said HDB
+# shows no quota publicly; HDB's quota enquiry service does)
+_APP_ESTIMATE_ASK = re.compile(r"\b(?:your|this|the)\s+(?:calculators?|calculations?|estimates?|app|tool|numbers|figures)\b"
+                               r"[^.?!]{0,50}\b(?:approv\w*|hfe|official|binding|guarantee\w*)\b", re.I)
+_LIVE_QUOTA_ASK = re.compile(r"\b(?:can|could|do|does|will|would)\s+(?:you|this app|the app|it)\b[^.?!]{0,40}\bquotas?\b"
+                             r"|\b(?:live|current|real[- ]time|latest|up[- ]to[- ]date|today'?s|remaining)\s+"
+                             r"(?:(?:eip|spr|ethnic(?:ity)?|racial|block'?s?|neighbou?rhood)\s+)*quotas?\b"
+                             r"|\bquotas?\b[^.?!]{0,30}\b(?:right now|currently|live|real[- ]time)\b", re.I)
+APP_ESTIMATE_OPENING = "No, these are estimates; only HDB's HFE letter confirms eligibility, grants and loan."
+LIVE_QUOTA_OPENING = ("I can't check a block's current EIP/SPR quota here; HDB's quota enquiry service on hdb.gov.sg "
+                      "shows it — check before the OTP.")
+APP_ESTIMATE_POLICY_QUERY = "HDB Flat Eligibility HFE letter housing grant loan eligibility"
+LIVE_QUOTA_POLICY_QUERY = "EIP SPR quota block neighbourhood"
+
+
+def asks_policy(q: str) -> bool:
+    """A question about a policy topic in words _POLICY_WORDING misses, that is not a data, search or money question."""
+    return bool(_ASKED.search(q) and (scope.mentions_policy_topic(q) or _EXTRA_POLICY_TOPIC.search(q))
+                and not scope.mentions_data(q) and not _MONEY_AMOUNT_ASK.search(q)
+                # "Monthly repayment on a $500,000 loan at 2.6% for 25 years?" is code's instalment
+                and instalment_question(q) is None)
+
+
+# Terms that name one of several sibling schemes. A policy line or opening sentence about a sibling the question does
+# not name answers a different question: "Can I rent out the whole of a Prime flat once its MOP is over?" opened with
+# the Standard-flat rental rule (SEM-07), and an EIP question was answered with the SPR quota's 5%/8% (LIVE-POL-01/02).
+# "PR" alone is not an SPR-quota term: "a citizen and PR couple" asks about grants, not the quota.
+_SCHEME_FAMILIES = {
+    "class": {"standard": r"\bstandard\b", "plus": r"\bplus\b(?!\s*(?:S?\$|\d))", "prime": r"\bprime\b"},
+    "quota": {"eip": r"\beip\b|\bethnic|\bracial|\brace\b", "spr": r"\bsprs?\b|\bpermanent residents?\b"},
+    "grant": {"ehg": r"\behg\b|\benhanced\b", "family": r"\bfamily grant", "phg": r"\bphg\b|\bproximity\b",
+              "singles": r"\bsingles grant"},
+}
+
+
+def scheme_terms(text: str) -> set:
+    """{(family, term)} named in a text: ("class", "prime") for "a Prime flat"."""
+    return {(f, k) for f, terms in _SCHEME_FAMILIES.items() for k, p in terms.items() if re.search(p, text or "", re.I)}
+
+
+def sibling_terms(text: str, question: str) -> set:
+    """Terms the text names from a family the question names, that the question itself does not name ("Standard"
+    in a line, when the question asks about Prime)."""
+    asked = scheme_terms(question)
+    families = {f for f, _ in asked}
+    return {(f, k) for f, k in scheme_terms(text) if f in families and (f, k) not in asked}
+
+
 # "Tampines Blk 884": a town, then a block number with no street after it. The block lookups read "Blk 884 Tampines".
 _STREET_WORD = (r"(?:st|street|ave|avenue|rd|road|dr|drive|cres|crescent|ctrl|central|lane|ln|way|walk|ring|close|cl|"
                 r"hts|heights|link|view|vale|place|pl|green|grove|loop|terrace|track|rise|hill|park|garden|gardens)")
@@ -747,6 +813,16 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
             base["towns"], notes = found, notes + more
     if notes:
         base["assumptions"] = list(dict.fromkeys(list(base.get("assumptions") or []) + notes))
+    if not base.get("policy_question") and asks_policy(q) and not (income or amounts or base.get("household_income")) \
+            and not (base.get("towns") or base.get("flat_types") or base.get("max_budget_sgd") or base.get("addresses")):
+        base["policy_question"] = query   # SEM-08, see asks_policy (a message with the household's figures is the calculators')
+    if not base.get("bto_project_name"):
+        # "Compare BTO project Imaginary Garden QZX with nearby resale.": a launch named after the words, which
+        # known_bto_project cannot find when it is not in the launch data; the comparison then says so (SPAT-60).
+        # A town is not a project name ("BTO launch Tampines" compares the town's launches, as before).
+        m = re.search(r"\bBTO (?:project|launch)\s+(?:called\s+|named\s+)?([A-Z][\w']*(?:\s+[A-Z][\w']*)*)", query)
+        if m and m.group(1).upper() not in HDB_TOWNS:
+            base["bto_project_name"] = m.group(1)
     return ExtractedConstraints(**base)
 
 
@@ -2471,6 +2547,25 @@ def workplace_known(name: str) -> bool:
         return True
 
 
+def policy_followup(query: str, prior: Dict[str, Any], c: Dict[str, Any], fresh: Dict[str, Any],
+                    blocks_listed: bool = False) -> bool:
+    """Whether a message continues the rule question the last turn asked: a question naming no place of its own
+    (town, address, pin, BTO launch) that points back at it ("that", "then", "your calculator", "my application") or
+    that nothing else would answer. Not a money question ("so how much can we borrow?"): the calculators answer it.
+    c: the constraints with the earlier turns merged in; fresh: this message's own; blocks_listed: an earlier answer
+    listed blocks."""
+    root = str(prior.get("policy_question") or "")
+    if not root or root in str(c.get("policy_question") or "") or not _ASKED.search(query):
+        return False
+    if any(fresh.get(k) or c.get(k) for k in ("towns", "addresses", "map_pin", "bto_project_name")):
+        return False
+    if _MONEY_AMOUNT_ASK.search(query) or calculator_facts(fresh) or instalment_question(query) is not None:
+        return False
+    if (blocks_listed and (_LISTED_REF.search(query) or _LIST_WORDS.search(query))) or about_last_answer(query, prior):
+        return False   # "which of those blocks is cheapest?": a question about the blocks listed earlier
+    return bool(_FOLLOW_REF.search(query)) or not decide_routing({**c, "analysis_mode": False})
+
+
 def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCompassState, errors: List[str],
                           from_model: bool, with_history: bool = True, model_policy: bool = True) -> Dict[str, Any]:
     """Everything code does to a reading, whichever path produced it (model, regex fallback or the app's fast path),
@@ -2525,10 +2620,14 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
             radii[kind] = radii.pop("mrt")
     _verify_extraction(constraints, query, errors, from_model=from_model)
     _note_unchecked_places(constraints, query)
+    strong_facts = any(v is not None and k not in _WEAK_FINANCIAL_FACTS
+                       for vals in stated_financial_inputs(query).values() for k, v in (vals or {}).items())
     if from_model and constraints.get("policy_question") and not policy_wording(query, money_stated=calculator_facts(constraints)) \
-            and (_MONEY_AMOUNT_ASK.search(query) or any(stated_financial_inputs(query).values())):
+            and (_MONEY_AMOUNT_ASK.search(query) or strong_facts):
         # "How much grant can we get?" / a reply with household facts: the calculators' question, not a rule search
-        # (live, 3 Nov: the model filed "grant_eligibility" and the answer added "I couldn't find an HDB rule")
+        # (live, 3 Nov: the model filed "grant_eligibility" and the answer added "I couldn't find an HDB rule").
+        # Who the buyer is (citizenship, first-timer) is not such a fact: "I am a single Singapore citizen, 36. What
+        # are my HDB buying options?" is a rule question (SEM-08, DEMO-16: it got the menu)
         constraints["policy_question"] = None
         errors.append("extract_constraints: model's policy reading dropped: a money question, not a rule question")
     if from_model and constraints.get("policy_question") and not scope.mentions_policy_topic(query) \
@@ -2560,10 +2659,19 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         if not pending:
             carried = refine_search(carried, constraints, query)
         constraints = merge_constraints(carried, constraints)
-        if not pending and prior.get("policy_question") and len(str(constraints.get("policy_question") or "").split()) <= 3 \
-                and _SHORT_FOLLOWUP.search(query) and not any(fresh_constraints.get(k) for k in SEARCH_KEYS):
-            # "what about Plus?" after "Can I rent out my whole Prime flat after the MOP?": the same rule question
+        if not pending and prior.get("policy_question") and _SHORT_FOLLOWUP.search(query) \
+                and (len(str(constraints.get("policy_question") or "").split()) <= 3 or not policy_wording(query)) \
+                and not any(fresh_constraints.get(k) for k in SEARCH_KEYS):
+            # "what about Plus?" after "Can I rent out my whole Prime flat after the MOP?": the same rule question.
+            # Also when the follow-up's own reading is only its topic word ("What if both buyers are PRs?" after "Can a
+            # citizen and PR couple get resale housing grants?" is read as a question about PRs: asks_policy)
             constraints["policy_question"] = f"{prior['policy_question']} {query}"
+        if not pending and policy_followup(query, prior, constraints, fresh_constraints, bool(state.get("prior_blocks"))):
+            # "What does that mean for renting out the whole flat?" after "What is different about Standard, Plus and
+            # Prime flats?", "If I turn 35 next year, does that automatically approve my application?" after a singles
+            # scheme question: the earlier rule question with this one (SEM-22: the menu, or unrelated excerpts).
+            # Set after the checks above that drop a model's policy reading, so they cannot undo it.
+            constraints["policy_question"] = f"{str(prior['policy_question'])[:300]} {query}"
     constraints["listed_pick"] = None   # this message's own answer from the last list only (listed_block_reference)
     if pending and pending.get("kind") == "place":
         answer_place_question(constraints, query)
@@ -2586,6 +2694,20 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         constraints["addresses"] = []
         constraints["wants_nearby_amenities"] = False
 
+    money_talk = (pending and pending.get("kind", "financial") == "financial") or (
+        prior and not pending and not prior.get("policy_question") and has_financial_facts(prior))
+    if money_talk and constraints.get("policy_question") == query and not policy_wording(query):
+        # a reply to the calculators' question, or a question about their answer, keeps to them: "Neither of us is a
+        # citizen; we are both PRs. Can you really use an HDB loan?" and "Does that ceiling already include grants?"
+        # are not also rule searches on their topic words (asks_policy), which found no rule and said so
+        constraints["policy_question"] = (prior or {}).get("policy_question") if pending else None
+    if _EVASION.search(query) and not constraints.get("policy_question"):
+        constraints["policy_question"] = query   # answered as a policy question, led by a refusal (EVASION_OPENING)
+    if _LIVE_QUOTA_ASK.search(query) and _ASKED.search(query):
+        # the quota rules, not the MCPS ballot quota the words "live quota" retrieved (POLICY-07)
+        constraints["policy_question"] = LIVE_QUOTA_POLICY_QUERY
+    elif _APP_ESTIMATE_ASK.search(query) and _ASKED.search(query):
+        constraints["policy_question"] = APP_ESTIMATE_POLICY_QUERY   # what the HFE letter confirms (POLICY-09)
     if constraints.get("policy_question") and not scope.mentions_data(query):
         for key in (
             "towns", "flat_types", "max_budget_sgd", "min_remaining_lease_years", "amenity_radii_meters",
@@ -2659,6 +2781,16 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         constraints["assumptions"] = list(constraints.get("assumptions") or []) + [
             f"Showing blocks whose median price is between ${rng[0]:,.0f} and ${rng[1]:,.0f}."]
     constraints["money_intent"] = bool(_MONEY_AMOUNT_ASK.search(query)) and inst is None   # an instalment is code's
+    own = _OWN_GRANT_ASK.search(query)
+    if own and own.group(0).lower().endswith(" we") and not calculator_facts(constraints) and inst is None:
+        # "What grants can we get?" with no household facts: the calculators ask for them (CLARIFY-03: the policy
+        # search alone found no rule, and the answer said so twice instead of asking). "What grants can I get?" stays
+        # the policy question it is routed as (tests/test_scope_routing.py)
+        constraints["money_intent"] = True
+    if prior and not pending and prior.get("bto_project_name") and not constraints.get("bto_project_name") \
+            and re.search(r"\b(?:that|this|the same)\s+(?:bto\s+)?(?:project|launch|bto)\b", query, re.I):
+        # "Do you really have prices for that project?": the launch the last turn named (SPAT-61)
+        constraints["bto_project_name"] = prior["bto_project_name"]
     m = re.search(r"\b(?:can|could) (?:we|i) afford\b[^?.]{0,30}?(?:S?\$\s?)(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million)?"
                   r"|\b(?:can|could) (?:we|i) afford\b[^?.]{0,30}?\b(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million)\b", query, re.I)
     constraints["asked_price"] = None   # this message's own question only
@@ -2705,6 +2837,10 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     constraints["analysis_mode"] = False
     if (with_history and not pending and inst is None and not constraints.get("clarifications") and not constraints.get("place_options")
             and not constraints.get("about_results")
+            # a named BTO launch is the launch comparison's question, not a general data question (SPAT-60: "Compare
+            # BTO project Imaginary Garden QZX with nearby resale." ran no tool and got the menu). A comparison with no
+            # launch named ("Compare BTO vs resale in Sembawang") keeps the resale statistics it was answered with.
+            and not constraints.get("bto_project_name")
             and not constraints.get("addresses") and not constraints.get("map_pin") and scope.mentions_data(query)
             and not money_question(query, constraints)
             and addons.offered_in(state.get("variant"), bool(state.get("fast_path")))
@@ -2742,6 +2878,10 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     comparables = "query_comparable_resale_transactions"
     if comparables not in constraints["requested_tools"] and coordinates_stated(constraints.get("comparable_resale"), users):
         constraints["requested_tools"].append(comparables)
+    if FOUR_ROOM_GRANT_NOTE in (constraints.get("assumptions") or []) and "financial" not in decide_routing(constraints, pending):
+        # no grant is worked out, so the note on how grants were worked out is not said (DEMO-16: it stood above the
+        # menu after "I am a single Singapore citizen, 36. What are my HDB buying options?")
+        constraints["assumptions"] = [a for a in constraints["assumptions"] if a != FOUR_ROOM_GRANT_NOTE]
     return constraints
 
 
@@ -2997,6 +3137,10 @@ def _add_area_purchase(c: Dict[str, Any]) -> None:
     _assume_flat_basics(c)
 
 
+FOUR_ROOM_GRANT_NOTE = ("Grants were worked out for a 4-room flat (a 5-room or larger flat gets a smaller Family Grant); "
+                        "name a flat type to change this.")
+
+
 def _assume_flat_basics(c: Dict[str, Any]) -> None:
     """A budget question with no flat chosen: rather than asking which flat type and what lease to assume (a flat the
     user has not picked has neither), the grants use their stated flat type or a 4-room one, and the lease is taken to
@@ -3008,8 +3152,7 @@ def _assume_flat_basics(c: Dict[str, Any]) -> None:
     if not grants.get("flat_type"):
         grants["flat_type"] = (c.get("flat_types") or ["4 ROOM"])[0]
         if not c.get("flat_types"):
-            c.setdefault("assumptions", []).append("Grants were worked out for a 4-room flat (a 5-room or larger flat gets "
-                                                   "a smaller Family Grant); name a flat type to change this.")
+            c.setdefault("assumptions", []).append(FOUR_ROOM_GRANT_NOTE)
     ages = [v.get("youngest_buyer_age") for v in fin.values() if isinstance(v, dict) and v.get("youngest_buyer_age")]
     stated = c.get("min_remaining_lease_years")
     if stated and not c.get("wants_area_affordability") and \
@@ -4350,6 +4493,16 @@ def _pick_lines(lines: List[str], question: str, pool: List[str]) -> List[int]:
         covered |= line_words[best]
     by_score = sorted((i for i in range(len(lines)) if i not in chosen), key=lambda i: (-score(i, set()), i))
     chosen += by_score[:max(0, 2 - len(chosen))]
+    # a picked line that introduces a list ("... the HFE letter consolidates three critical assessments into a single
+    # application:") is shown with the items under it while there is room: SEM-13 showed one of the three
+    for i in sorted(chosen):
+        if not lines[i].rstrip().endswith(":"):
+            continue
+        for j in range(i + 1, len(lines)):
+            if len(chosen) >= POLICY_LINES_SHOWN or lines[j].rstrip().endswith(":"):
+                break
+            if j not in chosen:
+                chosen.append(j)
     return sorted(chosen)
 
 
@@ -4438,6 +4591,9 @@ def _trim_line(line: str, question: str = "", limit: int = POLICY_LINE_CHARS) ->
         if adds and len(_join_kept(parts, keep + [i])) <= POLICY_LINE_MAX:
             keep.append(i)
             covered |= adds
+    last = len(parts) - 1
+    if line.rstrip().endswith(":") and keep[-1] != last and len(_join_kept(parts, keep + [last])) <= POLICY_LINE_MAX:
+        keep.append(last)   # a lead-in keeps the sentence that introduces the items shown under it (_pick_lines)
     return _join_kept(parts, keep)
 
 
@@ -4459,6 +4615,25 @@ def _cut_sentence(sentence: str, limit: int = POLICY_LINE_MAX) -> str:
     while len(words) > 1 and re.search(r"\d", words[-1]):
         words.pop()                     # "must wait 15" would lose "months"
     return " ".join(words).rstrip(",;:—- ") + "…"
+
+
+def _classes(text: str) -> set:
+    """The flat classes a text names: {"prime"} for "a Prime flat"."""
+    return {k for f, k in scheme_terms(text) if f == "class"}
+
+
+def _asked_cells(line: str, asked: set) -> str:
+    """A comparison-table row cut to the asked classes' cells: "Whole-Flat Rental After MOP — Standard Flats: Permitted;
+    Plus Flats: Prohibited; Prime Flats: Prohibited" is "Whole-Flat Rental After MOP — Prime Flats: Prohibited" for a
+    Prime question. Only a row whose every cell is headed by a class."""
+    if " — " not in line:
+        return line
+    head, cells = line.split(" — ", 1)
+    parts = [c.strip() for c in cells.split(";")]
+    if not all(_classes(c.split(":")[0]) for c in parts):
+        return line
+    keep = [c for c in parts if _classes(c.split(":")[0]) & asked]
+    return f"{head} — {'; '.join(keep)}" if keep and len(keep) < len(parts) else line
 
 
 def shown_policy_passages(passages: Any, question: str = "") -> List[Dict[str, Any]]:
@@ -4496,6 +4671,21 @@ def shown_policy_passages(passages: Any, question: str = "") -> List[Dict[str, A
             sections = {str(i): s for i, s in enumerate(relevant[:POLICY_PASSAGES_SHOWN])}
     else:
         sections = {str(i): s for i, s in enumerate(ordered_sections[:POLICY_PASSAGES_SHOWN])}
+
+    asked = _classes(question)
+    if asked:
+        # "Can I rent out the whole of a Prime flat once its MOP is over?": not the Standard-flat section, whose
+        # 5-year whole-flat rental rule became the opening (SEM-07), nor a table row's Standard and Plus cells. A
+        # section about another class stays when its lines name the asked class too: "Just like Prime flats, Plus flat
+        # owners are never permitted to rent out the whole flat" (with its spare-bedroom rule) answers a Prime question
+        # (C1-02, whose clause was lost without it)
+        about = [s for s in sections.values()
+                 if not _classes(s["title"] + " " + s["parent"]) - asked
+                 or (_classes(s["title"] + " " + s["parent"]) | _classes(" ".join(s["lines"]))) & asked]
+        if about:
+            sections = {str(i): s for i, s in enumerate(about)}
+        for s in sections.values():
+            s["lines"] = [_asked_cells(line, asked) for line in s["lines"]]
 
     pool = [line for s in sections.values() for line in s["lines"]]
     for s in sections.values():
@@ -4711,7 +4901,10 @@ def template_response(state: HDBCompassState) -> str:
     elif passages:
         lines.append("**Policy:**")
         lines.extend(policy_fact_lines(passages, user_request(state)))
-    elif state.get("policy_no_match"):
+    elif state.get("policy_no_match") and not (state.get("financial_breakdown") and _OWN_GRANT_ASK.search(
+            str((state.get("user_constraints") or {}).get("policy_question") or ""))):
+        # "What grants can we get?" is answered by the calculators (which ask for the household's facts); a "no rule
+        # found" line beside them reads as no answer (CLARIFY-03)
         lines.append(NO_POLICY_ANSWER)
     if not lines:
         lines.append(NO_DATA)
@@ -5286,6 +5479,30 @@ def unlimited_search_phrase(c: Dict[str, Any]) -> str:
     return "Blocks with recent " + (f"{flat} " if flat else "") + "sales" + (f" in {towns}" if towns else "") + ", cheapest first"
 
 
+def forced_opening(state: HDBCompassState) -> Tuple[Optional[str], bool]:
+    """Code's own opening for questions the passages and tools cannot answer in their words, and whether the model's
+    checked sentences may follow it: a request to get around a rule (refused, then the lawful rule: the model may
+    explain it), what this app can confirm or check (its estimates, a live quota) and a BTO launch the launch data does
+    not have. The model wrote "HDB does not publicly display a block's live quota" and confused the EIP and SPR quotas
+    (LIVE-POL-02), and the no-model answers quoted unrelated passages or the menu (POLICY-07, POLICY-09, LIMIT-08)."""
+    query = user_request(state)
+    bto = (state.get("sql_market_results") or {}).get("compare_bto_launch_vs_resale")
+    named = (state.get("user_constraints") or {}).get("bto_project_name")
+    if isinstance(bto, dict) and bto.get("status") == "not_found" and named and bto.get("bto_project_name") == named:
+        # only a launch the user named: with none named the comparison searched the town's name ("SEMBAWANG")
+        lead = "No, I" if re.match(r"\W*(?:do|does|did|is|are|can|could|have|has)\b", query, re.I) else "I"
+        return f"{lead} don't have prices for {bto['bto_project_name']}; it isn't in my BTO launch data.", False
+    if not (state.get("user_constraints") or {}).get("policy_question"):
+        return None, False
+    if _EVASION.search(query):
+        return EVASION_OPENING, True
+    if _LIVE_QUOTA_ASK.search(query) and _ASKED.search(query):
+        return LIVE_QUOTA_OPENING, False
+    if _APP_ESTIMATE_ASK.search(query) and _ASKED.search(query):
+        return APP_ESTIMATE_OPENING, False
+    return None, False
+
+
 def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], str, List[str]]:
     """Code's opening in two parts: the sentences that answer the question, and the trade-off sentence between the
     listed blocks ("" when there is none). Built from the same state as the facts (template_response), so it never
@@ -5352,7 +5569,10 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
             sentences.append("Relaxing any one limit on its own unlocks no block either, as shown below.")
     else:
         # no flat search: policy first (the question was about the rules), then what the calculators could do
-        if policy_shown:
+        forced = forced_opening(state)[0]
+        if forced:
+            sentences.append(forced)
+        elif policy_shown:
             sentences.append(policy_fallback_opening(state))
         elif state.get("rag_policy_passages") and "retrieve_hdb_policy_knowledge" not in unbuilt:
             sentences.append("The policy search found no HDB passage that answers this directly.")
@@ -5531,6 +5751,25 @@ def policy_opening_is_relevant(sentence: str, question: str) -> bool:
     return bool(overlap)
 
 
+def policy_scope_conflict(sentence: str, question: str, shown: List[Dict[str, Any]]) -> bool:
+    """Whether a policy opening sentence is about a different scheme from the one asked: it names a sibling of the
+    question's scheme the question does not name (the SPR quota in an answer about the EIP: "The EIP quota applies to
+    households where all buyers and occupiers are Singapore Permanent Residents (SPR)", LIVE-POL-01), or it states a
+    figure that the shown passages give only in sections about none of the schemes it names (SPR's 5% and 8% presented
+    as the ethnic quotas, LIVE-POL-02). In the 3 Nov live answers this dropped 5 sentences, all in turns the tester
+    marked FAIL or REVIEW; "No, there is no legal way to bypass the EIP quota." stays."""
+    if sibling_terms(sentence, question):
+        return True
+    terms = scheme_terms(sentence)
+    if not terms:
+        return False
+    for fig in _figures(sentence):
+        homes = [s for s in shown if fig in set(_figures("\n".join(s["lines"])))]
+        if homes and not any(scheme_terms(" ".join([s["title"], s["parent"]] + s["lines"])) & terms for s in homes):
+            return True
+    return False
+
+
 def check_model_opening(text: str, state: HDBCompassState, facts: str,
                         policy: Optional[List[Dict[str, Any]]] = None) -> Tuple[List[str], Dict[str, int]]:
     """The sentences of the model's opening that may be shown, and how many were dropped for each reason. Every
@@ -5541,13 +5780,20 @@ def check_model_opening(text: str, state: HDBCompassState, facts: str,
     searched = bool(blocks) or _sql_blocks(state) is not None or state.get("spatial_block_candidates") is not None
     notes_are_facts = searched or not state.get("rag_policy_passages")
     kept: List[str] = []
-    dropped = {"figures": 0, "comparisons": 0, "notes": 0, "leans_back": 0, "restated": 0, "lead_ins": 0, "relevance": 0}
+    dropped = {"figures": 0, "comparisons": 0, "notes": 0, "leans_back": 0, "restated": 0, "lead_ins": 0, "relevance": 0,
+               "scope": 0}
     fact_lines = {_plain(line) for line in (facts or "").splitlines() if _plain(line)}
     nothing_found = (facts or "").strip() == NO_DATA
+    shown = shown_policy_passages(policy, user_request(state)) if policy else []
     for sentence in _split_opening(text):
         reason = ""
-        # a sentence the model wrote twice is shown once ("Relaxing the budget unlocks the most blocks; ..." twice)
-        if nothing_found or _plain(sentence) in fact_lines or _plain(sentence) in {_plain(k) for k in kept}:
+        plain = _plain(sentence)
+        # a sentence the model wrote twice is shown once ("Relaxing the budget unlocks the most blocks; ..." twice), and
+        # outside a block search one that is the start of a facts line is that line said twice ("I couldn't find an HDB
+        # rule in my knowledge base that answers this." above the same line with "Please check hdb.gov.sg ...":
+        # CLARIFY-03; a block-search answer has its own checks for such sentences below)
+        if nothing_found or plain in fact_lines or plain in {_plain(k) for k in kept} \
+                or (not searched and len(plain) >= 20 and any(line.startswith(plain) for line in fact_lines)):
             # the facts already say it ("I could not find data for that request."), and with nothing found the model
             # has no evidence to add anything from: the line would show twice, or reworded ("I couldn't find any data")
             reason = "restated"
@@ -5557,6 +5803,8 @@ def check_model_opening(text: str, state: HDBCompassState, facts: str,
             reason = "lead_ins"
         elif policy and not policy_opening_is_relevant(sentence, user_request(state)):
             reason = "relevance"
+        elif policy and policy_scope_conflict(sentence, user_request(state), shown):
+            reason = "scope"
         elif searched and _LEANS_BACK.match(sentence):
             reason = "leans_back"
         elif searched and not comparisons_hold(sentence, blocks[:LISTED_BLOCKS]):
@@ -5633,13 +5881,29 @@ def policy_fallback_opening(state: HDBCompassState) -> str:
             "must", "may", "are", "not", "any", "get", "you", "our", "who", "out"}
     words = {w for w in re.findall(r"[a-z0-9]+", query.lower()) if (len(w) > 2 or w.isdigit()) and w not in stop}
     best, best_score = None, 0
+    heading = ""
     for i, line in enumerate(policy_fact_lines(passages, query)):
         clean = re.sub(r"^\s*-\s*", "", line).strip()
+        if clean.startswith("**"):
+            heading = clean
         if not clean or clean.startswith(("**", "Source:")) or len(clean) < 25 or re.match(r"^[\w ]{1,30}:\s*\$?[\d,]", clean) \
                 or re.match(r"(?:consider|for example|example|e\.g\.|worked example|scenario|suppose|imagine)\b", clean, re.I):
             continue
+        foreign = sibling_terms(f"{heading} {clean}", query)
+        if foreign and not scheme_terms(f"{heading} {clean}") & scheme_terms(query):
+            # a line about Standard flats for a Prime question, the SPR quota for an EIP one (SEM-07); not one naming
+            # the asked scheme too ("Just like Prime flats, Plus flat owners are never permitted to rent out the whole
+            # flat" answers a Plus question)
+            continue
+        parts = _split_opening(clean)
+        if clean.endswith(":") and len(parts) > 1:
+            clean = parts[0]   # a lead-in's first sentence: the opening is not a list's introduction
         have = set(re.findall(r"[a-z0-9]+", clean.lower()))
-        score = len(words & have) - i * 0.01        # ties go to the earlier (better ranked) line
+        # a word of four letters or more also meets, at half weight, the longer words it starts ("rent" meets
+        # "Rental": "Can I rent out my whole Prime flat after the 10-year MOP?" had opened with the Prime MOP row, not
+        # the Prime rental row); half, so "citizen" still prefers "Citizen + Permanent Resident" to "Both Citizens"
+        score = (len(words & have) + 0.5 * len({w for w in words - have if len(w) >= 4 and any(h.startswith(w) for h in have)})
+                 - i * 0.01 - (1 if foreign else 0))   # a line also about a sibling scheme only when no other answers
         if score > best_score:
             best, best_score = clean, score
     if best and best_score >= 2 - 0.5:          # at least two of the question's own words
@@ -5822,10 +6086,15 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
                 else:
                     # the model's surviving sentences are preferred; code's opening only when none of them survives
                     opening = " ".join(kept) or lead
+                    forced, with_model = forced_opening(state)
+                    if forced:
+                        # code's refusal or disclosure first; after a refusal the model's lawful explanation may follow
+                        opening = " ".join([forced] + [k for k in kept if with_model and _plain(k) != _plain(forced)])
                 code_only = not kept and bool(lead)
                 why = {"figures": "stated figures", "comparisons": "compared blocks in a way the facts do not bear out",
                        "notes": "repeated a note the facts carry", "leans_back": "leaned on the sentence before"}
                 why["relevance"] = "answered a different policy topic from the user's question"
+                why["scope"] = "named a scheme the question does not ask about"
                 drops = [f"synthesize: dropped {dropped[r]} opening sentence(s) that {w}" for r, w in why.items() if dropped[r]]
                 if drops and code_only:
                     drops[0] += "; code opening used"
