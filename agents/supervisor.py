@@ -2414,8 +2414,11 @@ def _amount_in(value: Any, text: str) -> bool:
         v = float(value)
     except (TypeError, ValueError):
         return False
+    # a bare number counts only as money with a $ sign or thousands commas: "520884" is a postal code, not $520,884
+    if re.search(rf"(?:S?\$|SGD)\s?(?:{v:,.0f}|{v:.0f})(?![\d,])|(?<![\d,]){v:,.0f}(?![\d,])", text, re.I) and v >= 1000:
+        return True
     t = re.sub(r"[$,]|\bS\$|\bSGD\b", "", text, flags=re.I).lower()
-    forms = {f"{v:.0f}", f"{v / 1000:g}k", f"{v / 1000:g} k", f"{v / 1000:g} thousand", f"{v / 1e6:g}m", f"{v / 1e6:g} m",
+    forms = {f"{v / 1000:g}k", f"{v / 1000:g} k", f"{v / 1000:g} thousand", f"{v / 1e6:g}m", f"{v / 1e6:g} m",
              f"{v / 1e6:g} million", f"{v / 1e6:g} mil"}
     return any(re.search(rf"(?<![\d.]){re.escape(f)}(?![\d])", t) for f in forms)
 
