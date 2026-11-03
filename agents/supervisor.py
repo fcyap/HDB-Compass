@@ -896,9 +896,10 @@ def buyer_ages(text: str, couple: Optional[bool] = None) -> List[int]:
 
 # Money facts: an amount is the cash, CPF or income only when that word sits right next to it ("cash 40k", "40k
 # cash", "income: $8,500", "we take home $9,000 a month"). Income is never what the buyer pays ("afford $2,500 a
-# month", "car loan $800/month", "$500 a month allowance for my parents") or a yearly figure.
+# month", "car loan $800/month", "$500 a month allowance for my parents") or a yearly figure. "6 months" is a period,
+# but "Income $8,000 monthly" is an amount (SEM-19: it asked for the income again).
 _AMOUNT_TOKEN = re.compile(r"(?:S?\$|\bSGD\s?)?\s?(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(k|thousand)?\b"
-                           r"(?!\s*(?:%|m\b|km\b|years?|yrs?|mins?\b|minutes|months?|mths?|rooms?|rm\b|-room))", re.I)
+                           r"(?!\s*(?:%|m\b|km\b|years?|yrs?|mins?\b|minutes|months?\b|mths?\b|rooms?|rm\b|-room))", re.I)
 _FACT_WORDS = {"cash_savings": r"\bcash(?:\s+savings)?\b|(?<!cpf )(?<!oa )\bsavings\b",
                "cpf_oa_balance": r"\bcpf(?:\s+oa)?\b|\boa\b|\bordinary account\b",
                "monthly_income": r"\b(?:household\s+|monthly\s+|combined\s+)?income\b|\bsalar(?:y|ies)\b|\bearn(?:s|ing|ings)?\b"
@@ -1056,7 +1057,12 @@ _SC_COUPLE = re.compile(
     r"|\bwe(?:'re| are)\s+(?:both\s+)?(?:singapore(?:an)?\s+)?(?:citizens|singaporeans|SCs)\b|\bSC\s*(?:\+|&|and|/)\s*SC\b"
     rf"|\b{_PARTNER}\s+and\s+i\s+are\s+(?:both\s+)?(?:singapore(?:an)?\s+)?(?:citizens|singaporeans|SCs)\b"
     r"|\bboth of us are\s+(?:singapore(?:an)?\s+)?(?:citizens|singaporeans|SCs)\b|\bboth\s+singaporean\b"
-    r"|\b(?:2|two)\s+(?:SCs|singaporeans|singapore citizens)\b", re.I)
+    r"|\b(?:2|two)\s+(?:SCs|singaporeans|singapore citizens)\b"
+    # "We are married citizens aged 37 and 35", "Citizen first-timers aged 27 and 29", "We are citizen first-timer
+    # buyers" (SEM-19: each asked for the citizenship again)
+    r"|\b(?:we(?:'re| are)\s+(?:a\s+)?)?married\s+(?:singapore(?:an)?\s+)?citizens\b"
+    r"|^\W*(?:we(?:'re| are)\s+)?(?:singapore(?:an)?\s+)?citizen\s+(?:first[- ]?timers|first[- ]?timer buyers|buyers|first[- ]time buyers)\b"
+    r"|\bwe(?:'re| are)\s+(?:married\s+)?(?:singapore(?:an)?\s+)?citizen\s+(?:first[- ]?timers?|first[- ]?timer buyers|buyers)\b", re.I)
 # buying with someone who is not a spouse: not the couple schemes
 _NOT_A_COUPLE = re.compile(r"\bjoint singles?\b|\btwo singles\b|\bwith (?:my|a) (?:friend|sister|brother|sibling|cousin|colleague)\b"
                            r"|\b(?:me|i) and my (?:friend|sister|brother|sibling|cousin|colleague)\b", re.I)
@@ -1079,9 +1085,10 @@ def pr_buyer(text: str) -> bool:
 
 
 def _citizen_view(text: str) -> str:
-    # "first-time buyers" is the buyers' own status, not talk about buyers in general
+    # "first-time buyers" and "citizen first-timer buyers" are the buyers' own status, not talk about buyers in general
     return ". ".join(c for c in _clauses_of(statements(text, own=True))
-                     if not _GENERAL_TALK.search(re.sub(r"\bfirst[- ]time (?:home )?(?:buyers|applicants)\b", "", c, flags=re.I)))
+                     if not _GENERAL_TALK.search(re.sub(r"\b(?:citizen\s+)?first[- ]tim(?:e|er)s? (?:home )?(?:buyers|applicants)\b",
+                                                        "", c, flags=re.I)))
 
 
 def citizenship_stated(text: str) -> Optional[str]:
@@ -1106,7 +1113,8 @@ def citizenship_stated(text: str) -> Optional[str]:
 
 
 _FIRST_TIME = r"(?:first[- ]?timers?|1st[- ]?timers?|first[- ]time (?:home )?(?:buyers?|applicants?))"
-_NOT_FIRST = re.compile(rf"\b(?:second|2nd)[- ]?timers?\b|\b(?:not|no|no longer|aren't|isn't|don't|doesn't|never been|"
+# "second-timers", "second-time buyers" (SEM-19: HOUSE-04 asked whether they were first-timers)
+_NOT_FIRST = re.compile(rf"\b(?:second|2nd)[- ]?tim(?:ers?|e (?:home )?(?:buyers?|applicants?))\b|\b(?:not|no|no longer|aren't|isn't|don't|doesn't|never been|"
                         rf"neither of us(?: is| are)?)\s+(?:\w+\s+){{0,3}}?{_FIRST_TIME}", re.I)
 # a buyer who owns or owned a home ("we sold our flat 2 years ago", "my wife owns a condo", "had a 3-room flat")
 _OWNED = re.compile(r"(?<!never )(?<!not )(?<!n't )\b(?:sold|owned|owns|own|bought|selling|inherited|had|has|have)\s+"
@@ -1228,6 +1236,11 @@ _PURCHASE_PRICE = (r"(?:buy(?:ing)?|purchas(?:e|ing))\b[^$.]{0,40}\bfor " + _AMO
 # asking for upfront costs (stated_financial_inputs), since "find a $600k flat in Tampines" is a budget
 _FLAT_PRICES = (r"\b(?:an?|the)\s+" + _AMOUNT + r"(?!\d)\s+(?:[\w-]+\s+){0,2}?(?:flat|unit|home|bto)\b",
                 r"\b(?:flat|unit|home)s?\s+(?:costing|priced at|worth|that costs?|valued at)\s+" + _AMOUNT + r"(?!\d)")
+# "Change price and valuation to $360,000.", "set the price to $1.2m", "price is now $500k", "the valuation becomes $700k"
+_PRICE_FIX = re.compile(r"\b(?:change|set|make|update|use|try)\s+(?:the\s+)?(?:purchase\s+)?(?:price|it)\b(?:\s+(?:and|&)\s+"
+                        r"(?:the\s+)?valuation)?\s+(?:to|at|as)\s+(?:S?\$\s?)(\d[\d,]*(?:\.\d+)?)\s*(k|m|million)?\b"
+                        r"|\b(?:price|valuation)(?:\s+and\s+(?:the\s+)?valuation)?\s+(?:is\s+now|now|becomes|is)\s+(?:S?\$\s?)"
+                        r"(\d[\d,]*(?:\.\d+)?)\s*(k|m|million)?\b", re.I)
 # the lease the user wants the calculation to assume: "use 65 yrs remaining lease for the calc", "calc w 65 yrs lease",
 # "using a 65-year remaining lease", "assume 65 years of remaining lease"
 _CALC_LEASE = (r"(\d{2})\s*(?:years?|yrs?) of remaining lease for the .{0,30}calc"
@@ -1242,7 +1255,11 @@ _NO_PROXIMITY = (r"\bno proximity (?:housing )?grant\b|\bno PHG\b|\bproximity (?
 _WORKED = r"(?:employ\w*|working|(?:have|has|'ve)\s+(?:both\s+|each\s+|all\s+)?worked)"   # "have worked", not "worked in 2019"
 _CONTINUOUS_WORK = (rf"(?:continuous(?:ly)?\s+(?:employ\w*|working)|{_WORKED}\s+(?:\w+\s+){{0,2}}continuously)"
                     r".{0,40}\b(?:12|twelve)\s*(?:months?|mths?)\b"
-                    rf"|{_WORKED}\s+(?:12|twelve)\s*(?:months?|mths?)\s+continuously")
+                    rf"|{_WORKED}\s+(?:12|twelve)\s*(?:months?|mths?)\s+continuously"
+                    # "Both worked 12 months", "we both worked continuously for the last 12 months" (SEM-19)
+                    r"|\b(?:we\s+)?(?:both|each|all)\s+(?:have\s+)?worked\s+(?:continuously\s+)?(?:for\s+)?(?:the\s+)?"
+                    r"(?:last|past)?\s*(?:12|twelve)\s*(?:months?|mths?)\b"
+                    r"|\bworked\s+continuously\s+(?:for\s+)?(?:the\s+)?(?:last|past)\s+(?:12|twelve)\s*(?:months?|mths?)\b")
 # the buyers say they have NOT worked the 12 months (the household form's "No": "We have not worked continuously for the
 # past 12 months"; "I haven't been employed continuously for 12 months"; "not continuously employed for 12 months")
 _NOT_CONTINUOUS_WORK = (r"(?:\bnot|n't|\bnever)\s+(?:\w+\s+){0,3}(?:continuous(?:ly)?|consistently)\s+(?:\w+\s+){0,2}"
@@ -1259,29 +1276,46 @@ _GRANT_ELIGIBILITY = (r"eligibility for (?:the )?(?:housing )?grants?.{0,40}\bco
                       r"|(?<!proximity )(?<!proximity housing )\bgrants?\b.{0,30}\beligibility\b.{0,25}\bconfirmed\b"
                       r"|\bconfirmed (?:our|my) eligibility for (?:the )?grants?"
                       r"|\bconfirmed (?:that )?(?:we are|we're|i am|i'm|we|i) (?:are |am )?eligible for (?:the )?(?:housing )?grants?")
+# "grants confirmed", "HDB has not confirmed our grant eligibility" (SEM-19)
+_GRANT_ELIGIBILITY += (r"|^\W*(?:(?:our|my|the)\s+)?(?:housing\s+)?grants?\s+(?:are\s+|is\s+|have been\s+|has been\s+)?"
+                       r"(?:already\s+)?confirmed\b"
+                       r"|\b(?:HDB|they)\s+(?:has|have)(?:\s+not|n't)?\s+(?:yet\s+)?confirmed\s+(?:our|my)\s+(?:housing\s+)?"
+                       r"grant\s+eligibility")
 _LOAN_ELIGIBILITY = (r"eligibility for .{0,30}\b(?:HDB |bank )?loan (?:is |has been |has not been |is not |isn't )?(?:yet )?confirmed"
                      r"|\b(?:HDB |bank )?loan\b.{0,15}\beligibility\b.{0,25}\bconfirmed\b"
                      r"|\b(?:HDB|bank) loan(?: eligibility)? (?:is |has been |is not |has not been )?confirmed"
                      r"|\bconfirmed (?:our|my) eligibility for (?:the )?(?:grants? and (?:an? |the )?)?(?:HDB |bank )?loan"
                      r"|\bconfirmed (?:that )?(?:we are|we're|i am|i'm) eligible for (?:the )?(?:grants? and (?:an? |the )?)?(?:HDB |bank )?loan")
+# a bank's in-principle approval (IPA) is a bank loan's eligibility: "we have a bank IPA", "got an in-principle approval"
+_IPA = r"\b(?:in[- ]principle approval|IPA)\b"
+_BANK_APPROVAL = re.compile(_IPA + r"|\bbank\b[^.]{0,30}\b(?:approv\w*|confirm\w*)\b|\b(?:approv\w*|confirm\w*)\b[^.]{0,30}\bbank\b", re.I)
 _PROXIMITY_ELIGIBILITY = r"\bproximity (?:housing )?grant\b.{0,40}\bconfirmed\b|\bconfirmed\b.{0,40}\bproximity\b"
 _NOT_CONFIRMED = re.compile(r"\bnot (?:yet )?(?:been )?confirmed\b|n't (?:been )?confirmed\b|\bunconfirmed\b|"
                             r"\bnot sure\b|\bpending\b|\b(?:nobody|no one|never)\b[^.]{0,30}\bconfirmed\b", re.I)
 
 
 def confirmations(statement_text: str) -> Dict[str, bool]:
+    """Read clause by clause: "grants confirmed, loan eligibility not confirmed" confirms the grants only, and in
+    "Grants and HDB loan eligibility confirmed, no proximity grant" the "no proximity grant" clause is not about the
+    grant eligibility (SEM-19: read per sentence, both were missed)."""
     out: Dict[str, bool] = {}
     for sent in re.split(r"(?<=[.!?;])\s+|\n+", statement_text):
-        no = bool(_NOT_CONFIRMED.search(sent))
-        if re.search(_PROXIMITY_ELIGIBILITY, sent, re.I):
-            out["proximity_eligibility_confirmed"] = not no
-            # "our proximity grant eligibility is confirmed" says nothing about the general grant eligibility
-            if not re.search(r"\bgrants? and\b|\band (?:the |our |my )?(?:housing )?grants?\b", sent, re.I):
-                continue
-        if re.search(_GRANT_ELIGIBILITY, sent, re.I) and not re.search(r"\bproximity\b", sent.split("grant")[0], re.I):
-            out["eligibility_confirmed"] = not no
-        if re.search(_LOAN_ELIGIBILITY, sent, re.I):
-            out["loan_eligibility_confirmed"] = not no
+        for cl in re.split(r",\s+|\s+but\s+|\s+while\s+", sent):
+            no = bool(_NOT_CONFIRMED.search(cl))
+            if re.search(_PROXIMITY_ELIGIBILITY, cl, re.I):
+                out["proximity_eligibility_confirmed"] = not no
+                # "our proximity grant eligibility is confirmed" says nothing about the general grant eligibility
+                if not re.search(r"\bgrants? and\b|\band (?:the |our |my )?(?:housing )?grants?\b", cl, re.I):
+                    continue
+            if re.search(_GRANT_ELIGIBILITY, cl, re.I) and not (
+                    re.search(r"\bproximity\b|\bPHG\b", cl, re.I) and re.search(r"\bproximity\b", cl.lower().split("grant")[0])):
+                out["eligibility_confirmed"] = not no
+            if re.search(_LOAN_ELIGIBILITY, cl, re.I):
+                out["loan_eligibility_confirmed"] = not no
+            elif (m := re.search(_IPA, cl, re.I)) and re.search(r"\b(?:got|have|has|received|obtained|with)\b", cl[:m.start()], re.I):
+                # "we have a bank IPA"; not "we haven't got an IPA yet"
+                out["loan_eligibility_confirmed"] = not (no or re.search(r"(?:\bnot|n't|\bno|\bnever|\bwithout|\byet to)\b",
+                                                                        cl[:m.start()], re.I))
     return out
 
 
@@ -1333,7 +1367,7 @@ def stated_financial_inputs(text: str, context: str = "") -> Dict[str, Dict[str,
         f["continuous_employment_12_months"] = True
     # "eligibility for the grants is confirmed", "HDB has confirmed our eligibility for the grants"
     f.update(confirmations(s))
-    if re.search(r"\bbank loan\b", t, re.I):
+    if re.search(r"\bbank[- ]loan\b", t, re.I):          # "a bank-loan calculation" (SEM-20)
         f["loan_type"] = "bank"
     elif re.search(r"\bHDB loan\b", t, re.I):
         f["loan_type"] = "hdb"
@@ -1343,7 +1377,9 @@ def stated_financial_inputs(text: str, context: str = "") -> Dict[str, Dict[str,
         f["proximity"] = "with"
     elif _parents_clause(_PARENTS_NEAR, t):
         f["proximity"] = "near"
-    if re.search(r"\bno (?:housing )?grants\b", s, re.I):
+    # "no grants", "Assume zero housing grants." (HOUSE-04: it ran the grant calculator and asked its facts again)
+    if re.search(r"\b(?:no|zero|nil)\s+(?:housing\s+|cpf\s+)?grants\b", s, re.I) or re.search(
+            r"\b(?:assume|assuming|use|using|with)\s+(?:zero|no|nil|\$?0)\s+(?:housing\s+|cpf\s+)?grants?\b", s, re.I):
         f["total_grants"] = 0.0
     m = re.search(_CALC_LEASE, s, re.I)
     if m:
@@ -1379,11 +1415,29 @@ def stated_financial_inputs(text: str, context: str = "") -> Dict[str, Dict[str,
             value = _money(f"{m.group(1)}{m.group(2) or ''}") if m else None
             if value and value >= 50_000:
                 upfront["purchase_price"] = value
+    # a correction of the price the duty or costs were asked on: "Change price and valuation to $360,000.", "The price
+    # is now $1.2M" (SEM-18: the old price and its duty were kept). Read only in a conversation about those costs, so
+    # "a price of $600k" in a flat search stays a budget; "price range" is never a price.
+    fix = _PRICE_FIX.search(t) if re.search(_ASKS_UPFRONT, f"{context}\n{t}") else None
+    if fix:
+        num, unit = (fix.group(1), fix.group(2)) if fix.group(1) else (fix.group(3), fix.group(4))
+        price = _money(f"{num}{unit or ''}")
+        if price and price >= 50_000:
+            upfront["purchase_price"] = price
+            if re.search(r"\bvaluation\b", fix.group(0), re.I):
+                upfront["market_valuation"] = price
     for field, pattern in (("market_valuation", r"valued at " + _AMOUNT), ("loan_amount", r"loan of " + _AMOUNT),
                            ("legal_and_valuation_fees", r"fees of " + _AMOUNT)):
         m = re.search(pattern, s, re.I)
         if m:
             upfront[field] = _amount(m)
+    if "purchase_price" in upfront and "market_valuation" not in upfront:
+        # "valuation also $500,000", "valuation equals price"
+        m = re.search(r"\bvaluation\s+(?:is\s+|of\s+|also\s+|=\s*)*(?:S?\$\s?)(\d[\d,]*(?:\.\d+)?)\s*(k|m|million)?\b", t, re.I)
+        if m:
+            upfront["market_valuation"] = _money(f"{m.group(1)}{m.group(2) or ''}")
+        elif re.search(r"\bvaluation\s+(?:equals|is the same as|same as|=|matches)\s*(?:the\s+)?(?:purchase\s+)?price\b", t, re.I):
+            upfront["market_valuation"] = upfront["purchase_price"]
     if re.search(r"\bno ABSD\b|\bno additional buyer'?s stamp duty\b", s, re.I):
         upfront["additional_buyer_stamp_duty"] = 0.0
     from agents.schemas import TOOL_INPUT_MODEL
@@ -1737,15 +1791,48 @@ def has_financial_facts(c: Dict[str, Any]) -> bool:
     return any(vals for vals in (c.get("financial_inputs") or {}).values())
 
 
+# the figures of a flat the model may not choose for the upfront calculator (LIVE-MONEY-01)
+UPFRONT_FLAT_FIGURES = ("purchase_price", "market_valuation", "loan_amount")
+NO_PRICE_ERROR = ("purchase price not stated; ask the user for the flat's purchase price (and its valuation) before "
+                  "working out the stamp duty or upfront costs")
+
+
+def upfront_price(c: Dict[str, Any], outputs: Dict[str, Any], runners: Optional[Dict[str, Any]] = None) -> Optional[float]:
+    """The price the upfront calculator may cost: one code read from the user's words, else their stated budget, else
+    the ceiling the affordability calculator worked out (run first, by code, if the model has not). Never a figure the
+    model chose: live (HOUSE-04 t3) it costed "Does stamp duty fit within that number?" at a price nobody gave and
+    answered $9,600 BSD. None when there is no such price."""
+    fin = c.get("financial_inputs") or {}
+    price = (fin.get("upfront") or {}).get("purchase_price")
+    if price:
+        return float(price)
+    if c.get("max_budget_sgd"):
+        return float(c["max_budget_sgd"])
+    aff_name = "calculate_maximum_affordability"
+    if aff_name not in outputs and runners and aff_name in runners and fin.get("affordability"):
+        outputs[aff_name] = runners[aff_name](**guard_financial_args(aff_name, {}, c, outputs, runners))
+    aff = outputs.get(aff_name) or {}
+    if aff.get("status") == "ok" and aff.get("max_purchase_price"):
+        return float(aff["max_purchase_price"])
+    return None
+
+
 def guard_financial_args(name: str, args: Dict[str, Any], c: Dict[str, Any], outputs: Dict[str, Any],
                          runners: Dict[str, Any]) -> Dict[str, Any]:
     """A calculator call as the model wrote it, corrected at the tool boundary: stated facts override the model's
     arguments, facts the user never stated are left out (the calculator then reports them missing), and a confirmed
-    grant total is passed forward, running the grant calculator first if the model has not."""
+    grant total is passed forward, running the grant calculator first if the model has not. The upfront calculator's
+    price, valuation and loan are never the model's own (upfront_price; run_react refuses the call when no price is
+    known)."""
     sec = FIN_TOOL_SECTION.get(name)
     fin = c.get("financial_inputs") or {}
     if sec is None:
         return args
+    if sec == "upfront":
+        args = {k: v for k, v in args.items() if k not in UPFRONT_FLAT_FIGURES}
+        price = upfront_price(c, outputs, runners)
+        if price is not None:
+            args["purchase_price"] = price
     if not has_financial_facts(c):
         # nothing stated: the model's household figures are its own inventions (live, 3 Nov: SC_SC, $12,000 income,
         # $80k CPF for "How much grant can we get?"), so they are left out and the calculator asks for them
@@ -1969,14 +2056,31 @@ _MONEY_AMOUNT_ASK = re.compile(
     r"|\b(?:stamp duty|bsd)\b.{0,25}\b(?:on|for|of)\b.{0,15}\d|\bcan (?:we|i) afford\b|\bhow much can (?:we|i) (?:get|borrow)\b", re.I)
 
 
+_DUTY_WORDS = re.compile(r"\b(?:stamp )?dut(?:y|ies)\b|\bbsd\b", re.I)
+_FUNDING_WORDS = re.compile(r"\bcash\b|\bup[- ]?front\b|\bdown ?payment\b|\boutlay\b|\bcosts?\b|\bcpf\b", re.I)
+
+
 def _stamp_duty_only(state: Dict[str, Any]) -> Optional[float]:
-    """The buyer's stamp duty when the message asks only for the duty (not the cash needed), and the calculator gave it."""
-    q = last_user_query(state)
-    if not re.search(r"\bstamp dut(?:y|ies)\b|\bbsd\b", q, re.I) or \
-            re.search(r"\bcash\b|\bup[- ]?front\b|\bdown ?payment\b|\boutlay\b|\bcosts?\b|\bcpf\b", q, re.I):
+    """The buyer's stamp duty when the message asks only for the duty (not the cash needed), and the calculator gave it.
+    "that duty" counts, and so does a message that corrects the price of a duty-only question asked earlier
+    ("Change price and valuation to $360,000.") or asks what that duty needs ("Do I have to give you my income just to
+    calculate that duty?"): SEM-18, SEM-06 listed the whole funding checklist instead."""
+    users = [m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user"]
+    q = users[-1] if users else last_user_query(state)
+    if _FUNDING_WORDS.search(q):
         return None
+    if not _DUTY_WORDS.search(q):
+        follows_duty = any(_DUTY_WORDS.search(u) and not _FUNDING_WORDS.search(u) for u in users[:-1])
+        if not (follows_duty and (_PRICE_FIX.search(q) or (re.search(r"\bincome\b", q, re.I) and "?" in q))):
+            return None
     up = (state.get("financial_breakdown") or {}).get("calculate_bsd_and_upfront_outlay") or {}
     return up.get("buyer_stamp_duty")
+
+
+def duty_needs_income_question(state: Dict[str, Any]) -> bool:
+    """"Do I have to give you my income just to calculate that duty?" after a stamp-duty answer (SEM-06)."""
+    q = last_user_query(state)
+    return bool(re.search(r"\bincome\b", q, re.I) and "?" in q and _stamp_duty_only(state) is not None)
 
 
 def money_question(query: str, c: Dict[str, Any]) -> bool:
@@ -2148,30 +2252,71 @@ def _pin_radius_followup(c: Dict[str, Any], query: str, prior: Dict[str, Any], f
 
 
 _INSTALMENT_ASK = re.compile(r"\b(?:monthly\s+)?(?:instal+ments?|repayments?|mortgage payments?|monthly payments?|"
-                             r"how much (?:do|would|will) (?:i|we) (?:pay|repay) (?:each|a|per|every) month)\b", re.I)
+                             r"how much (?:do|would|will) (?:i|we) (?:pay|repay) (?:each|a|per|every) month)\b"
+                             # "How much per month for my home loan?", "How much every month for a $420k mortgage" (SEM-12)
+                             r"|\bhow much\b[^.?!]{0,30}?\b(?:per|a|each|every) month\b", re.I)
+_INSTALMENT_RATE = r"(\d{1,2}(?:\.\d+)?)\s*(?:%|per ?cent\b)"                      # "2.6%", "4 percent", "3 per cent"
+# the loan tenure, not a lease or an age: "over 20 years", "25-year"; never "70 years lease", "40 years left"
+_INSTALMENT_YEARS = r"\b(\d{1,2})[- ]?(?:years?|yrs?)\b(?!\s*(?:of\s+)?(?:lease|left|remaining|old)\b)"
+# an amount: "$600,000 mortgage" is $600,000 (the unit must end the word, or the "m" of "mortgage" read it as millions)
+_INSTALMENT_AMOUNT = (r"(?:S?\$\s?)(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million)?\b(?![\d%])"
+                      r"|\b(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million)\b")
+_INSTALMENT_LOAN = (r"(?:S?\$\s?)?(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million)?\s*(?:hdb |bank |housing |home )?(?:loan|mortgage)\b"
+                    r"|(?:loan|borrow\w*|mortgage)\s+(?:of|amount of|is)?\s*(?:S?\$\s?)(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million)?\b")
+# a follow-up that changes one figure of the last instalment: "What if I repay over 20 years instead?", "Use 15 years
+# instead.", "Increase rate to 4.5%, leave the rest.", "Same terms but borrow only $550,000.", "If the loan is $400k
+# instead?", "what about 30 years at the same rate?" (SEM-05, SEM-12)
+_INSTALMENT_FOLLOWUP = re.compile(r"\b(?:instead|same|the rest|what if|what about|how about|and over|if the loan|use|increase|"
+                                  r"decrease|raise|lower|change|borrow\w*|repay\w*|tenure|rate|loan)\b", re.I)
 
 
-def instalment_question(q: str) -> Optional[Dict[str, Any]]:
+def _instalment_figure(m: Optional[re.Match]) -> Optional[float]:
+    if not m:
+        return None
+    num, unit = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+    return _money(f"{num}{unit or ''}")
+
+
+def _instalment(loan: float, rate: float, years: int) -> Dict[str, Any]:
+    """Equal monthly payments; a 0% loan is the loan spread evenly over the months."""
+    r, n = rate / 100 / 12, years * 12
+    monthly = loan / n if r == 0 else loan * r / (1 - (1 + r) ** -n)
+    return {"loan": loan, "rate": rate, "years": years, "monthly": round(monthly), "interest": round(monthly * n - loan)}
+
+
+def instalment_question(q: str, prior: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """"monthly instalment for a $500k loan at 2.6% over 25 years": worked out by code with the standard loan formula
     (equal monthly payments). No calculator tool answers it; it was the menu before (QA sweep, 3 Nov). Returns {} when
-    the question is asked but a figure is missing, None when it is not an instalment question."""
+    the question is asked but a figure is missing, None when it is not an instalment question. prior: the last turn's
+    instalment, which a follow-up naming one new figure changes ("Use 15 years instead."); the other figures stay."""
     ask = asked_part(q)
-    if not _INSTALMENT_ASK.search(ask) or re.search(r"\bdebt\b", ask, re.I) or not re.search(r"\bloan\b|\bmortgage\b|\bborrow", q, re.I):
-        return None   # "our monthly debt repayments are $500" states a fact; it does not ask for an instalment
-    m_loan = re.search(r"(?:S?\$\s?)?(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million)?\s*(?:hdb |bank |housing )?(?:loan|mortgage)\b"
-                       r"|(?:loan|borrow\w*|mortgage)\s+(?:of|amount of|is)?\s*(?:S?\$\s?)(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million)?", q, re.I)
-    m_rate = re.search(r"(\d{1,2}(?:\.\d+)?)\s*%", q)
-    m_years = re.search(r"\b(\d{1,2})[- ]?(?:years?|yrs?)\b", q, re.I)
-    if not (m_loan and m_rate and m_years):
+    asked = bool(_INSTALMENT_ASK.search(ask)) and not re.search(r"\bdebt\b", ask, re.I)
+    m_loan = re.search(_INSTALMENT_LOAN, q, re.I)
+    loan = _instalment_figure(m_loan)
+    if not loan or loan < 10_000:
+        # "$100k at 0% interest": the first amount that can be a loan
+        loan = next((v for v in map(_instalment_figure, re.finditer(_INSTALMENT_AMOUNT, q, re.I)) if v and v >= 10_000), None)
+    m_rate = re.search(_INSTALMENT_RATE, q, re.I)
+    m_years = re.search(_INSTALMENT_YEARS, q, re.I)
+    rate = float(m_rate.group(1)) if m_rate else None
+    years = int(m_years.group(1)) if m_years else None
+    if prior and prior.get("monthly") and not (asked and loan and rate is not None and years) \
+            and (loan or rate is not None or years) and _INSTALMENT_FOLLOWUP.search(q):
+        rb = rule_based_extract(q)
+        # not a search ("Find 4-room in Tampines under $600k instead"), a flat's price ("HDB loan or bank loan for a $500k
+        # flat?") or a budget question with household amounts ("We have $100k CPF, what's our max loan?")
+        if not (rb.towns or rb.flat_types or rb.addresses) and not any(re.search(p, q, re.I) for p in _FACT_WORDS.values()) \
+                and not re.search(r"\b(?:flats?|units?|resale|bto|condos?|house|homes?)\b(?!\s+loans?)", q, re.I) \
+                and not re.search(r"\b(?:budget|afford\w*|max(?:imum)?|ceiling|grants?)\b", ask, re.I):
+            loan, rate, years = loan or prior["loan"], prior["rate"] if rate is None else rate, years or prior["years"]
+            if loan >= 10_000 and 0 <= rate < 20 and 1 <= years <= 35:
+                return _instalment(loan, rate, years)
+    # "our monthly debt repayments are $500" states a fact; it does not ask for an instalment
+    if not asked or not re.search(r"\bloan\b|\bmortgage\b|\bborrow|\brepay|\binstal", q, re.I):
+        return None
+    if not (loan and rate is not None and years) or loan < 10_000 or not (0 <= rate < 20) or not (1 <= years <= 35):
         return {}
-    num, unit = (m_loan.group(1), m_loan.group(2)) if m_loan.group(1) else (m_loan.group(3), m_loan.group(4))
-    loan = _money(f"{num}{unit or ''}")
-    rate, years = float(m_rate.group(1)), int(m_years.group(1))
-    if not loan or loan < 10_000 or not (0 < rate < 20) or not (1 <= years <= 35):
-        return {}
-    r, n = rate / 100 / 12, years * 12
-    monthly = loan * r / (1 - (1 + r) ** -n)
-    return {"loan": loan, "rate": rate, "years": years, "monthly": round(monthly), "interest": round(monthly * n - loan)}
+    return _instalment(loan, rate, years)
 
 
 _BUDGET_ASK = re.compile(r"\b(?:budget|afford\w*|borrow\w*|how much (?:hdb |bank )?loan|max(?:imum)? (?:hdb |bank )?loan|"
@@ -2318,6 +2463,7 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
             constraints["policy_question"] = f"{prior['policy_question']} {query}"
         if not pending and not constraints.get("clarifications") and _search_unchanged(prior, constraints, fresh_constraints, query):
             constraints["assumptions"] = list(constraints.get("assumptions") or []) + [UNCHANGED_NOTE]
+    constraints["listed_pick"] = None   # this message's own answer from the last list only (listed_block_reference)
     if pending and pending.get("kind") == "place":
         answer_place_question(constraints, query)
     elif prior and not pending:
@@ -2360,9 +2506,22 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         fin_in = constraints.setdefault("financial_inputs", {}) or {}
         constraints["financial_inputs"] = fin_in
         fin_in.pop("grants", None)
-        fin_in.setdefault("affordability", {})["total_grants"] = 0.0
+        aff = fin_in.get("affordability") or {}
+        bank_note = None
+        if any(k in FACT_FIELDS for k in aff if k != "total_grants"):
+            # two PRs cannot take an HDB loan, so their budget is a bank loan's: the bank's rate is asked for, and its
+            # in-principle approval rather than an "HDB loan eligibility" they cannot have (SEM-20: all three turns of
+            # HOUSE-03 asked whether their HDB loan eligibility was confirmed). Only with the household's own facts, not
+            # for "What if both buyers are PRs?"
+            aff["loan_type"] = "bank"
+            if not _BANK_APPROVAL.search(users):
+                aff.pop("loan_eligibility_confirmed", None)
+            bank_note = ("An HDB loan needs at least one Singapore Citizen buyer, so two PRs can only take a bank loan; "
+                         "the budget is worked out for a bank loan.")
+        fin_in.setdefault("affordability", aff)["total_grants"] = 0.0
         constraints["assumptions"] = list(constraints.get("assumptions") or []) + [
-            "Two Singapore permanent residents get no CPF housing grants, so the budget below uses $0 in grants."]
+            "Two Singapore permanent residents get no CPF housing grants, so the budget below uses $0 in grants."] + (
+            [bank_note] if bank_note else [])
     grants = (constraints.get("financial_inputs") or {}).get("grants") or {}
     if grants.get("proximity_eligibility_confirmed") is False and grants.get("proximity") in ("near", "with"):
         # the calculator refuses every grant while a PHG is unconfirmed; the other grants do not depend on it
@@ -2370,17 +2529,15 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         grants.pop("proximity_eligibility_confirmed", None)
         constraints["assumptions"] = list(constraints.get("assumptions") or []) + [
             "The Proximity Housing Grant is left out because your eligibility for it is not confirmed."]
-    inst = instalment_question(query)
+    inst = instalment_question(query, (state.get("prior_constraints") or {}).get("instalment"))
     if inst is None and str((pending or {}).get("question") or "").startswith("To work out the monthly instalment"):
         inst = instalment_question(f"monthly instalment on a loan of {query}")   # "$500k at 2.6% over 25 years"
-    if inst is not None:
-        constraints["instalment"] = inst if "monthly" in inst else None
-        if inst and constraints.get("max_budget_sgd") == inst["loan"]:
-            constraints["max_budget_sgd"] = None   # the loan amount, not a flat budget (live: it then asked "Which town?")
-        if "monthly" not in inst:
-            constraints["clarifications"] = list(constraints.get("clarifications") or []) + [
-                "To work out the monthly instalment, tell me the loan amount, the interest rate and the loan tenure "
-                "(for example \"$500k at 2.6% over 25 years\")."]
+    # this message's own instalment only: the last one was shown again under a later flat search (X-STALE)
+    constraints["instalment"] = inst if inst and "monthly" in inst else None
+    if inst is not None and "monthly" not in inst:
+        constraints["clarifications"] = [q for q in constraints.get("clarifications") or [] if q != WHICH_TOWN] + [
+            "To work out the monthly instalment, tell me the loan amount, the interest rate and the loan tenure "
+            "(for example \"$500k at 2.6% over 25 years\")."]
     rng = price_range(query)
     if rng and constraints.get("max_budget_sgd") == rng[1]:
         # the search tools take only an upper price: the lower end is applied to the matches by code (intersect_node)
@@ -2411,9 +2568,21 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
             and not fresh_constraints.get("towns") and not fresh_constraints.get("addresses"))
         or constraints.get("wants_flat_affordability") or constraints.get("wants_area_affordability")
         or any(stated_financial_inputs(query).values()))
+    if inst is not None:
+        # a loan instalment question, or a follow-up to one: worked out by code, not a flat search, a budget or the
+        # calculators' household questions (SEM-12: "How much per month for my home loan?" asked for the grant facts,
+        # "$450k at 2.6 percent, 25 years." got the menu, "If the loan is $400k instead?" asked "Which town?")
+        constraints["clarifications"] = [q for q in constraints.get("clarifications") or [] if q != WHICH_TOWN]
+        constraints["menu_options"] = None
+        for k in ("max_budget_sgd", "trend_years"):
+            constraints[k] = None
+        constraints["money_intent"] = False
+        constraints["search_stated"] = False
+        if not re.search(r"\b(?:budget|afford\w*|max(?:imum)?|ceiling|grants?)\b", asked_part(query), re.I):
+            constraints["money_asked"] = False
     # a data question no specific intent recognised goes to the market agent's analysis tools instead of the menu
     constraints["analysis_mode"] = False
-    if (with_history and not pending and not constraints.get("clarifications") and not constraints.get("place_options")
+    if (with_history and not pending and inst is None and not constraints.get("clarifications") and not constraints.get("place_options")
             and not constraints.get("addresses") and not constraints.get("map_pin") and scope.mentions_data(query)
             and not money_question(query, constraints)
             and addons.offered_in(state.get("variant"), bool(state.get("fast_path")))
@@ -2526,15 +2695,21 @@ def listed_block_reference(c: Dict[str, Any], query: str, listed: List[str], fre
     is asked (past sales, a price check, what is near it) or asks it. Not when the message names its own place."""
     sup = _superlative_block(query, facts or []) if not fresh.get("towns") and not fresh.get("addresses") else None
     if sup:
+        # "Which of those blocks is cheapest?" is answered from the list just shown, not with five years of that
+        # block's sales (SPAT-27); the block is kept as the place a next question ("stamp duty on that block") means
         c["addresses"] = [sup[0]["name"]]
         for k in SEARCH_KEYS:
             c[k] = {} if k == "amenity_radii_meters" else [] if k in ("towns", "flat_types", "work_destinations") else None
-        c["wants_block_history"] = True
-        c["assumptions"] = list(c.get("assumptions") or []) + [sup[1] + " Its past sales are below."]
+        c["listed_pick"] = sup[1]
+        c["assumptions"] = [a for a in c.get("assumptions") or [] if a != UNCHANGED_NOTE]   # it did answer the question
         return
     priced = {f["name"]: f.get("price") for f in facts or []}
     asks_cost = bool(_ASKS_UPFRONT.search(query)) and not (c.get("financial_inputs") or {}).get("upfront", {}).get("purchase_price")
-    if asks_cost and re.search(r"\b(?:that|it|this|the (?:first|second|third|last) one)\b", query, re.I) and not fresh.get("addresses"):
+    # the place resolver fills this message's place with the block the last turn named ("Used Blk 35 CHAI CHEE AVE,
+    # which you mentioned earlier."): that is the same block, not a new place named here (SPAT-28)
+    earlier = set((prior or {}).get("addresses") or [])
+    named_here = [a for a in fresh.get("addresses") or [] if a not in earlier]
+    if asks_cost and re.search(r"\b(?:that|it|this|the (?:first|second|third|last) one)\b", query, re.I) and not named_here:
         # "What is the stamp duty on that?" after a search: the block meant, priced at its median
         last = [a for a in (prior or {}).get("addresses") or [] if a]
         m = _LISTED_REF.search(query)
@@ -2552,9 +2727,12 @@ def listed_block_reference(c: Dict[str, Any], query: str, listed: List[str], fre
             c["financial_inputs"] = fin
             for k in SEARCH_KEYS:      # a question about one block's cost, not the search again
                 c[k] = {} if k == "amenity_radii_meters" else [] if k in ("towns", "flat_types", "work_destinations") else None
-            c["assumptions"] = list(c.get("assumptions") or []) + [
+            c["assumptions"] = [a for a in c.get("assumptions") or [] if not a.startswith(f"Used {name}")] + [
                 f"Worked out for {name} at its median resale price of ${price:,.0f}."]
             c["money_intent"] = True
+            c["addresses"] = []                    # the cost of the block, not its sales history again (SPAT-28)
+            for k, _ in _PLACE_REPLY:
+                c[k] = False
         elif listed:
             c["clarifications"] = list(c.get("clarifications") or []) + [
                 "Which block do you mean? Say, for example, \"the first one\" or its block number, or give the price."]
@@ -2672,10 +2850,26 @@ def _assume_flat_basics(c: Dict[str, Any]) -> None:
         if not c.get("flat_types"):
             c.setdefault("assumptions", []).append("Grants were worked out for a 4-room flat (a 5-room or larger flat gets "
                                                    "a smaller Family Grant); name a flat type to change this.")
+    ages = [v.get("youngest_buyer_age") for v in fin.values() if isinstance(v, dict) and v.get("youngest_buyer_age")]
+    stated = c.get("min_remaining_lease_years")
+    if stated and not c.get("wants_area_affordability") and \
+            not any((fin.get(sec) or {}).get("remaining_lease_years") for sec in ("grants", "affordability")):
+        # "Buying 4-room resale with 40 years left": that lease, not the age-95 one (SEM-21: it assumed 68 years)
+        for sec in ("grants", "affordability"):
+            if fin.get(sec) is not None:
+                fin[sec]["remaining_lease_years"] = float(stated)
     if any((fin.get(sec) or {}).get("remaining_lease_years") for sec in ("grants", "affordability")) \
             and not c.get("wants_area_affordability"):
-        return   # the user stated a lease
-    ages = [v.get("youngest_buyer_age") for v in fin.values() if isinstance(v, dict) and v.get("youngest_buyer_age")]
+        # the user stated a lease. One that ends before the youngest buyer turns 95 is a case the calculators do not
+        # model; said every turn, and no fact is asked for that could not change it (clarification_needed)
+        lease = min(float((fin.get(sec) or {}).get("remaining_lease_years") or 999) for sec in ("grants", "affordability"))
+        if ages and min(ages) + lease < 95:
+            c["short_lease"] = {"lease": lease, "age": min(ages)}
+            c.setdefault("assumptions", []).append(
+                f"A flat with {lease:g} years of lease left runs out before the youngest buyer turns 95 ({min(ages):g} + "
+                f"{lease:g} = {min(ages) + lease:g}). HDB prorates the CPF use, loan and grants for such a flat; this estimate "
+                "doesn't model it, so it gives no grant amount or ceiling for this flat.")
+        return
     if ages:
         lease = max(95 - int(min(ages)), 20)
         for sec in ("grants", "affordability"):
@@ -2928,7 +3122,7 @@ def route_node(state: HDBCompassState) -> Dict[str, Any]:
         # 700m also") the map agent ran over all 2,161 blocks island-wide; ask "Which town?" below instead (SEM-33,
         # SPAT-52). decide_routing itself still names the map agent for the reading ("Flats near an MRT").
         active = [a for a in active if a != "spatial"]
-    if not active and not c.get("clarifications") and (c.get("addresses") or c.get("map_pin")):
+    if not active and not c.get("clarifications") and not c.get("listed_pick") and (c.get("addresses") or c.get("map_pin")):
         # "Resale price for Blk 884 Tampines?" names the place and already says what it wants: answer, don't ask
         picked = {**c}
         answer_place_question(picked, last_user_query(state), default=False)
@@ -2942,7 +3136,7 @@ def route_node(state: HDBCompassState) -> Dict[str, Any]:
             c.get("flat_types") or c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or c.get("amenity_radii_meters")):
         # "I want a 4-room flat under $600k": a search with no place yet, so ask where rather than show the menu
         return {"active_subagents": active, "user_constraints": {**c, "clarifications": [WHICH_TOWN]}}
-    if not active and c.get("instalment"):
+    if not active and (c.get("instalment") or c.get("listed_pick")):
         return {"active_subagents": active}   # worked out by code; the answer shows it (facts section)
     if not active and not c.get("clarifications"):
         menu = scope.menu_for(last_user_query(state))
@@ -3374,6 +3568,12 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
                         args = {**args, "max_price": NO_PRICE_LIMIT if args.get("max_price") is None else args["max_price"],
                                 "min_lease_years": 0 if args.get("min_lease_years") is None else args["min_lease_years"]}
                     args = search_args(name, args, c, errors, label)
+                    if FIN_TOOL_SECTION.get(name) == "upfront" and upfront_price(c, outputs, runners) is None:
+                        # no price the user gave or code worked out: the model asks for it instead of costing its own
+                        # (LIVE-MONEY-01)
+                        errors.append(f"{label}: upfront calculator call refused: no purchase price stated")
+                        msgs.append(ToolMessage(content=json.dumps({"error": NO_PRICE_ERROR}), tool_call_id=tc["id"]))
+                        continue
                     guarded = guard_financial_args(name, args, c, outputs, runners)   # may run the grant calculator (code)
                     runners[name].source = "model"
                     try:
@@ -3436,6 +3636,8 @@ def run_financial_sequence(runners, constraints, query):
     for key in ("loan_type", "cpf_oa_balance", "cash_savings"):
         if key in aff_args:
             upfront_args.setdefault(key, aff_args[key])
+    if aff_args.get("total_grants") == 0:
+        upfront_args.setdefault("total_grants", 0.0)   # "No grants." holds for the upfront costs too
     # only the trusted financial_inputs reach the calculators: the top-level household_income, cash and CPF fields
     # hold the model's ungrounded reading
     flat_types = constraints.get("flat_types") or []
@@ -3453,12 +3655,20 @@ def run_financial_sequence(runners, constraints, query):
     # grant and affordability calculators would only answer with a long list of facts nobody asked about.
     upfront_only = (upfront_name in runners and asked_for(upfront_name, constraints, query)
                     and upfront_args.get("purchase_price") and not grant_args and not aff_args)
-    if grant_name in runners and not upfront_only and not constraints.get("pr_couple"):
+    # no grants at all ("Assume zero housing grants.", two PRs): the grant calculator would only ask its facts again
+    # (HOUSE-04)
+    grants_known = aff_args.get("total_grants") == 0 or constraints.get("pr_couple")
+    if grant_name in runners and not upfront_only and not grants_known:
         grants = outputs[grant_name] = runners[grant_name](**grant_args)
         if grants.get("status") == "ok":
             for target in (aff_args, upfront_args):
                 if target.get("total_grants") is None:
                     target["total_grants"] = grants["total_grants"]
+        elif grant_args.get("eligibility_confirmed") is False:
+            # "HDB has not confirmed our grant eligibility": no grant can be counted, so the budget uses none (SEM-19)
+            for target in (aff_args, upfront_args):
+                if target.get("total_grants") is None:
+                    target["total_grants"] = 0.0
         elif grants.get("status") == "unsupported" and _BUDGET_ASK.search(asked_part(query)):
             # a case the grant rules here do not cover (second-timers, a short lease), when the budget was asked for:
             # it is still worked out, with no grants, and the answer says so (financial_lines)
@@ -3470,8 +3680,12 @@ def run_financial_sequence(runners, constraints, query):
         if aff.get("status") == "ok" and upfront_args.get("loan_type", "hdb") == aff_args.get("loan_type", "hdb"):
             upfront_args.setdefault("ltv_ratio", aff["ltv_ratio"])
     if upfront_name in runners and asked_for(upfront_name, constraints, query):   # never cost the budget unasked
-        if "purchase_price" not in upfront_args and constraints.get("max_budget_sgd") is not None:
-            upfront_args["purchase_price"] = constraints["max_budget_sgd"]
+        if "purchase_price" not in upfront_args:
+            # the stated budget, else the ceiling just worked out ("Does stamp duty fit within that number?"); never a
+            # price nobody gave (LIVE-MONEY-01)
+            price = upfront_price(constraints, outputs)
+            if price is not None:
+                upfront_args["purchase_price"] = price
         if upfront_args.get("purchase_price", 0) > 0:
             outputs[upfront_name] = runners[upfront_name](**upfront_args)
     return outputs
@@ -4228,11 +4442,17 @@ def template_response(state: HDBCompassState) -> str:
                 lines.append(f"- {note}")
         else:
             lines.append(f"- BTO {b['bto_project_name']}: ${b['bto_indicative_price_range']['min']:,.0f}–${b['bto_indicative_price_range']['max']:,.0f} vs nearby resale median ${b['resale_median_nearby']:,.0f} ({b['price_gap_pct']:+.1f}%)")
+    pick = (state.get("user_constraints") or {}).get("listed_pick")
+    if pick:
+        lines.append(pick)                   # "Of the 20 blocks listed earlier, Blk 35 ... is the cheapest (median $446,500)."
     inst = (state.get("user_constraints") or {}).get("instalment")
     if inst:
         lines.append(f"**Monthly instalment: ${inst['monthly']:,.0f}** on a ${inst['loan']:,.0f} loan at {inst['rate']:g}% a year "
                      f"over {inst['years']} years (equal monthly payments; ${inst['interest']:,.0f} interest in total).")
     fin = state.get("financial_breakdown") or {}
+    uc = state.get("user_constraints") or {}
+    grants_unconfirmed = ((uc.get("financial_inputs") or {}).get("grants") or {}).get("eligibility_confirmed") is False
+    duty_basis = _duty_price_basis(state)
     if fin:
         lines.append("**Financials:**")
         labels = {"calculate_cpf_housing_grants": "Housing grants",
@@ -4246,15 +4466,25 @@ def template_response(state: HDBCompassState) -> str:
             if value.get("status", "ok") != "ok":
                 if name == "calculate_bsd_and_upfront_outlay" and _stamp_duty_only(state) is not None:
                     # "stamp duty on $650k?": the duty needs only the price; the funding facts were not asked for
-                    lines.append(f"- Buyer's stamp duty: **${value['buyer_stamp_duty']:,.0f}** (on the purchase price; "
+                    lines.append(f"- Buyer's stamp duty: **${value['buyer_stamp_duty']:,.0f}** (on {duty_basis}; "
                                  "charged on the valuation instead if that is higher)")
+                    continue
+                if value.get("status") == "needs_information" and name != "calculate_bsd_and_upfront_outlay" \
+                        and uc.get("short_lease"):
+                    # the facts it lists could not give an estimate for this flat; none is asked for (SEM-21)
+                    lines.append(f"- {label}: not worked out — the lease ends before the youngest buyer turns 95, a case "
+                                 "this estimate does not model.")
+                    continue
+                if value.get("status") == "needs_information" and name == "calculate_cpf_housing_grants" and grants_unconfirmed:
+                    lines.append(f"- {label}: not worked out — your grant eligibility is not confirmed yet (HDB confirms "
+                                 "it in the HFE letter).")
                     continue
                 detail = ", ".join(field.replace("_", " ") for field in value.get("missing_inputs", [])) or "; ".join(value.get("notes", []))
                 status = "more information needed" if value.get("status") == "needs_information" else "scenario unavailable"
                 lines.append(f"- {label}: {status} — {detail}")
                 if name == "calculate_bsd_and_upfront_outlay" and value.get("buyer_stamp_duty") is not None:
                     # stamp duty needs only the price, so it is shown even when the full funding estimate cannot run
-                    lines.append(f"- Buyer's stamp duty: **${value['buyer_stamp_duty']:,.0f}** (on the purchase price; "
+                    lines.append(f"- Buyer's stamp duty: **${value['buyer_stamp_duty']:,.0f}** (on {duty_basis}; "
                                  "charged on the valuation instead if that is higher)")
         fin = {name: value for name, value in fin.items() if value.get("status", "ok") == "ok" and "error" not in value}
         g = fin.get("calculate_cpf_housing_grants")
@@ -4264,7 +4494,7 @@ def template_response(state: HDBCompassState) -> str:
         if a:
             lines.append(f"- Max purchase price ${a['max_purchase_price']:,.0f} (loan ${a['max_loan_amount']:,.0f}, instalment ${a['monthly_instalment']:,.0f}/mth, binding: {a['binding_constraint']})")
             g_status = ((state.get("financial_breakdown") or {}).get("calculate_cpf_housing_grants") or {}).get("status")
-            if not g and (g_status == "unsupported" or (state.get("user_constraints") or {}).get("pr_couple")):
+            if not g and (g_status == "unsupported" or uc.get("pr_couple") or grants_unconfirmed):
                 lines.append("- This budget assumes no housing grants, since none could be worked out for your case.")
             price = ((state.get("user_constraints") or {}).get("asked_price"))
             if price:
@@ -4295,6 +4525,20 @@ def template_response(state: HDBCompassState) -> str:
     if state.get("financial_breakdown") or passages:
         lines.append(HFE_DISCLAIMER)
     return "\n".join(lines)
+
+
+def _duty_price_basis(state: HDBCompassState) -> str:
+    """What the stamp duty was worked out on: the price the user gave, or else the budget or ceiling code costed in its
+    place (run_financial_sequence, upfront_price), named so the figure is not read as the duty on a price they gave."""
+    c = state.get("user_constraints") or {}
+    if ((c.get("financial_inputs") or {}).get("upfront") or {}).get("purchase_price"):
+        return "the purchase price"
+    if c.get("max_budget_sgd"):
+        return f"your budget of ${c['max_budget_sgd']:,.0f}"
+    aff = (state.get("financial_breakdown") or {}).get("calculate_maximum_affordability") or {}
+    if aff.get("status") == "ok" and aff.get("max_purchase_price"):
+        return f"your maximum purchase price of ${aff['max_purchase_price']:,.0f}"
+    return "the purchase price"
 
 
 def area_affordability_lines(state: HDBCompassState) -> List[str]:
@@ -4596,7 +4840,11 @@ FACT_WORDS = {
     "proximity": "whether you are buying near or with your parents or children",
     "proximity_eligibility_confirmed": "whether your proximity grant eligibility is confirmed",
     "loan_eligibility_confirmed": "whether your HDB loan eligibility is confirmed",
+    "interest_rate": "the interest rate the bank quoted you",
 }
+# a bank loan's eligibility is the bank's in-principle approval, not HDB's (SEM-20: two PRs were asked whether their
+# HDB loan eligibility was confirmed)
+BANK_FACT_WORDS = {"loan_eligibility_confirmed": "whether a bank has given you an in-principle approval (IPA) for the loan"}
 
 
 def clarification_needed(state: HDBCompassState) -> Optional[Dict[str, Any]]:
@@ -4610,16 +4858,24 @@ def clarification_needed(state: HDBCompassState) -> Optional[Dict[str, Any]]:
             needed += v.get("missing_inputs") or []
     if "calculate_cpf_housing_grants" in fin:
         needed = [n for n in needed if n != "total_grants"]   # the grant calculator supplies it once its facts are known
-    if (state.get("user_constraints") or {}).get("pr_couple"):
+    c = state.get("user_constraints") or {}
+    if c.get("short_lease"):
+        return None   # the lease ends before the youngest buyer turns 95: no fact asked for could give an estimate (SEM-21)
+    grants_unconfirmed = ((c.get("financial_inputs") or {}).get("grants") or {}).get("eligibility_confirmed") is False
+    if c.get("pr_couple") or grants_unconfirmed:
+        # no grant can be worked out (two PRs; grant eligibility not confirmed: "HDB has not confirmed our grant
+        # eligibility", SEM-19), so the grant calculator's own facts are not asked for
         grant_only = set(((fin.get("calculate_cpf_housing_grants") or {}).get("missing_inputs") or [])) - \
             set(((fin.get("calculate_maximum_affordability") or {}).get("missing_inputs") or []))
-        needed = [n for n in needed if n not in grant_only and n != "citizenship_pair"]
+        needed = [n for n in needed if n not in grant_only and (n != "citizenship_pair" or not c.get("pr_couple"))]
     needed = list(dict.fromkeys(needed))
-    if not (state.get("user_constraints") or {}).get("flat_purchase"):
+    if not c.get("flat_purchase"):
         needed = [n for n in needed if n != "remaining_lease_years"]   # assumed from the buyers' ages (_assume_flat_basics)
     if not needed:
         return None
-    phrases = list(dict.fromkeys(FACT_WORDS.get(n, n.replace("_", " ")) for n in needed))
+    bank = ((c.get("financial_inputs") or {}).get("affordability") or {}).get("loan_type") == "bank"
+    words = {**FACT_WORDS, **(BANK_FACT_WORDS if bank else {})}
+    phrases = list(dict.fromkeys(words.get(n, n.replace("_", " ")) for n in needed))
     listed = phrases[0] if len(phrases) == 1 else ", ".join(phrases[:-1]) + " and " + phrases[-1]
     return {"kind": "financial", "needed": needed, "question": f"To finish your grant and budget estimate, please tell me {listed}."}
 
@@ -4913,6 +5169,8 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
             sentences.append(f"{'The rest of y' if done else 'Y'}our grant and budget estimate needs a few more facts, "
                              "asked for at the end.")
         elif fin and not done and _stamp_duty_only(state) is not None:
+            if duty_needs_income_question(state):
+                sentences.append("No — BSD depends only on the price (or valuation, if higher).")
             sentences.append("Here is the buyer's stamp duty.")
         elif fin and not done:
             sentences.append("Your estimate could not be worked out in full; what is missing is said below.")
