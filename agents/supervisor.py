@@ -5479,6 +5479,18 @@ def unlimited_search_phrase(c: Dict[str, Any]) -> str:
     return "Blocks with recent " + (f"{flat} " if flat else "") + "sales" + (f" in {towns}" if towns else "") + ", cheapest first"
 
 
+# Choosing tenants, buyers or neighbours by race, religion or nationality ("How do I make sure I don't get Indian or
+# PRC tenants?"): refused here until the input guardrail covers it; the room-rental rules may still be shown below.
+_GROUPS = (r"(?:indians?|chinese|malays?|eurasians?|prcs?|mainlanders?|foreigners?|bangladeshis?|filipinos?|indonesians?|"
+           r"muslims?|christians?|hindus?|buddhists?|blacks?|whites?|races?|racial|religions?|religious|nationalit(?:y|ies)|ethnic\w*)")
+_SCREENING = re.compile(rf"\b(?:no|don'?t|do not|avoid|exclude|reject|refuse|keep out|filter out|screen out|only)\b[^.?!]{{0,40}}\b{_GROUPS}\b"
+                        r"[^.?!]{0,30}\b(?:tenants?|renters?|lodgers?|buyers?|neighbou?rs?|occupants?|flatmates?)\b"
+                        rf"|\b(?:tenants?|renters?|lodgers?|flatmates?)\b[^.?!]{{0,30}}\b(?:by|based on|of (?:a |the )?(?:certain|specific))\s+{_GROUPS}",
+                        re.I)
+SCREENING_OPENING = ("I can't help choose or turn away tenants, buyers or neighbours by race, religion or nationality. "
+                     "Treat applicants on their merits; HDB's rules for renting out rooms are below.")
+
+
 def forced_opening(state: HDBCompassState) -> Tuple[Optional[str], bool]:
     """Code's own opening for questions the passages and tools cannot answer in their words, and whether the model's
     checked sentences may follow it: a request to get around a rule (refused, then the lawful rule: the model may
@@ -5494,6 +5506,8 @@ def forced_opening(state: HDBCompassState) -> Tuple[Optional[str], bool]:
         return f"{lead} don't have prices for {bto['bto_project_name']}; it isn't in my BTO launch data.", False
     if not (state.get("user_constraints") or {}).get("policy_question"):
         return None, False
+    if _SCREENING.search(query):
+        return SCREENING_OPENING, False
     if _EVASION.search(query):
         return EVASION_OPENING, True
     if _LIVE_QUOTA_ASK.search(query) and _ASKED.search(query):
