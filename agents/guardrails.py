@@ -304,9 +304,18 @@ def _without_sentences(draft: str, model_text: str) -> str:
     return re.sub(r"[ \t]{2,}", " ", draft).strip()
 
 
+def auditor_enabled() -> bool:
+    """HDB_AUDITOR=off turns the whole runtime auditor into a pass-through, for the "Variant C without its auditor" ablation
+    of Experiment 1 (HDB_AUDITOR_LLM=off only turns off its model judge). Anything else leaves it on."""
+    return os.getenv("HDB_AUDITOR", "on").strip().lower() not in ("off", "0", "false", "no")
+
+
 def runtime_auditor_node(state: Dict[str, Any]) -> Dict[str, Any]:
     prev = state.get("auditor_verdict") or {}
     retries = int(prev.get("retry_count", 0))
+    if not auditor_enabled():
+        return {"auditor_verdict": AuditorVerdict(passed=True, critique="auditor switched off (HDB_AUDITOR=off)",
+                                                  retry_count=retries).model_dump()}
     try:
         opening = _model_text(state)
         if not opening:   # the model wrote nothing (it failed or was off)

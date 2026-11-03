@@ -312,6 +312,14 @@ Experiment 1.
   `expected_mcp_calls` in `evaluation/golden_dataset_90.json`.
 - Routing trajectory = `state["active_subagents"]`.
 - Latency/tokens come from LangSmith; the runner should checkpoint per query to JSONL.
+- **Whole-benchmark run and report (Member 5): `evaluation/run_architecture_eval.py`.** `--run --tag T` calls the Experiment 1
+  runner (`run_category_e_prelim`) on `benchmark_hdb_90.json` for Variants A, B and C with the auditor on, then Variant C again
+  with the runtime auditor off (`HDB_AUDITOR=off`; `HDB_AUDITOR_LLM=off` only removes its model judge). `--langsmith` sends the
+  traces to project `hdb-compass-T`. `--report --tag T` reads the saved rows and writes the tables (success by variant and
+  category, Category F by variant, what the auditor did, C with and without it, exact McNemar) to
+  `evaluation/results/architecture_eval_T.md`. Both use one open model (`vllm`, `ollama` or `none`). On the cluster use
+  `bash cluster/run_architecture_eval.sh T`, which does both passes and the report through `cluster/run_live_eval.sh` (GPU job,
+  tunnel, cancel); `--run` assumes the model is already reachable.
 
 ## 7. Follow-up questions for missing financial facts (Member 4)
 
