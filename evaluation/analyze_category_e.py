@@ -191,8 +191,9 @@ def category_table(rows: List[Dict[str, Any]]) -> str:
 
 def policy_table(rows: List[Dict[str, Any]]) -> str:
     """Category C answers against Member 3's key clauses."""
-    out = ["| Variant | Questions | Fully right: every key clause (Wilson 95% CI) | Mean clause coverage | Tool F1 | "
-           "Param EM | Routing exact | Passes that rest on a known-wrong clause |", "|---|---|---|---|---|---|---|---|"]
+    out = ["| Variant | Questions | Fully right: every key clause (Wilson 95% CI) | Mean clause coverage | "
+           "Fully right on current clauses only | Tool F1 | "
+           "Param EM | Routing exact | Passes that rest on a known-wrong clause |", "|---|---|---|---|---|---|---|---|---|"]
     for v in sorted({r["variant"] for r in rows}):
         rs = [r for r in rows if r["variant"] == v and cat(r) == "C"]
         gts = [(r["scores"], r["scores"]["ground_truth"]) for r in rs if r.get("status") == "ok"
@@ -203,6 +204,7 @@ def policy_table(rows: List[Dict[str, Any]]) -> str:
         out.append("| " + " | ".join([
             v, str(len(rs)), M.rate_with_ci(sum(1 for _, g in gts if g["success"]), len(rs)),
             f(mean(g["clause_coverage"] for _, g in gts)),
+            M.rate_with_ci(sum(1 for _, g in gts if g.get("success_current", g["success"])), len(rs), short=True),
             f(mean(s["tool_selection"]["f1"] for s, _ in gts)), f(mean(s["parameter_em"]["rate"] for s, _ in gts)),
             f(mean(routing)) if routing else "n/a",
             str(sum(1 for _, g in gts if g["success"] and g.get("known_wrong_clauses"))),
