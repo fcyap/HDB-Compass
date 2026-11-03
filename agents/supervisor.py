@@ -257,9 +257,11 @@ def misspelt_towns(text: str) -> List[Tuple[str, str]]:
             w = " ".join(words[i:i + n])
             if len(w.replace(" ", "")) < 5 or w.upper() in names:
                 continue
+            # the same-first-two-letters rule ("Tampenis", not "question") holds for one word only: two words that start
+            # like a town ("centres are" -> CENTRAL AREA) are a phrase, not a misspelling (SEM-29, SPAT-36)
             close = [c for c in difflib.get_close_matches(w.upper(), list(names), n=2, cutoff=0.75)
                      if difflib.SequenceMatcher(None, w.upper(), c).ratio() >= 0.84
-                     or (c[:2] == w.upper()[:2] and abs(len(c) - len(w)) <= 1)]   # "Tampenis", not "question"
+                     or (n == 1 and c[:2] == w.upper()[:2] and abs(len(c) - len(w)) <= 1)]
             if len(close) == 1 and names[close[0]] not in [t for _, t in found]:
                 found.append((w, names[close[0]]))
     return found
@@ -2104,12 +2106,15 @@ _REMOVES = {"mrt": ("amenity_radii_meters", "mrt"), "lrt": ("amenity_radii_meter
             "commute": ("max_commute_minutes", None), "travel": ("max_commute_minutes", None),
             "budget": ("max_budget_sgd", None), "price": ("max_budget_sgd", None),
             "lease": ("min_remaining_lease_years", None), "distance": ("amenity_radii_meters", None)}
-# a distance on its own changes the one distance limit: "within 300m", "try 400m", "Tighten it to 300m." (SPAT-62)
+# a distance on its own changes the one distance limit: "within 300m", "try 400m", "Tighten it to 300m." (SPAT-62),
+# "Only within 1km, please." and "Expand the school distance to 2km." (SEM-09: both got the menu or "Which school?")
 _BARE_DISTANCE = re.compile(r"^\W*(?:(?:what|how) about|try|make it|change (?:it )?to|"
-                            r"(?:tighten|loosen|widen|relax|reduce|cut|shrink|lower|raise|increase|extend|bring|set|narrow|expand)"
-                            r"(?:\s+(?:it|that|this|the\s+(?:limit|distance|radius)))?(?:\s+(?:down|up|back))?\s+to|ok(?:ay)?|and|then|or)?\s*"
+                            r"(?:tighten|loosen|widen|relax|reduce|cut|shrink|lower|raise|increase|extend|bring|set|narrow|expand|"
+                            r"enlarge|change|bump)"
+                            r"(?:\s+(?:it|that|this|the\s+(?:\w+\s+)?(?:limit|distance|radius|search)))?(?:\s+(?:down|up|back))?\s+to|"
+                            r"ok(?:ay)?|and|then|or|only|just)?\s*"
                             r"(?:within|under|less than|below|<|up to)?\s*(\d+(?:\.\d+)?)\s*(km|m|metres?|meters?)\b"
-                            r"(?:\s+(?:instead|then|only|radius|away))?\W*$", re.I)
+                            r"(?:\s+(?:instead|then|only|radius|away))?(?:\W*(?:please|pls|thanks|thank you))?\W*$", re.I)
 _SHORT_FOLLOWUP = re.compile(r"^\W*(?:(?:and|so|ok(?:ay)?|then)\W+)?(?:what|how) about\b|^\W*and (?:for|if|what|with)\b"
                              r"|^\W*(?:what|how) if\b|^\W*same (?:for|with)\b|^\W*(?:and|also) (?:the )?\w+\s*(?:flats?)?\s*\?*\s*$", re.I)
 _REFINE_WORDS = re.compile(r"\b(?:cheap\w*|expensive|nicer|better|bigger|smaller|larger|closer|nearer|further|more|less|"
@@ -2125,6 +2130,68 @@ _BARE_LEASE = re.compile(_LEAD + r"(?:at least|min(?:imum)?)?\s*(\d{2})\s*-?\s*(
                          r"(?:\s+(?:will do|is fine|is ok(?:ay)?|instead|then|only|enough))?\W*$", re.I)
 UNCHANGED_NOTE = ("I couldn't tell what to change, so this is the same search as before. You can say, for example, "
                   "\"within 300m\", \"under $700k\", \"5-room instead\" or \"drop the MRT limit\".")
+# "If nothing fits, show which one change would help.": a request about the results, not a change to the search
+_CONDITIONAL_ASK = re.compile(r"\bif (?:nothing|none|no (?:blocks?|flats?|results?|matches?))\b", re.I)
+# "I don't know the street or postal code.", "I have not picked a school yet.", "I have no address yet."
+_DONT_KNOW = re.compile(r"\b(?:don'?t|do not|didn'?t|did not) (?:know|have)\b|\bno (?:idea|address)\b|\bnot sure\b|"
+                        r"\bhave(?:n'?t| not) (?:picked|chosen|decided|got)\b", re.I)
+NO_SCHOOL_PICKED = ("No problem. The data doesn't rank schools, so I can't pick a good one for you. Name one primary "
+                    "school (for example \"Ai Tong School\") and I'll find blocks within 1 km or 1-2 km of it, or tell me "
+                    "a town and budget to search without a school limit.")
+# The question asked when a commute limit cannot be checked because a workplace was not found on the map (SEM-30)
+_WORKPLACE_ASKS = ("Where is “", "Without an address I can't time the commute")
+
+# Questions about the last answer itself, answered by code instead of running the same search again: whether the
+# blocks are live listings (SEM-14: "Are these live flats being sold now?" listed the same 37 blocks again), how the
+# distances were measured (SPATIAL-06/t2: "Is that actual walking-route distance or a straight line?") and whether a
+# kind of place can be checked at all (LIMIT-02/t2: "Can you actually measure swimming-pool proximity?" repeated the
+# list and said it met every limit).
+_ABOUT_LIVE = re.compile(r"\b(?:live|current|actual|real)\s+(?:listings?|flats?|units?)\b|\bbeing sold\b|"
+                         r"\b(?:still|currently|now)\s+(?:available|for sale|on (?:the )?market|listed)\b|\bfor sale (?:now|today)\b|"
+                         r"\bare (?:these|they|those) (?:available|listings?)\b", re.I)
+_ABOUT_METHOD = re.compile(r"\bwalking[- ](?:route|distance|path)\b.*\bstraight\b|\bstraight[- ]line\b|\bas the crow flies\b|"
+                           r"\bhow (?:is|are|was|were) (?:the |those |these )?distances? (?:measured|calculated|worked out)\b", re.I)
+_ABOUT_COVERAGE = re.compile(r"\b(?:can|could|do|does) (?:you|it|the app)\s+(?:actually\s+|really\s+)?(?:measure|check|filter|track|know)\b",
+                             re.I)
+ABOUT_LIVE = ("These are not live listings. Each block is summarised from **past resale transactions** (HDB resale records, "
+              "last 12 months: median price and lease of flats that already sold). The app has no feed of flats for sale "
+              "now; check current listings on the HDB Flat Portal or a property portal.")
+ABOUT_METHOD = ("Those distances are **straight-line** distances between indexed points (a block or place and the nearest "
+                "indexed MRT/LRT exit, hawker centre, supermarket or school), not routed walking distances. Real walks are "
+                "usually longer; the walking minutes shown assume 80 m a minute along that straight line.")
+
+
+def _plural(kind: str) -> str:
+    kind = kind.lower()
+    return kind if kind.endswith("s") else kind[:-1] + "ies" if kind.endswith("y") else \
+        kind + "es" if kind.endswith(("ch", "sh")) else kind + "s"
+
+
+def about_last_answer(query: str, prior: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Code's answer to a question about the last search or place answer, or None. Only after a turn that searched or
+    looked up a place, and only when the message states nothing new to search: a new search in the same message wins
+    ("Are there live listings for 4-room in Bedok?" is a search)."""
+    if not prior or not (prior.get("towns") or prior.get("islandwide") or prior.get("addresses") or prior.get("map_pin")) \
+            or len(query.split()) > 16:
+        return None
+    fresh = rule_based_extract(query).model_dump()
+    if any(fresh.get(k) for k in SEARCH_KEYS + ("addresses",)):
+        return None
+    if _ABOUT_LIVE.search(query):
+        return ABOUT_LIVE
+    if _ABOUT_METHOD.search(query):
+        return ABOUT_METHOD
+    if _ABOUT_COVERAGE.search(query):
+        kinds = [m.group(1) for m in _UNMAPPED_PLACES.finditer(query.replace("-", " "))]
+        if kinds:
+            kind = kinds[0].lower()
+            stem = re.sub(r"(?:ies|s)$", "", kind)   # "swimming pool" / "librar" as the earlier note writes it
+            # the earlier list was searched with that limit left out (_note_unchecked_places said so)
+            listed = any(stem in a.lower() for a in prior.get("assumptions") or [] if a.startswith("I can't measure"))
+            return (f"No. I can't measure distances to {_plural(kind)}: there is no location data for them"
+                    + (", so that limit was not applied to the list." if listed else ".")
+                    + " I can check distances to MRT/LRT stations, hawker centres, supermarkets and primary schools.")
+    return None
 
 
 def refine_search(carried: Dict[str, Any], fresh: Dict[str, Any], query: str) -> Dict[str, Any]:
@@ -2237,12 +2304,32 @@ def refine_search(carried: Dict[str, Any], fresh: Dict[str, Any], query: str) ->
 
 
 def _pin_radius_followup(c: Dict[str, Any], query: str, prior: Dict[str, Any], fresh: Dict[str, Any]) -> None:
-    """"within 1km" after "What's near here?" on a map pin: the same pin and question, with that radius."""
+    """"within 1km" after "What's near here?" on a map pin: the same pin and question, with that radius. The same for
+    a school lookup around an address and for a nearby answer about one place."""
     m = _BARE_DISTANCE.search(query)
-    if not m or not prior.get("map_pin") or fresh.get("map_pin") or fresh.get("addresses") or fresh.get("towns"):
+    dist = int(float(m.group(1)) * (1000 if m.group(2).lower() == "km" else 1)) if m else None
+    if dist and prior.get("nearby_schools") and not (fresh.get("addresses") or fresh.get("towns") or fresh.get("nearby_schools")):
+        # "Only within 1km, please." after "Which primary schools are within 2km of Blk 510 Bedok North St 3?": the
+        # same address's school lookup with that radius; it got the menu, as the message names no place (SPAT-11)
+        c["nearby_schools"] = {**prior["nearby_schools"], "radius_meters": float(dist)}
+        c["clarifications"] = []
+        return
+    radii = {k: v for k, v in (fresh.get("amenity_radii_meters") or {}).items() if k != "school"}
+    if prior.get("wants_nearby_amenities") and len(prior.get("addresses") or []) == 1 and (radii or dist) and not (
+            fresh.get("flat_types") or fresh.get("max_budget_sgd") or fresh.get("addresses") or fresh.get("map_pin")
+            or set(fresh.get("towns") or []) - set(prior.get("towns") or [])):
+        # "Which hawker centres are within 700m?" after "Where is Blk 288B Jurong East St 21?": what is near that block
+        # within 700 m, not a block search for blocks within 700 m of a hawker centre (SPAT-36: it searched the Central
+        # Area, read from "centres are", and opened with "No block meets every limit")
+        c.update(addresses=list(prior["addresses"]), wants_nearby_amenities=True, towns=[], amenity_radii_meters={},
+                 area_radius_meters=max(radii.values()) if radii else dist)
+        c["assumptions"] = [a for a in c.get("assumptions") or []   # a town guess, now unused ("Read “x” as Bedok.")
+                            if not (a.startswith("Read “") and any(a.endswith(f" as {t.title()}.") for t in HDB_TOWNS))]
+        return
+    if not dist or not prior.get("map_pin") or fresh.get("map_pin") or fresh.get("addresses") or fresh.get("towns"):
         return
     c["map_pin"] = prior["map_pin"]
-    c["pin_radius_meters"] = int(float(m.group(1)) * (1000 if m.group(2).lower() == "km" else 1))
+    c["pin_radius_meters"] = dist
     for k in ("wants_nearby_amenities", "wants_area_statistics", "wants_price_trend"):
         if prior.get(k):
             c[k] = True
@@ -2400,6 +2487,22 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         named = [k for k in mentioned_amenities(query) if k in ((prior or {}).get("amenity_radii_meters") or {})]
         if len(named) == 1 and not (constraints.get("amenity_radii_meters") or {}) and not _REMOVE.search(query):
             constraints["amenity_radii_meters"] = {named[0]: int(which_limit.group(1).replace(",", ""))}
+    if (pending or {}).get("kind") == "workplace":
+        # the reply to "Where is “QZX”?" is a follow-up to the search ("drop the commute limit" removes the limit, as
+        # after any search), and a place it gives ("Raffles Place", "It's at 048616") is that workplace, timed with the
+        # one already found
+        pending = None
+        said = rule_based_extract(query)
+        place = next(iter(list(said.work_destinations or []) + list(said.addresses or [])), None)
+        if place is None and len(query.split()) <= 6 and not _DONT_KNOW.search(query) and not _REMOVE.search(query):
+            words = re.sub(r"^\W*(?:it'?s|it is|that'?s|the address is)?\s*(?:at|in|near|on)?\s+", " ", f" {query}", flags=re.I)
+            words = words.strip(" .!?")
+            if re.search(r"\b\d{6}\b", words) or [w for w in re.findall(r"\b[A-Z][\w-]*", words)
+                                                   if w.lower() not in ("ok", "okay", "thanks", "yes", "no", "sure", "i")]:
+                place = words
+        if place and (prior or {}).get("unresolved_workplaces"):
+            constraints["work_destinations"] = list((prior or {}).get("work_destinations") or []) + [place]
+            constraints["addresses"] = []
     answered_money = False
     # calculator facts come from the user's own words in every turn so far, never from the model's reading of them
     turns = [m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user"]
@@ -2461,8 +2564,6 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
                 and _SHORT_FOLLOWUP.search(query) and not any(fresh_constraints.get(k) for k in SEARCH_KEYS):
             # "what about Plus?" after "Can I rent out my whole Prime flat after the MOP?": the same rule question
             constraints["policy_question"] = f"{prior['policy_question']} {query}"
-        if not pending and not constraints.get("clarifications") and _search_unchanged(prior, constraints, fresh_constraints, query):
-            constraints["assumptions"] = list(constraints.get("assumptions") or []) + [UNCHANGED_NOTE]
     constraints["listed_pick"] = None   # this message's own answer from the last list only (listed_block_reference)
     if pending and pending.get("kind") == "place":
         answer_place_question(constraints, query)
@@ -2471,6 +2572,19 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         listed_block_reference(constraints, query, state.get("prior_blocks") or [], fresh_constraints, prior,
                                state.get("prior_block_facts") or [])
         _pin_radius_followup(constraints, query, prior, fresh_constraints)
+    # "the same search as before" only when it is: checked after the follow-up readings above, which may have read the
+    # message as a question about a listed block or a new radius for the last place, and never for a conditional ask
+    # ("If nothing fits, show which one change would help." got the note above 5 matching blocks: SEM-17)
+    if prior and not pending and not constraints.get("clarifications") and not constraints.get("listed_pick") \
+            and not constraints.get("addresses") and not constraints.get("map_pin") and not constraints.get("nearby_schools") \
+            and not _CONDITIONAL_ASK.search(query) and _search_unchanged(prior, constraints, fresh_constraints, query):
+        constraints["assumptions"] = list(constraints.get("assumptions") or []) + [UNCHANGED_NOTE]
+    if pending and pending.get("kind") == "school" and _DONT_KNOW.search(query) and not constraints.get("school_name"):
+        # "I have not picked a school yet." in reply to "Which primary school?": the place lookup ran on "a good primary
+        # school" and said no place matches (SEM-30, SPAT-40); say what can be done instead
+        constraints["clarifications"] = [NO_SCHOOL_PICKED]
+        constraints["addresses"] = []
+        constraints["wants_nearby_amenities"] = False
 
     if constraints.get("policy_question") and not scope.mentions_data(query):
         for key in (
@@ -2580,9 +2694,17 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         constraints["search_stated"] = False
         if not re.search(r"\b(?:budget|afford\w*|max(?:imum)?|ceiling|grants?)\b", asked_part(query), re.I):
             constraints["money_asked"] = False
+    # a question about the last answer is answered by code from what it showed (about_last_answer); the carried search
+    # stays in the constraints, so the next follow-up ("within 300m") still refines it
+    constraints["about_results"] = about_last_answer(query, prior) if inst is None else None
+    if constraints["about_results"]:
+        constraints["assumptions"] = [a for a in constraints.get("assumptions") or [] if a != UNCHANGED_NOTE]
+        constraints["clarifications"] = []
+        constraints["menu_options"] = None
     # a data question no specific intent recognised goes to the market agent's analysis tools instead of the menu
     constraints["analysis_mode"] = False
     if (with_history and not pending and inst is None and not constraints.get("clarifications") and not constraints.get("place_options")
+            and not constraints.get("about_results")
             and not constraints.get("addresses") and not constraints.get("map_pin") and scope.mentions_data(query)
             and not money_question(query, constraints)
             and addons.offered_in(state.get("variant"), bool(state.get("fast_path")))
@@ -2600,6 +2722,21 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     constraints["unresolved_workplaces"] = unknown
     if unknown:
         constraints["work_destinations"] = [w for w in work if w not in unknown]
+    found = len(constraints.get("work_destinations") or [])
+    if unknown and constraints.get("max_commute_minutes") and found < 2 <= found + len(unknown) \
+            and not constraints.get("clarifications") and not constraints.get("about_results"):
+        # the commute limit cannot be checked until the workplace is found: ask for it, as a question the next message
+        # answers, rather than only noting it under the list (SEM-30, SPAT-40: "I meant a building called QZX; I have no
+        # address yet." got the same list with no question). Only when finding it gives the two workplaces the check
+        # needs: with one ("I work at Zorgon Tower ... commute under 30 mins") its address would still not be timed
+        names = _join_words([f"“{w}”" for w in unknown])
+        if prior and prior.get("unresolved_workplaces") and _DONT_KNOW.search(query):
+            ask = (f"Without an address I can't time the commute to {names}. Give its postal code or the nearest MRT "
+                   "station, or say \"drop the commute limit\" to search without it.")
+        else:
+            ask = (f"Where is {names}? I couldn't find it on the map, so the commute limit is not applied yet. Give its "
+                   "address or postal code and I'll time both commutes.")
+        constraints["clarifications"] = [ask]
     # read by code from every user message so far, so an ask in the first turn still counts after a follow-up reply
     constraints["requested_tools"] = requested_tools(users)
     comparables = "query_comparable_resale_transactions"
@@ -2612,6 +2749,8 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
 # picks. The question offers past sales, resale prices around the place, the price trend, a fair-price check and
 # amenities; "resale price" on its own is the block's own past sales.
 _PLACE_REPLY = (
+    # "Where is Blk 288B Jurong East St 21?" locates the block: what is near it, not "What would you like to know?" (SEM-30)
+    ("wants_nearby_amenities", r"^\W*where(?:'s|\s+is)\b"),
     ("wants_price_assessment", r"\bfair\b|\breasonable\b|\bover\s*priced\b|\basking\b|\bworth\b|\$\s?\d"),
     ("wants_area_statistics", r"\b(?:around|nearby|near\s+(?:it|there|the\s+block)|within|radius)\b.*\bpric|"
                               r"\bpric\w*\b.*\b(?:around|nearby|within|radius)\b|\barea\b"),
@@ -2621,6 +2760,8 @@ _PLACE_REPLY = (
     ("wants_block_history", r"\bpast\s+sales\b|\bsales\b|\bsold\b|\bhistory\b|\btransactions?\b|\bresale\s+pric|\bprices?\b"),
 )
 _TOWN_FIRST_BLOCK = re.compile(r"^\s*(.+?)\s+(?:blk|block)\.?\s*(\d{1,4}[a-z]?)\s*$", re.I)
+# a block number with no street, town or postal code: "Blk 123", "Blk 123 in Singapore"
+_BARE_BLOCK = re.compile(r"(?:blk|block)\.?\s*(\d{1,4}[a-z]?)(?:\s+in\s+singapore)?", re.I)
 
 
 # A question about one block whose answer a short follow-up can narrow ("4 room" after "Resale price for Blk 884?").
@@ -2787,6 +2928,25 @@ def answer_place_question(c: Dict[str, Any], query: str, default: bool = True) -
     c["addresses"] = [_TOWN_FIRST_BLOCK.sub(lambda m: f"Blk {m.group(2)} {m.group(1)}", a) for a in c.get("addresses") or []]
     if not c["addresses"] and not c.get("map_pin"):
         return
+    bare = [m for m in (_BARE_BLOCK.fullmatch(a.strip()) for a in c["addresses"]) if m]
+    named_town = bool(bare) and len(c.get("towns") or []) == 1
+    if named_town:
+        # the reply to "Which town or street is it on?" names the town: that town's block
+        c["addresses"] = [f"Blk {bare[0].group(1).upper()} {c['towns'][0].title()}"]
+        c["towns"] = []
+    elif bare:
+        # "Where is Blk 123 in Singapore?": many towns have a Blk 123, so ask where it is rather than what to look up,
+        # and do not show the past sales of a namesake block after "I don't know the street or postal code." (SEM-30,
+        # SPAT-58: it answered with an internal "Ask for the block number and street" message)
+        block = f"Blk {bare[0].group(1).upper()}"
+        c["clarifications"] = [
+            f"Without a street or postal code I can't tell which {block} you mean: many towns have one. Which town is it "
+            "in? You can also drop a pin on the map." if _DONT_KNOW.search(query) else
+            f"Which {block} do you mean? Many towns have one. Which town or street is it on, or its postal code? You "
+            "can also drop a pin on the map."]
+        for k, _ in _PLACE_REPLY:
+            c[k] = False
+        return
     if any(c.get(k) for k, _ in _PLACE_REPLY):
         c["clarifications"] = [q for q in c.get("clarifications") or [] if not q.startswith(PLACE_QUESTION)]
         return
@@ -2797,9 +2957,9 @@ def answer_place_question(c: Dict[str, Any], query: str, default: bool = True) -
     if picked is None:
         is_block = any(re.match(r"(?:blk\s+)?\d", a, re.I) for a in c["addresses"])
         picked = "wants_block_history" if is_block else "wants_nearby_amenities"
-        c["assumptions"] = list(c.get("assumptions") or []) + [
+        c["assumptions"] = list(c.get("assumptions") or []) + ([] if named_town else [
             "Your reply did not match one of the options I offered, so this shows "
-            + ("the block's past sales." if is_block else "what is near it.")]
+            + ("the block's past sales." if is_block else "what is near it.")])
     c[picked] = True
 
 
@@ -3035,8 +3195,10 @@ def _verify_extraction(c: Dict[str, Any], query: str, errors: List[str], from_mo
         c["school_name"] = None
         (c.get("amenity_radii_meters") or {}).pop("school", None)
         c["clarifications"] = list(dict.fromkeys((c.get("clarifications") or []) + [ri.SCHOOL_CLARIFICATION]))
-    # Distance phrases ("200m of a hawker centre") are constraints, not places.
-    c["addresses"] = [a for a in c.get("addresses") or [] if a.strip() and not re.match(r"\s*\d+(?:\.\d+)?\s*k?m\b", a, re.I)]
+    # Distance phrases ("200m of a hawker centre") are constraints, not places; nor is a kind of school ("Show flats near
+    # a good primary school": the place lookup then said no place matches "a good primary school", SEM-30)
+    c["addresses"] = [a for a in c.get("addresses") or [] if a.strip() and not re.match(r"\s*\d+(?:\.\d+)?\s*k?m\b", a, re.I)
+                      and not ri.generic_school_phrase(a)]
 
 
 # ---------------------------------------------------------------------------
@@ -3055,6 +3217,8 @@ def calculator_facts(c: Dict[str, Any]) -> bool:
 def decide_routing(c: Dict[str, Any], pending: Optional[Dict[str, Any]] = None) -> List[str]:
     """pending: the open follow-up question, if any. While the user is answering a financial question, the weak facts
     they give (citizenship, first-timer status) still go to the calculators, which ask for the rest."""
+    if c.get("about_results"):
+        return []   # "Are these live flats being sold now?": answered from the last answer, nothing is searched again
     if c.get("place_options"):
         return []   # the user must first say which place they mean (research_intents.resolve_place)
     if c.get("nearby_schools"):
@@ -3115,6 +3279,8 @@ def unplaced_distance(c: Dict[str, Any]) -> bool:
 
 def route_node(state: HDBCompassState) -> Dict[str, Any]:
     c = state.get("user_constraints", {})
+    if c.get("about_results"):
+        return {"active_subagents": []}   # a question about the last answer, answered by code (template_response)
     active = decide_routing(c, state.get("pending_clarification"))
     if "spatial" in active and unplaced_distance(c) \
             and "spatial" not in decide_routing({**c, "amenity_radii_meters": {}}, state.get("pending_clarification")):
@@ -3127,7 +3293,8 @@ def route_node(state: HDBCompassState) -> Dict[str, Any]:
         picked = {**c}
         answer_place_question(picked, last_user_query(state), default=False)
         active = decide_routing(picked, state.get("pending_clarification"))
-        if active:
+        if active or picked.get("clarifications"):
+            # the reading asked its own, more specific question ("Which Blk 123 do you mean?"): keep it
             return {"active_subagents": active, "user_constraints": picked}
         return {"active_subagents": active, "user_constraints": {**c, "clarifications": [ri.place_clarification(c)]}}
     if not active and not c.get("clarifications") and not c.get("towns") and not c.get("policy_question") \
@@ -3440,8 +3607,31 @@ REPEATABLE_TOOLS = ("get_block_transaction_history", "get_nearby_amenities")
 SPATIAL_BLOCK_TOOLS = ("filter_blocks_by_amenity_proximity", "verify_primary_school_distance", "compute_dual_transit_commute")
 
 
+def _dedupe_stations(result: Any) -> Any:
+    """One line per MRT/LRT station in a nearby-amenities result: the index has a point per exit, so "Bishan Interchange
+    Mrt Station" was listed twice, 6 m and 135 m away (SEM-32, SPAT-09). The nearest point is kept and the count within
+    the radius drops by the points removed. Stop-gap until the tool dedupes itself (mcp_server/location_tools.py,
+    amenities_near); other kinds share names across real places ("NTUC FairPrice"), so only stations are merged."""
+    if not isinstance(result, dict) or result.get("status") != "ok" or not isinstance(result.get("amenities"), list):
+        return result
+    seen, kept, dropped = set(), [], {}
+    for a in sorted(result["amenities"], key=lambda a: a.get("distance_meters") or 0):
+        key = (a.get("category"), _station_key(a.get("name")))
+        if a.get("category") == "mrt" and key in seen:
+            dropped[a["category"]] = dropped.get(a["category"], 0) + 1
+            continue
+        seen.add(key)
+        kept.append(a)
+    if not dropped:
+        return result
+    counts = {k: max(0, v - dropped.get(k, 0)) for k, v in (result.get("counts") or {}).items()}
+    return {**result, "amenities": kept, "counts": counts}
+
+
 def _store(outputs: Dict[str, Any], name: str, result: Any) -> None:
     """Repeatable research tools keep every call (one per address); others keep the latest."""
+    if name == "get_nearby_amenities":
+        result = _dedupe_stations(result)
     if name in REPEATABLE_TOOLS and name in outputs:
         previous = outputs[name] if isinstance(outputs[name], list) else [outputs[name]]
         outputs[name] = previous + [result]
@@ -4348,6 +4538,9 @@ def policy_fact_lines(passages: Any, question: str = "") -> List[str]:
 def template_response(state: HDBCompassState) -> str:
     if state.get("nearby_school_results") is not None:
         return present_school_result(state["nearby_school_results"])[0]
+    about = (state.get("user_constraints") or {}).get("about_results")
+    if about:
+        return about   # code's answer to a question about the last answer (about_last_answer); nothing else ran
     lines: List[str] = []
     blocks = state.get("candidate_blocks_intersection") or []
     searched = (
@@ -4727,9 +4920,11 @@ def unchecked_commute_line(state: HDBCompassState) -> str:
     """The line not_checked_lines adds for commute_unchecked: the reason only when fewer than two workplaces were read."""
     c = state.get("user_constraints") or {}
     if c.get("unresolved_workplaces"):
+        asked = any(q.startswith(_WORKPLACE_ASKS) for q in c.get("clarifications") or [])
         return ("- Your commute limit was not checked: I could not find "
                 + _join_words([f"“{w}”" for w in c["unresolved_workplaces"]])
-                + " on the map. Give an address or postal code and I'll time the commute.")
+                + (" on the map (see my question below)." if asked
+                   else " on the map. Give an address or postal code and I'll time the commute."))
     read = len(c.get("work_destinations") or [])
     return UNCHECKED_COMMUTE_READ.get(read, UNCHECKED_COMMUTE)
 
@@ -5483,7 +5678,10 @@ def place_clarification(state: HDBCompassState) -> Optional[Dict[str, Any]]:
         return {"kind": "location", "needed": [], "question": questions[0], "options": c["place_options"]}
     if c.get("menu_options"):
         return {"kind": "menu", "needed": [], "question": questions[0], "options": c["menu_options"]}
-    kind = "school" if questions[0] == ri.SCHOOL_CLARIFICATION else "place"
+    if questions[0].startswith(_WORKPLACE_ASKS) and c.get("unresolved_workplaces"):
+        return {"kind": "workplace", "needed": [], "question": questions[0]}   # read as a search follow-up next turn
+    # "I have not picked a school yet." is answered with NO_SCHOOL_PICKED, which still asks for a school
+    kind = "school" if questions[0] in (ri.SCHOOL_CLARIFICATION, NO_SCHOOL_PICKED) else "place"
     return {"kind": kind, "needed": [], "question": questions[0]}
 
 
@@ -5535,7 +5733,10 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     policy = policy_answer_passages(state) if facts else None
     # Fast path may skip model calls for fully recognized market/form flows, but policy answers still need the LLM
     # opening. The selected policy passages and the user's question are handed to that call below.
-    llm = get_llm() if not only_asking and (c.get("extraction_source") != FAST_PATH_SOURCE or policy) else None
+    # a question about the last answer ("Are these live flats?") is answered by code alone: no tool ran this turn, so a
+    # model opening would have no evidence to stand on
+    llm = get_llm() if not only_asking and not c.get("about_results") \
+        and (c.get("extraction_source") != FAST_PATH_SOURCE or policy) else None
     # code's own opening (code_opening_parts). In a block-search answer its answer sentence always goes first and the
     # model's checked sentences follow; otherwise it is used when none of the model's survives, or there is no model.
     answer, trade, lead_errors = code_opening_parts(state, facts) if facts else ([], "", [])
@@ -5725,7 +5926,11 @@ def input_guardrail_node(state: HDBCompassState) -> Dict[str, Any]:
     if unsupported:
         return {**update, "draft_response": unsupported}
     # school questions the lookup cannot answer are stopped here, after Member 5's own check
-    reply = guard_school_request(last_user_query(state), lambda q: bool(rule_based_extract(q).school_name) or names_a_school(q))
+    # a school named earlier in the conversation counts: "Expand the school distance to 2km." after a search near Ai Tong
+    # School is about that school, not a question to ask "Which primary school?" (SPAT-30)
+    earlier = bool((state.get("prior_constraints") or {}).get("school_name"))
+    reply = guard_school_request(last_user_query(state),
+                                 lambda q: earlier or bool(rule_based_extract(q).school_name) or names_a_school(q))
     return {**update, "draft_response": reply} if reply else update
 
 
