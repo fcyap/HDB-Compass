@@ -1,6 +1,10 @@
 """Experiment 1 on the whole 90-question benchmark, and its report (proposal sections 6.2 and 6.3).
 
-    # run (resumable; needs an open model: LLM_PROFILE=vllm on the cluster, ollama, or none for a no-model check)
+    # on the cluster (starts the GPU job, opens the tunnel, runs both passes, cancels the job, writes the report):
+    bash cluster/run_architecture_eval.sh arch90
+
+    # run directly (resumable; the model must already be reachable: LLM_PROFILE=vllm with the tunnel open, ollama, or
+    # none for a no-model check)
     python -m evaluation.run_architecture_eval --run --tag arch90
     python -m evaluation.run_architecture_eval --run --tag arch90 --langsmith     # traces go to LangSmith project hdb-compass-arch90
 

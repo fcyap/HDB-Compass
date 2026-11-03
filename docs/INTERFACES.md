@@ -317,7 +317,9 @@ Experiment 1.
   with the runtime auditor off (`HDB_AUDITOR=off`; `HDB_AUDITOR_LLM=off` only removes its model judge). `--langsmith` sends the
   traces to project `hdb-compass-T`. `--report --tag T` reads the saved rows and writes the tables (success by variant and
   category, Category F by variant, what the auditor did, C with and without it, exact McNemar) to
-  `evaluation/results/architecture_eval_T.md`. Both use one open model (`vllm`, `ollama` or `none`).
+  `evaluation/results/architecture_eval_T.md`. Both use one open model (`vllm`, `ollama` or `none`). On the cluster use
+  `bash cluster/run_architecture_eval.sh T`, which does both passes and the report through `cluster/run_live_eval.sh` (GPU job,
+  tunnel, cancel); `--run` assumes the model is already reachable.
 
 ## 7. Follow-up questions for missing financial facts (Member 4)
 
