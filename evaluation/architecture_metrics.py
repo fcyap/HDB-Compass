@@ -274,6 +274,26 @@ KNOWN_WRONG_CLAUSES: Dict[str, Dict[Any, str]] = {
 }
 
 
+# Expected blocks in a teammate's question file that evaluation/check_truth_independent.py found wrong. The file is
+# not edited here; scoring uses the corrected set and marks the answer (truth_corrected), and the checker accepts
+# exactly these differences, so the list cannot drift from what the raw data shows. Keyed by question id.
+KNOWN_WRONG_BLOCK_TRUTH: Dict[str, Dict[str, Any]] = {
+    "B2-04": {"add": ["122 SIMEI ST 1"], "remove": [],
+              "note": "built from a price search cut off at its 100-block limit (121 matches), so a block 278 m from "
+                      "Simei MRT and 230 m from a supermarket, with a median price within the budget, was left out"},
+}
+
+
+def expected_block_keys(item: Dict[str, Any]) -> List[str]:
+    """The question's expected block keys, with any recorded correction applied."""
+    keys = list((item.get("ground_truth_facts") or {}).get("matching_block_keys") or [])
+    fix = KNOWN_WRONG_BLOCK_TRUTH.get(str(item.get("id", "")).split("~")[0])
+    if not fix:
+        return keys
+    drop = {k.upper() for k in fix["remove"]}
+    return [k for k in keys if k.upper() not in drop] + [k for k in fix["add"] if k not in keys]
+
+
 def _clause_key(clause: Any) -> Any:
     return tuple(clause) if isinstance(clause, list) else clause
 
@@ -293,6 +313,10 @@ def policy_clause_scores(item: Dict[str, Any], state: Dict[str, Any]) -> Optiona
     draft = state.get("draft_response") or ""
     found = [clause_in_answer(c, draft) for c in clauses]
     wrong = known_wrong_clauses(item)
+    # the same answer scored only on the clauses that are still current: a known-wrong clause is neither needed nor
+    # counted, so an answer is not marked down for stating current policy instead of the outdated figure
+    wrong_keys = {_clause_key(w["clause"]) for w in wrong}
+    current = [ok for c, ok in zip(clauses, found) if _clause_key(c) not in wrong_keys]
     return {
         "kind": "policy",
         "clauses_found": sum(found), "clauses_total": len(clauses),
@@ -300,6 +324,8 @@ def policy_clause_scores(item: Dict[str, Any], state: Dict[str, Any]) -> Optiona
         "clauses_missing": [c for c, ok in zip(clauses, found) if not ok],
         "known_wrong_clauses": len(wrong),
         "success": all(found),
+        "clause_coverage_current": sum(current) / len(current) if current else 1.0,
+        "success_current": all(current),
     }
 
 
@@ -927,9 +953,11 @@ def ground_truth_scores(item: Dict[str, Any], state: Dict[str, Any]) -> Optional
         return None
     draft = state.get("draft_response") or ""
     rec = set(recommended_block_numbers(draft))
-    true = {str(k).split()[0].upper() for k in truth["matching_block_keys"]}
+    expected = expected_block_keys(item)
+    true = {str(k).split()[0].upper() for k in expected}
     tp = len(rec & true)
     out: Dict[str, Any] = {
+        "truth_corrected": expected != list(truth["matching_block_keys"]),
         "blocks_exact": rec == true,
         "block_precision": tp / len(rec) if rec else (1.0 if not true else 0.0),
         "block_recall": tp / len(true) if true else (1.0 if not rec else 0.0),

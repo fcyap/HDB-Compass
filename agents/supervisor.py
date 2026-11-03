@@ -2734,11 +2734,19 @@ def compute_intersection(sql_blocks: Optional[List[Dict[str, Any]]], spatial_blo
     return result
 
 
+def _price_query_truncated(sql_out: Any) -> bool:
+    """The price search stops at its result limit (100 blocks, cheapest first), so a block the distance filters kept
+    can be missing from it only because it was cut off (B2-04: 121 matches, 122 Simei St 1 not among the first 100)."""
+    return isinstance(sql_out, dict) and bool((sql_out.get("metadata") or {}).get("truncated"))
+
+
 def _price_spatial_blocks(state: HDBCompassState, log: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Join resale prices onto spatial-only results (school, commute) when price or lease limits were stated."""
+    """Join resale prices onto spatial-only results (school, commute) when price or lease limits were stated, and
+    price the spatial blocks directly when the town-wide price search was cut off at its result limit."""
     c = state.get("user_constraints", {})
     spatial = state.get("spatial_block_candidates")
-    if _sql_blocks(state) is not None or not spatial or not (
+    truncated = _price_query_truncated((state.get("sql_market_results") or {}).get("query_resale_blocks_by_criteria"))
+    if (_sql_blocks(state) is not None and not truncated) or not spatial or not (
             c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or c.get("flat_types")
             or c.get("wants_area_affordability") or re.search(r"\bresale\b", last_user_query(state), re.I)):
         return None
@@ -2797,9 +2805,18 @@ def _candidates_for(c: Dict[str, Any], query: str, runners: Dict[str, ToolRunner
                     args = {**args, "candidate_blocks": blocks}
                 outputs[name] = runners[name](**args)
     slots = slot_outputs(outputs, c.get("towns") or [])
-    sql = (slots.get("sql_market_results") or {}).get("query_resale_blocks_by_criteria", {}).get("blocks") \
-        if slots.get("sql_market_results") else None
-    return compute_intersection(sql, slots.get("spatial_block_candidates"), None)
+    sql_out = (slots.get("sql_market_results") or {}).get("query_resale_blocks_by_criteria")
+    spatial = slots.get("spatial_block_candidates")
+    if _price_query_truncated(sql_out) and spatial and "query_resale_blocks_by_criteria" in runners:
+        # a relaxed price search cut off at its limit would undercount the blocks a step unlocks
+        repriced = runners["query_resale_blocks_by_criteria"](
+            towns=c.get("towns") or [], flat_types=c.get("flat_types") or [],
+            max_price=c.get("max_budget_sgd") or NO_PRICE_LIMIT, min_lease_years=c.get("min_remaining_lease_years") or 0,
+            block_keys=[block_key(b["block"], b["street"]) for b in spatial])
+        if isinstance(repriced, dict) and "blocks" in repriced:
+            sql_out = repriced
+    sql = sql_out.get("blocks") if isinstance(sql_out, dict) else None
+    return compute_intersection(sql, spatial, None)
 
 
 def relax_node(state: HDBCompassState) -> Dict[str, Any]:
