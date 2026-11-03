@@ -149,8 +149,14 @@ def _evidence_numbers(text: str) -> Set[float]:
     return {_to_float(m) for m in re.findall(_NUM, text)}
 
 
-def _near(value: float, pool: Set[float], rel: float = 0.0) -> bool:
-    return any(abs(value - p) <= max(1.0 if value >= 100 else 0.05, rel * abs(p)) for p in pool)
+def _near(value: float, pool: Set[float], rel: float = 0.0, tol: Optional[float] = None) -> bool:
+    """Whether `value` matches a figure in `pool`. `tol` is the allowed rounding difference: by default $1 for figures of
+    100 or more and 0.05 below that; years and metres pass ROUNDING, because the answer shows 72.58 years as "73 yrs"."""
+    tol = (1.0 if value >= 100 else 0.05) if tol is None else tol
+    return any(abs(value - p) <= max(tol, rel * abs(p)) for p in pool)
+
+
+ROUNDING = 0.99   # a lease or distance shown rounded (or cut) to a whole number is still the evidence's figure
 
 
 def ungrounded_claims(draft: str, evidence: str, extra_allowed: str = "") -> List[str]:
@@ -159,22 +165,27 @@ def ungrounded_claims(draft: str, evidence: str, extra_allowed: str = "") -> Lis
     exact figure by rounding (0.5%); every other figure must match exactly."""
     pool = _evidence_numbers(evidence + " " + extra_allowed)
     low = (evidence + " " + extra_allowed).lower()
+    spaceless = re.sub(r"\s+", "", low)
     bad: List[str] = []
     for m in _MONEY.finditer(draft):
+        if re.sub(r"\s+", "", m.group(0)).lower() in spaceless:   # written in the evidence word for word ("$21k extended")
+            continue
         num, unit = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
         value = _to_float(num) * _scale(unit)
-        raw_pool = pool | {p * s for p in pool for s in (1e3, 1e6)}
-        if not _near(value, raw_pool, rel=0.005 if unit else 0.0) and not _near(_to_float(num), pool):
+        # "$748k" may differ from the exact figure by rounding (0.5%); an unabbreviated figure must match to the dollar
+        if not _near(value, pool, rel=0.005 if unit else 0.0):
             bad.append(m.group(0).strip())
     for m in _METRES.finditer(draft):
-        value = _to_float(m.group(1)) * (1000 if m.group(2).lower().startswith("k") else 1)
-        if not _near(value, pool | {p * 1000 for p in pool}, rel=0.0) and not _near(_to_float(m.group(1)), pool):
+        km = m.group(2).lower().startswith("k")
+        number = _to_float(m.group(1))
+        # the evidence holds metres; "0.42 km" is 420 m, and a km figure may also be what the evidence itself holds
+        if not (_near(number * (1000 if km else 1), pool, tol=ROUNDING) or (km and _near(number, pool, tol=ROUNDING))):
             bad.append(m.group(0).strip())
     for m in _YEARS.finditer(draft):
-        if not _near(_to_float(m.group(1)), pool):
+        if not _near(_to_float(m.group(1)), pool, tol=ROUNDING):
             bad.append(m.group(0).strip())
     for m in _BLOCK.finditer(draft):
-        if m.group(1).lower() not in low:
+        if not re.search(rf"(?<![\w.]){re.escape(m.group(1).lower())}(?![\w.])", low):   # a whole token, not part of a larger number
             bad.append(m.group(0).strip())
     return list(dict.fromkeys(bad))
 
