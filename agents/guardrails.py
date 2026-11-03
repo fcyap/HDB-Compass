@@ -51,6 +51,32 @@ _OFF_TASK = re.compile(
     r"function|bot|scraper|essay|poem|story|email|cover letter)\b|\bscrape\w*\b[^.?!]{0,30}\b(?:web|website|listings?|sites?)\b",
     re.I)
 
+# Asking the app to rank or avoid areas by who lives there (residents, class, race) or to call one a ghetto or slum. The
+# Ethnic Integration Policy and its quotas are an HDB rule, not a ranking of people, so they never match.
+_PEOPLE = r"(?:residents?|neighbou?rs|people|crowd|tenants|community|class|races?|racial|ethnic\w*|foreigners|poor|low[- ]income)"
+_BIAS = re.compile(
+    r"\b(?:ghetto\w*|slums?)\b"
+    r"|\b(?:worst|bad|good|best|nice|nicer|better|rough|dangerous|decent)\b[^.?!]{0,25}\b(?:residents?|neighbou?rs|people|crowd|tenants|community)\b"
+    r"|\bavoid\b[^.?!]{0,70}\b(?:because of|due to|since)\b[^.?!]{0,35}\b" + _PEOPLE + r"\b"
+    r"|\b(?:full of|filled with|too many)\b[^.?!]{0,25}\b(?:foreigners|poor|low[- ]income|rich|chinese|malays?|indians?|racial|ethnic\w*)\b"
+    r"|\bwhich\b[^.?!]{0,30}\b(?:races?|ethnic groups?)\b[^.?!]{0,40}\b(?:live|stay|reside)\w*\b",
+    re.I)
+_POLICY_NOT_BIAS = re.compile(r"\bethnic (?:integration|quota|limit|proportion)\b|\bEIP\b|\bSPR quota\b|\bquota\b", re.I)
+BIAS_REPLY = ("I don't rate neighbourhoods by who lives there. I can compare areas on facts instead: median price, remaining "
+              "lease, distance to the MRT and nearby schools. For example, ask me to compare {a} and {b} 4-room prices.")
+_BIAS_DEFAULTS = ("Woodlands", "Yishun")
+
+
+def bias_reply(text: str) -> str:
+    """The reply to a request to rank or avoid areas by their residents, with the example filled from the user's own towns
+    (in the order they wrote them)."""
+    up = (text or "").upper()
+    found = sorted((m.start(), t) for t in sv.HDB_TOWNS for m in [re.search(rf"\b{re.escape(t)}\b", up)] if m)
+    named = [t.title() for _, t in found]
+    pair = (named + [d for d in _BIAS_DEFAULTS if d not in named])[:2]
+    return BIAS_REPLY.format(a=pair[0], b=pair[1])
+
+
 SQL_REPLY = ("I can't act on that request. I can only help with questions about HDB housing, and I can't change my "
              "instructions or access the database directly. For example, you could ask: "
              "\"What is the median 4-room price in Tampines?\"")
@@ -81,7 +107,7 @@ def _block(reason: str, reply: str) -> Dict[str, Any]:
 
 def classify_input(text: str, mid_conversation: bool = False) -> Tuple[str, Optional[str]]:
     """(kind, fixed reply); kind is "ok" when the message may go on. The order matters: attacks first, then privacy,
-    then speculative asks, then the scope check."""
+    then speculative asks, then bias bait about residents, then the scope check."""
     t = text or ""
     if _SQL.search(t):
         return "sql_injection", SQL_REPLY
@@ -96,6 +122,8 @@ def classify_input(text: str, mid_conversation: bool = False) -> Tuple[str, Opti
         return scope.PRIVATE, scope.REPLIES[scope.PRIVATE]
     if _SPECULATIVE.search(t):
         return "speculative_advice", SPECULATIVE_REPLY
+    if _BIAS.search(t) and not _POLICY_NOT_BIAS.search(t):
+        return "neighbourhood_bias", bias_reply(t)
     kind = scope.classify(t, mid_conversation)
     if kind != scope.IN_SCOPE:
         return kind, scope.REPLIES[kind]
