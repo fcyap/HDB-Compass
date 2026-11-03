@@ -2258,6 +2258,8 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         inst = instalment_question(f"monthly instalment on a loan of {query}")   # "$500k at 2.6% over 25 years"
     if inst is not None:
         constraints["instalment"] = inst if "monthly" in inst else None
+        if inst and constraints.get("max_budget_sgd") == inst["loan"]:
+            constraints["max_budget_sgd"] = None   # the loan amount, not a flat budget (live: it then asked "Which town?")
         if "monthly" not in inst:
             constraints["clarifications"] = list(constraints.get("clarifications") or []) + [
                 "To work out the monthly instalment, tell me the loan amount, the interest rate and the loan tenure "
@@ -2793,7 +2795,7 @@ def route_node(state: HDBCompassState) -> Dict[str, Any]:
             return {"active_subagents": active, "user_constraints": picked}
         return {"active_subagents": active, "user_constraints": {**c, "clarifications": [ri.place_clarification(c)]}}
     if not active and not c.get("clarifications") and not c.get("towns") and not c.get("policy_question") \
-            and not c.get("islandwide") \
+            and not c.get("islandwide") and not c.get("instalment") \
             and c.get("search_stated", True) and not (c.get("money_asked") and has_financial_facts(c)) and (
             c.get("flat_types") or c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or c.get("amenity_radii_meters")):
         # "I want a 4-room flat under $600k": a search with no place yet, so ask where rather than show the menu
