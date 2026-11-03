@@ -248,7 +248,8 @@ def test_tool_calls_record_who_chose_them():
 
     with patch.object(sv, "get_llm", return_value=Model()):
         outputs, log, errors, final = sv.run_react("market_sql", sv.tools_for_agent("market_sql"), "x", "q",
-                                                   {"towns": ["TOA PAYOH"]})
+                                                   {"towns": ["TOA PAYOH"], "flat_types": ["4 ROOM"],
+                                                    "max_budget_sgd": 750000, "min_remaining_lease_years": 65})
     assert [r["source"] for r in log] == ["model"] and not errors
     _, log2, _, _ = sv.run_react("market_sql", sv.tools_for_agent("market_sql"), "x", "q",
                                  {"towns": ["TOA PAYOH"], "flat_types": ["4 ROOM"]})   # no model: the plan runs

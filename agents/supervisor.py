@@ -1667,8 +1667,12 @@ def guard_financial_args(name: str, args: Dict[str, Any], c: Dict[str, Any], out
     grant total is passed forward, running the grant calculator first if the model has not."""
     sec = FIN_TOOL_SECTION.get(name)
     fin = c.get("financial_inputs") or {}
-    if sec is None or not has_financial_facts(c):
+    if sec is None:
         return args
+    if not has_financial_facts(c):
+        # nothing stated: the model's household figures are its own inventions (live, 3 Nov: SC_SC, $12,000 income,
+        # $80k CPF for "How much grant can we get?"), so they are left out and the calculator asks for them
+        return {k: v for k, v in args.items() if k not in FACT_FIELDS}
     stated = fin.get(sec) or {}
     out = {k: v for k, v in args.items() if k not in FACT_FIELDS}
     out.update(stated)
@@ -1725,6 +1729,19 @@ def lenient_constraints(data: Dict[str, Any]) -> Tuple[ExtractedConstraints, Lis
             if not changed:
                 break
     return ExtractedConstraints(), dropped + ["(everything)"]
+
+
+EXTRACTION_MAX_TOKENS = int(os.getenv("HDB_EXTRACTION_MAX_TOKENS", "1536"))
+
+
+def capped(llm: Any, max_tokens: int) -> Any:
+    """The same client with a lower output limit (a copy; the shared client keeps its own)."""
+    try:
+        if llm is not None and (getattr(llm, "max_tokens", None) or 0) > max_tokens:
+            return llm.model_copy(update={"max_tokens": max_tokens})
+    except Exception:  # noqa: BLE001 — a client that cannot be copied keeps its own limit
+        pass
+    return llm
 
 
 def read_constraints_with_model(llm: Any, messages: List[Any],
@@ -1794,7 +1811,9 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
             fast["extraction_source"] = FAST_PATH_SOURCE
             return {"user_constraints": fast, "errors": []}
     prior = state.get("prior_constraints")
-    llm = get_llm()
+    # the constraint JSON is a few hundred tokens: a reading that runs on to the 4,096-token limit is a runaway
+    # (live, 3 Nov: 30 of 166 turns, about 30 s each, before the json_mode retry succeeded), so it is cut off early
+    llm = capped(get_llm(), EXTRACTION_MAX_TOKENS)
     extracted: Optional[ExtractedConstraints] = None
     model_reading: Optional[Dict[str, Any]] = None
     model_policy = False
@@ -2056,6 +2075,12 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
                                            if v is not None and v > 0}
     _verify_extraction(constraints, query, errors, from_model=from_model)
     _note_unchecked_places(constraints, query)
+    if from_model and constraints.get("policy_question") and not policy_wording(query, money_stated=calculator_facts(constraints)) \
+            and (_MONEY_AMOUNT_ASK.search(query) or any(stated_financial_inputs(query).values())):
+        # "How much grant can we get?" / a reply with household facts: the calculators' question, not a rule search
+        # (live, 3 Nov: the model filed "grant_eligibility" and the answer added "I couldn't find an HDB rule")
+        constraints["policy_question"] = None
+        errors.append("extract_constraints: model's policy reading dropped: a money question, not a rule question")
     if from_model and constraints.get("policy_question") and not scope.mentions_policy_topic(query) \
             and not (model_policy and policy_wording(query, money_stated=calculator_facts(constraints))):
         # the model filed a vague question ("Should I buy BTO or resale?") as a policy question; the policy search
@@ -2085,7 +2110,7 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         if not pending:
             carried = refine_search(carried, constraints, query)
         constraints = merge_constraints(carried, constraints)
-        if not pending and prior.get("policy_question") and not constraints.get("policy_question") \
+        if not pending and prior.get("policy_question") and len(str(constraints.get("policy_question") or "").split()) <= 3 \
                 and _SHORT_FOLLOWUP.search(query) and not any(fresh_constraints.get(k) for k in SEARCH_KEYS):
             # "what about Plus?" after "Can I rent out my whole Prime flat after the MOP?": the same rule question
             constraints["policy_question"] = f"{prior['policy_question']} {query}"
@@ -2223,6 +2248,12 @@ def listed_block_reference(c: Dict[str, Any], query: str, listed: List[str], fre
     """"tell me more about the first one", "past sales of that block", "how far is Blk 627 from MRT?" after a search:
     the block the previous answer listed, as the place this message asks about. The place question then reads what
     is asked (past sales, a price check, what is near it) or asks it. Not when the message names its own place."""
+    bare = [re.fullmatch(r"\s*(?:blk|block)?\.?\s*(\d{1,4}[a-z]?)\s*", str(a), re.I) for a in fresh.get("addresses") or []]
+    if bare and all(bare) and listed:
+        # the model copied "blk 627" from "is $650k fair for blk 627?": the block just listed with that number
+        query = f"{query} blk {bare[0].group(1)}"
+        fresh = {**fresh, "addresses": []}
+        c["addresses"] = []
     if fresh.get("addresses") or fresh.get("map_pin") or fresh.get("towns"):
         return
     last = [a for a in (prior or {}).get("addresses") or [] if a]
@@ -2377,12 +2408,60 @@ def _station_key(name: Any) -> str:
     return " ".join(re.sub(r"\b(?:mrt|lrt|station)\b|[^a-z0-9]+", " ", str(name or "").lower()).split())
 
 
+def _amount_in(value: Any, text: str) -> bool:
+    """Whether a money amount appears in the text in any usual form ("$650,000", "650k", "0.65m", "650 thousand")."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return False
+    t = re.sub(r"[$,]|\bS\$|\bSGD\b", "", text, flags=re.I).lower()
+    forms = {f"{v:.0f}", f"{v / 1000:g}k", f"{v / 1000:g} k", f"{v / 1000:g} thousand", f"{v / 1e6:g}m", f"{v / 1e6:g} m",
+             f"{v / 1e6:g} million", f"{v / 1e6:g} mil"}
+    return any(re.search(rf"(?<![\d.]){re.escape(f)}(?![\d])", t) for f in forms)
+
+
+def _drop_unstated(c: Dict[str, Any], query: str, errors: List[str]) -> None:
+    """The model's reading keeps a limit, place or fact only when the user's words contain it. A runaway reading
+    (live, 3 Nov: 9 turns where every field was filled) invented a lease, a commute limit, a school, an income and
+    every intent, and the search then found nothing."""
+    rb = rule_based_extract(query)
+    dropped = []
+    if c.get("min_remaining_lease_years") and not re.search(rf"\b{int(c['min_remaining_lease_years'])}\b", query) \
+            and not rb.min_remaining_lease_years:
+        dropped.append("min_remaining_lease_years"); c["min_remaining_lease_years"] = None
+    if c.get("max_commute_minutes") and not re.search(rf"\b{int(c['max_commute_minutes'])}\b", query):
+        dropped.append("max_commute_minutes"); c["max_commute_minutes"] = None
+    for k in ("max_budget_sgd", "household_income", "cpf_oa_balance", "cash_savings"):
+        if c.get(k) and not _amount_in(c[k], query) and getattr(rb, k, None) != c[k]:
+            dropped.append(k); c[k] = None
+    words = lambda s: [w for w in re.findall(r"[a-z]{4,}", str(s).lower()) if w not in ("school", "primary", "high", "secondary")]
+    if c.get("school_name") and not any(w in query.lower() for w in words(c["school_name"])):
+        dropped.append("school_name"); c["school_name"] = None
+        (c.get("amenity_radii_meters") or {}).pop("school", None)
+    if c.get("bto_project_name") and not any(w in query.lower() for w in words(c["bto_project_name"])):
+        dropped.append("bto_project_name"); c["bto_project_name"] = None
+    if c.get("work_destinations"):
+        kept = [w for w in c["work_destinations"] if any(x in query.lower() for x in words(w) or [str(w).lower()])]
+        if kept != list(c["work_destinations"]):
+            dropped.append("work_destinations"); c["work_destinations"] = kept
+    flags = [k for k, v in c.items() if k.startswith("wants_") and v]
+    if len(flags) > 3:
+        # a question asks for one or two things; a reading that wants everything is a runaway: code's intents instead
+        for k in flags:
+            c[k] = bool(getattr(rb, k, False))
+        dropped.append(f"{len(flags)} intents")
+    if dropped:
+        errors.append(f"extract_constraints: model's reading not in the message was dropped: {dropped}")
+
+
 def _verify_extraction(c: Dict[str, Any], query: str, errors: List[str], from_model: bool = True) -> None:
     """Drop extracted facts the user did not actually supply."""
     comp = c.get("comparable_resale")
     if from_model and comp and not all(re.search(re.escape(f"{float(comp[k]):.3f}")[:-1], query) for k in ("latitude", "longitude")):
         c["comparable_resale"] = None
         errors.append("extract_constraints: comparable coordinates were not in the message; dropped")
+    if from_model:
+        _drop_unstated(c, query, errors)
     if from_model and c.get("towns"):
         # the same names, aliases and short forms ("JE", "AMK", "TPY") the prompt teaches and the regex reads; a model
         # that splits "Kallang/Whampoa" into KALLANG and WHAMPOA gets the HDB town both names stand for. A region the
@@ -2398,7 +2477,7 @@ def _verify_extraction(c: Dict[str, Any], query: str, errors: List[str], from_mo
             kept.extend(s for s in same if s not in kept)
             if not same:
                 invented.append(t)
-        c["towns"] = kept
+        c["towns"] = kept or [t for t in stated_towns(query)[0]]   # "CLEMENI", "THE EAST": code's own reading
         if invented:
             errors.append(f"extract_constraints: towns not named in the message were dropped: {invented}")
     if from_model and c.get("wants_group_stats") and c.get("amenity_radii_meters"):
@@ -2725,6 +2804,34 @@ def _scheme_to_pair(scheme: Optional[str]) -> Tuple[str, bool]:
     return pair, "SECOND" not in s
 
 
+def search_args(name: str, args: Dict[str, Any], c: Dict[str, Any], errors: List[str], label: str) -> Dict[str, Any]:
+    """A search call as the model wrote it, held to the limits code read and checked: the model chooses the call, but
+    not a different budget, lease, town, flat type or distance (live, 3 Nov: a monthly income of $9,000 passed as the
+    price cap; the MRT limit left out of "also within 500m of a hawker"; a 1-2 km ring for "within 2km")."""
+    out = dict(args)
+    if name == "query_resale_blocks_by_criteria" and not out.get("block_keys"):
+        want = {"max_price": c.get("max_budget_sgd") or NO_PRICE_LIMIT, "min_lease_years": c.get("min_remaining_lease_years") or 0}
+        if c.get("towns"):
+            want["towns"] = list(c["towns"])
+        if c.get("flat_types"):
+            want["flat_types"] = list(c["flat_types"])
+    elif name == "filter_blocks_by_amenity_proximity":
+        radii = {k: v for k, v in (c.get("amenity_radii_meters") or {}).items() if k != "school"}
+        want = {"amenity_constraints": radii} if radii else {}
+        if c.get("towns"):
+            want["towns"] = list(c["towns"])
+    elif name == "verify_primary_school_distance" and c.get("school_name"):
+        r = (c.get("amenity_radii_meters") or {}).get("school") or 1000
+        want = {"school_name": c["school_name"], "bracket": "2km" if r >= 2000 else "1km"}
+    else:
+        return out
+    changed = sorted(k for k, v in want.items() if out.get(k) != v)
+    if changed:
+        errors.append(f"{label}: {name} arguments held to the stated limits: {', '.join(changed)}")
+        out.update(want)
+    return out
+
+
 def statistics_args(args: Dict[str, Any], c: Dict[str, Any], errors: List[str], label: str) -> Dict[str, Any]:
     """'Resale prices within 300m of an MRT' compares sales within 300 m with the rest: one band at the distance the
     user named, the bands code's own plan passes. A model that grouped by its default bands (0-200, 200-500, ...) and
@@ -2926,6 +3033,7 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
                         # refused the call; no stated limit is the same no-limit code's own plan uses
                         args = {**args, "max_price": NO_PRICE_LIMIT if args.get("max_price") is None else args["max_price"],
                                 "min_lease_years": 0 if args.get("min_lease_years") is None else args["min_lease_years"]}
+                    args = search_args(name, args, c, errors, label)
                     guarded = guard_financial_args(name, args, c, outputs, runners)   # may run the grant calculator (code)
                     runners[name].source = "model"
                     try:
