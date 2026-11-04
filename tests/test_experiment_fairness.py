@@ -434,10 +434,12 @@ def test_a_checked_school_or_a_question_without_a_search_is_not_unchecked():
 ])
 def test_unchecked_commute_line_never_says_the_user_did_not_name_two(query):
     state = C.run(query)
-    assert sv.commute_unchecked(state)
     text = state["draft_response"]
     assert "did not name two" not in text
-    assert sv.unchecked_commute_line(state) in text
+    # "to Raffles Place and one-north" is now read as both workplaces (SEM-27), so the commute is checked; before,
+    # only the first was read and this test checked the not-checked line instead
+    assert len(state["user_constraints"]["work_destinations"]) == 2
+    assert not sv.commute_unchecked(state)
 
 
 def test_unchecked_commute_reason_follows_what_was_read():

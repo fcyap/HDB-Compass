@@ -84,7 +84,9 @@ def test_header_only_chunks_are_skipped_and_a_section_is_shown_once():
 def test_at_most_four_sections_are_shown():
     titles = ["4.1 Subsidy Recovery (Clawback) Rate", "4.2 10-Year Minimum Occupation Period (MOP)",
               "4.3 Lifelong Whole-Flat Rental Prohibition", "5.1 Baseline Parameters", "5.3 PHG Grant Quantum Table"]
-    shown = sv.shown_policy_passages([chunk(t) for t in titles], "Plus flat rules")
+    # a question naming no flat class: one naming Plus is not shown the Standard "Baseline Parameters" section
+    # (test_demo_readiness_policy.py), and this test is about the cap
+    shown = sv.shown_policy_passages([chunk(t) for t in titles], "Flat classification rules")
     assert sv.POLICY_PASSAGES_SHOWN == 4
     assert len(shown) == 4 and shown[-1]["title"] == "Baseline Parameters"
 
@@ -126,7 +128,9 @@ def test_long_lines_keep_whole_sentences():
     ("C3-04", "the transaction is ALWAYS PERMITTED, even if the quota for that ethnic group is completely full at both "
               "the block and neighbourhood levels."),
     ("C2-01", "(if aged 21+, eligible for 2-room to 5-room Standard resale flats)."),
-    ("C1-03", "Subsequent resale buyers who later sell the flat do not pay subsidy recovery")])
+    # a Plus question is shown the Plus clawback section, not the Prime one (whose "Subsequent resale buyers ... do not
+    # pay subsidy recovery" was shown before): SEM-07, sections about a class the question does not name are left out
+    ("C1-03", "subsidy recovery rate on the higher of the resale price or market valuation upon the first resale.")])
 def test_the_line_that_answers_keeps_its_figure_unit_and_condition(qid, kept):
     lines = sv.policy_fact_lines(search(qid), QUERIES[qid])
     assert any(kept in line for line in lines), lines
@@ -165,10 +169,17 @@ PLUS = [chunk("4.2 10-Year Minimum Occupation Period (MOP)"), chunk("4.1 Subsidy
 @pytest.mark.parametrize("sentence", [
     "Plus flats have a 10-year MOP.",
     "Plus flats have a 10 year MOP and a 3% to 6% clawback on the first resale.",
-    "Standard flats have a 5-year MOP and 0% clawback.",
     "Neither Prime nor Plus flats can be rented out whole."])
 def test_an_opening_may_state_a_figure_the_policy_lines_give(sentence):
     assert sv.keep_supported_sentences(sentence, "", QUERIES["C1-01"], PLUS) == (sentence, 0)
+
+
+def test_a_figure_from_a_section_on_a_class_not_asked_about_is_dropped():
+    # C1-01 compares Prime and Plus: the Standard section is not shown (SEM-07), so its figures are not allowed; for a
+    # question naming no class they still are
+    sentence = "Standard flats have a 5-year MOP and 0% clawback."
+    assert sv.keep_supported_sentences(sentence, "", QUERIES["C1-01"], PLUS) == ("", 1)
+    assert sv.keep_supported_sentences(sentence, "", "What are the MOP and clawback rules?", PLUS) == (sentence, 0)
 
 
 @pytest.mark.parametrize("sentence", [
@@ -196,7 +207,8 @@ def test_a_range_is_checked_as_a_range_however_it_is_written(sentence):
 
 @pytest.mark.parametrize("sentence", [
     "Plus flats carry a clawback of between 3% and 6% on the first resale.",
-    "The Plus clawback ranges from 3% up to 6%, and Prime from 6% to 9%."])
+    # (no longer "..., and Prime from 6% to 9%": C1-03 asks about Plus flats, so the Prime section is not shown)
+    "The Plus clawback ranges from 3% up to 6%."])
 def test_a_range_the_passages_give_may_be_written_another_way(sentence):
     assert sv.keep_supported_sentences(sentence, "", QUERIES["C1-03"], search("C1-03")) == (sentence, 0)
 
@@ -230,13 +242,14 @@ def test_synthesis_keeps_a_policy_opening_and_the_code_written_policy_lines():
     class Writer:
         def invoke(self, msgs):
             seen["prompt"] = msgs[-1].content
-            return AIMessage(content="Plus flats have a 10-year MOP, while Standard flats have a 5-year MOP. "
+            # (no Standard-flat clause: C1-01 asks about Prime and Plus, and a sentence on Standard flats is now dropped)
+            return AIMessage(content="Plus flats have a 10-year MOP, while Prime flats also have a 10-year MOP. "
                                      "Plus flats resell for about $900k.")
 
     with patch.object(sv, "get_llm", return_value=Writer()):
         out = sv.synthesize_node(state)
     facts = sv.template_response(state)
-    assert out["draft_response"] == ("Plus flats have a 10-year MOP, while Standard flats have a 5-year MOP.\n\n" + facts)
+    assert out["draft_response"] == ("Plus flats have a 10-year MOP, while Prime flats also have a 10-year MOP.\n\n" + facts)
     assert out["errors"] == ["synthesize: dropped 1 opening sentence(s) that stated figures"]
     assert "exactly as the Policy lines above write it" in seen["prompt"]
     with patch.object(sv, "get_llm", return_value=Writer()):

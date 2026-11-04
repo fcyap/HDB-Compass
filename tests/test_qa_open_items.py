@@ -56,8 +56,9 @@ def test_a_price_range_applies_both_ends():
 def test_which_of_those_is_cheapest_after_another_question():
     st = chat("Find 4-room flats in Tampines under $600k within 500m of an MRT",
               "Can I rent out my whole Prime flat after the MOP?", "which of those blocks is cheapest?")
-    assert st["user_constraints"]["addresses"] and st["user_constraints"].get("wants_block_history")
-    assert any("is the cheapest" in a for a in st["user_constraints"]["assumptions"])
+    # answered from the list just shown, not with the block's sales history (SPAT-27); the block stays the place meant
+    assert st["user_constraints"]["addresses"] and not st["user_constraints"].get("wants_block_history")
+    assert "is the cheapest" in st["user_constraints"]["listed_pick"] and "is the cheapest" in st["draft_response"]
 
 
 def test_stamp_duty_on_a_listed_block_uses_its_median():
@@ -95,9 +96,13 @@ def test_an_instalment_is_worked_out_by_code():
 
 
 def test_a_pr_couple_gets_a_budget_with_no_grants():
+    # two PRs cannot take an HDB loan, so the budget is a bank loan's: it needs the bank's rate and in-principle
+    # approval, not an "HDB loan eligibility" (SEM-20; this test used to accept an HDB-loan budget)
     st = app("We are both PRs, first-time buyers, aged 30 and 31. We have no children. Our household income is $9,000 "
-             "a month, CPF OA $80,000, cash $40,000, no debts. Our HDB loan eligibility is confirmed. What's our max budget?")
+             "a month, CPF OA $80,000, cash $40,000, no debts. We have a bank IPA at 3.5% interest. What's our max budget?")
     assert st["financial_breakdown"]["calculate_maximum_affordability"]["status"] == "ok"
+    assert st["user_constraints"]["financial_inputs"]["affordability"]["loan_type"] == "bank"
+    assert "two PRs can only take a bank loan" in " ".join(st["user_constraints"]["assumptions"])
     assert not st.get("clarification")
     assert "no CPF housing grants" in " ".join(st["user_constraints"]["assumptions"])
 
