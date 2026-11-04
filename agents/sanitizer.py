@@ -19,8 +19,12 @@ PLACEHOLDERS = {
 }
 PLACEHOLDER_RE = re.compile("|".join(re.escape(p) for p in PLACEHOLDERS.values()))
 
-_NRIC = re.compile(r"\b[STFGM]\d{7}[A-Z]\b", re.I)
+# an NRIC or FIN as people type it: "S1234567D", "S 1234567 D", "S1234567-D", "S-1234567-D"
+_NRIC = re.compile(r"(?<![A-Za-z\d])[STFGM][\s-]?\d{7}[\s-]?[A-Z](?![A-Za-z\d])", re.I)
 _PHONE = re.compile(r"(?<![\d$,.])(?:\+?65[\s-]?)?[689]\d{3}[\s-]?\d{4}(?!\d|,\d)")
+# "8000-9000" or "$8,000 to $9,000 income" is a range of money, not a phone number: both ends are round figures
+_ROUND_RANGE = re.compile(r"^\+?(?:65[\s-]?)?\d{2}00\s*-\s*\d{2}00$|^\+?(?:65[\s-]?)?\d{1}000\s*-\s*\d{1}000$")
+_MONEY_BEFORE = re.compile(r"(?:\$|\b(?:income|salary|earn\w*|budget|price|pay|paid|between|from|range|per month|monthly)\b)[^.?!\n]{0,25}$", re.I)
 _EMAIL = re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b")
 _CARD = re.compile(r"(?<![\d$,.])(?:\d[ -]?){12,18}\d(?!\d|,\d)")
 # a number after a banking word, or a Singapore bank's own account layout (DBS 3-5-1, OCBC 3-6-3, UOB 3-3-3-1)
@@ -63,7 +67,12 @@ def redact(text: str) -> Tuple[str, List[str]]:
     out = _CARD.sub(card, out)
     out = _BANK_KEYWORD.sub(lambda m: m.group(1) + note("BANK_ACCOUNT"), out)
     out = _BANK_LAYOUT.sub(lambda m: note("BANK_ACCOUNT"), out)
-    out = _PHONE.sub(lambda m: note("PHONE"), out)
+    def phone(m: "re.Match[str]") -> str:
+        if _ROUND_RANGE.match(m.group(0)) or (re.search(r"\d\s*-\s*\d", m.group(0)) and _MONEY_BEFORE.search(m.string[:m.start()])):
+            return m.group(0)
+        return note("PHONE")
+
+    out = _PHONE.sub(phone, out)
     return out, found
 
 
