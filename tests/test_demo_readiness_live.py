@@ -367,3 +367,33 @@ def test_a_duty_only_turn_offers_only_the_duty_calculator():
     assert not sv.TASK_TOOLS["calculate_maximum_affordability"](c)
     assert not sv.TASK_TOOLS["calculate_cpf_housing_grants"](c)
     assert sv.TASK_TOOLS["calculate_maximum_affordability"]({})
+
+
+class GrantsOnlyModel(ReadingModel):
+    """The live model of HOUSE-04 t3: its financial agent calls only the grant calculator, then stops."""
+    def __init__(self):
+        super().__init__({})
+        self.called = False
+
+    def bind_tools(self, _tools, tool_choice=None):
+        outer = self
+
+        class Bound:
+            def invoke(self, messages):
+                if not outer.called and any("calculate_cpf_housing_grants" == getattr(t, "name", t) for t in _tools or []) \
+                        or not outer.called:
+                    outer.called = True
+                    return AIMessage(content="", tool_calls=[{"name": "calculate_cpf_housing_grants", "id": "g1", "args": {}}])
+                return AIMessage(content="")
+        return Bound()
+
+
+def test_a_duty_question_gets_the_duty_when_the_model_skips_it():
+    # HOUSE-04 t3 live (4 Nov): "Does stamp duty fit within that number?" got no stamp duty at all
+    turns = ["We are married citizens aged 37 and 35, second-time buyers, no children. Monthly income $10k, usable CPF "
+             "$100k, cash $70k, no debts, loan eligibility confirmed. What can we afford with 70 years remaining?",
+             "Assume zero housing grants."]
+    prev = conversation(*turns)[-1]
+    with patch.object(sv, "get_llm", lambda *a, **k: GrantsOnlyModel()):
+        st = C.graph.invoke(sv.initial_state("Does stamp duty fit within that number?", "C", None, prev))
+    assert "stamp duty" in st["draft_response"].lower() and "$15,000" in st["draft_response"], st["draft_response"][:400]

@@ -4191,6 +4191,16 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
                     _store(outputs, name, backstop(**args))
                     extra_log.extend(rec.model_dump() for rec in backstop.log)
                     errors.append(f"{label}: added {name} the question needs (coverage check)")
+        # a stamp-duty question gets the duty even when the model called only the grant calculator ("Does stamp duty
+        # fit within that number?", HOUSE-04 t3 live, 4 Nov): the duty on the price code holds (stated, budget, or the
+        # affordability ceiling, which guard_financial_args works out first)
+        bsd = "calculate_bsd_and_upfront_outlay"
+        if "financial" in (plan_agents or [label]) and bsd in runners and bsd not in outputs and _DUTY_WORDS.search(query):
+            args = guard_financial_args(bsd, {}, c, outputs, runners)
+            if args.get("purchase_price"):
+                runners[bsd].agent = "supervisor"
+                _store(outputs, bsd, runners[bsd](**args))
+                errors.append(f"{label}: added {bsd} the question needs (coverage check)")
 
     log = [rec.model_dump() for r in runners.values() for rec in r.log] + extra_log
     return outputs, log, errors, final_text
