@@ -416,7 +416,9 @@ def main(argv=None) -> int:
         return value
 
     try:
-        bound = get_llm().bind_tools([echo_probe], parallel_tool_calls=False)
+        prof = active_profile()
+        bind_kwargs = {} if prof.get("provider") == "google" else {"parallel_tool_calls": False}
+        bound = get_llm().bind_tools([echo_probe], **bind_kwargs)
         messages = [
             SystemMessage(
                 content="Use the provided tool exactly as requested. "
