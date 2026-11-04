@@ -14,6 +14,12 @@ STATE = {"draft_response": DRAFT, "candidate_blocks_intersection": [
 ITEMS = [{"id": "T-01", "category": "B", "query": "4-room in Clementi"}]
 
 
+@pytest.fixture(autouse=True)
+def _no_model_judge(monkeypatch):
+    """These tests measure the rule checks; with a real model in .env the judge would call it (and use its quota)."""
+    monkeypatch.setenv("HDB_AUDITOR_LLM", "off")
+
+
 def test_a_clean_answer_passes_its_own_evidence():
     assert g.audit_text(DRAFT, g.evidence_text(STATE), "4-room in Clementi")["passed"]
 

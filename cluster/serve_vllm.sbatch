@@ -26,7 +26,7 @@ SCRATCH="/common/scratch/users/${USER:0:1}/$USER"
 MODEL_REPO="${MODEL_REPO:-Qwen/Qwen3-30B-A3B-GPTQ-Int4}"
 MODEL_DIR="${MODEL_DIR:-$SCRATCH/models/${MODEL_REPO##*/}}"
 PARSER="${PARSER:-hermes}"             # Qwen3 tool calls -> hermes parser
-MAX_LEN="${MAX_LEN:-40960}"            # Qwen3 native context (32k + 8k generation)
+MAX_LEN="${MAX_LEN:-32768}"            # 40960 needs 3.75 GiB of KV cache; the 24 GB slice has 3.3 (vLLM 0.33)
 export HF_HOME="$SCRATCH/hf" HF_HUB_OFFLINE=1
 # The nodes have no nvcc, and FlashInfer's top-k/top-p sampler JIT-compiles on first use, which
 # kills start-up. Our requests are greedy (temperature 0), so vLLM's PyTorch sampler is equivalent.
@@ -55,4 +55,4 @@ exec vllm serve "$MODEL_DIR" \
   --max-model-len "$MAX_LEN" \
   --enable-auto-tool-choice --tool-call-parser "$PARSER" \
   --generation-config vllm \
-  --gpu-memory-utilization 0.92
+  --gpu-memory-utilization 0.95

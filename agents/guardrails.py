@@ -46,6 +46,8 @@ _SPECULATIVE = re.compile(
     r"|\b(?:profit|gains?|returns?)\b[^.?!]{0,25}\b(?:i|we)\s+(?:will|would|can|could|'ll)\s+(?:make|earn|get|gain)\b"
     r"|\bhow much (?:profit|money)\b[^.?!]{0,30}\b(?:will|would|can)\b[^.?!]{0,15}\b(?:make|earn|gain)\b",
     re.I)
+# profit on a sale price the user states ("sell my Plus flat for $600k, how much profit after clawback") is arithmetic
+_OWN_SALE_PRICE = re.compile(r"\b(?:sell|sold|selling|sale)\b[^.?!]{0,50}\b(?:for|at)\s*\$?\s?\d")
 _OFF_TASK = re.compile(
     r"\b(?:write|create|generate|build|code|debug|fix)\b[^.?!]{0,30}\b(?:python|javascript|java|sql|html|css|script|program|code|"
     r"function|bot|scraper|essay|poem|story|email|cover letter)\b|\bscrape\w*\b[^.?!]{0,30}\b(?:web|website|listings?|sites?)\b",
@@ -54,12 +56,19 @@ _OFF_TASK = re.compile(
 # Asking the app to rank or avoid areas by who lives there (residents, class, race) or to call one a ghetto or slum. The
 # Ethnic Integration Policy and its quotas are an HDB rule, not a ranking of people, so they never match.
 _PEOPLE = r"(?:residents?|neighbou?rs|people|crowd|tenants|community|class|races?|racial|ethnic\w*|foreigners|poor|low[- ]income)"
+_GROUPS = (r"(?:chinese|malays?|indians?|eurasians?|muslims?|christians?|hindus?|buddhists?|sikhs?|jews?|jewish|"
+           r"foreigners?|pr|prs|immigrants?|bangladeshis?|filipinos?|africans?|caucasians?|races?|racial|religio\w*)")
 _BIAS = re.compile(
     r"\b(?:ghetto\w*|slums?)\b"
-    r"|\b(?:worst|bad|good|best|nice|nicer|better|rough|dangerous|decent)\b[^.?!]{0,25}\b(?:residents?|neighbou?rs|people|crowd|tenants|community)\b"
+    r"|\b(?:worst|bad|nice|nicer|rough|dangerous|decent)\b(?:\s+(?:kind|type|sort)s?\s+of)?\s+(?:residents?|neighbou?rs|people|crowd|tenants|community)\b"
+    r"|\b(?:best|good|better)\s+(?:kind|type|sort)s?\s+of\s+(?:residents?|neighbou?rs|people|crowd|tenants)\b"
     r"|\bavoid\b[^.?!]{0,70}\b(?:because of|due to|since)\b[^.?!]{0,35}\b" + _PEOPLE + r"\b"
     r"|\b(?:full of|filled with|too many)\b[^.?!]{0,25}\b(?:foreigners|poor|low[- ]income|rich|chinese|malays?|indians?|racial|ethnic\w*)\b"
-    r"|\bwhich\b[^.?!]{0,30}\b(?:races?|ethnic groups?)\b[^.?!]{0,40}\b(?:live|stay|reside)\w*\b",
+    r"|\bwhich\b[^.?!]{0,30}\b(?:races?|ethnic groups?)\b[^.?!]{0,40}\b(?:live|stay|reside)\w*\b"
+    r"|\b(?:avoid|away from|fewest|least|most|more|less|only|no)\b[^.?!]{0,40}\b" + _GROUPS + r"\b"
+    r"|\b" + _GROUPS + r"\b[^.?!]{0,50}\b(?:avoid|stay away|keep out|don'?t want|do not want|not welcome)\b"
+    r"|\b(?:screen|filter|reject|exclude|choose|select|pick|vet|prefer|rank)\w*\b[^.?!]{0,40}\b(?:tenants?|renters?|buyers?|neighbou?rs|residents?)\b[^.?!]{0,40}\b(?:by|based on|according to|because of|of)?\s*(?:races?|racial|ethnic\w*|religio\w*|nationalit\w*|" + _GROUPS + r")\b"
+    r"|\b(?:rent|let|sell)\w*\b[^.?!]{0,40}\b(?:not|never|except|only)\s+(?:to\s+)?" + _GROUPS + r"\b",
     re.I)
 _POLICY_NOT_BIAS = re.compile(r"\bethnic (?:integration|quota|limit|proportion)\b|\bEIP\b|\bSPR quota\b|\bquota\b", re.I)
 BIAS_REPLY = ("I don't rate neighbourhoods by who lives there. I can compare areas on facts instead: median price, remaining "
@@ -120,7 +129,7 @@ def classify_input(text: str, mid_conversation: bool = False) -> Tuple[str, Opti
         return scope.OFF_TOPIC, scope.REPLIES[scope.OFF_TOPIC]
     if scope.classify(t, mid_conversation) == scope.PRIVATE:   # before the speculative check: "best condo for investment"
         return scope.PRIVATE, scope.REPLIES[scope.PRIVATE]
-    if _SPECULATIVE.search(t):
+    if _SPECULATIVE.search(t) and not (_OWN_SALE_PRICE.search(t) and not re.search(r"guarantee|risk[- ]?free|can'?t lose|\bwhich\b", t, re.I)):
         return "speculative_advice", SPECULATIVE_REPLY
     if _BIAS.search(t) and not _POLICY_NOT_BIAS.search(t):
         return "neighbourhood_bias", bias_reply(t)
@@ -241,6 +250,8 @@ _JUDGE_PROMPT = """You check an assistant's reply about Singapore HDB housing ag
 Flag only claims in the REPLY that the DATA contradicts or does not support: invented prices, distances, lease years,
 block numbers, rules or grants, a statement that a block meets a limit the data does not show, or advice that promises
 profit. Do not flag wording, general knowledge that is not a specific figure, or things the user said.
+A comparison between the listed blocks (the cheapest, the nearest MRT, the most lease left) is supported when the figures
+in DATA show it: compare the numbers, and use the RANKINGS lines when they are given. Flag it only if the figures disagree.
 Answer with JSON only: {{"passed": true|false, "ungrounded_claims": ["..."]}}
 
 DATA:
@@ -285,11 +296,44 @@ def _model_text(state: Dict[str, Any]) -> str:
     return draft.split(facts, 1)[0].strip() if facts and facts in draft else draft
 
 
+_DIST_NAMES = {"mrt_dist_m": "nearest MRT", "school_dist_m": "nearest school", "hawker_dist_m": "nearest hawker centre",
+               "supermarket_dist_m": "nearest supermarket"}
+
+
+def ranking_facts(state: Dict[str, Any]) -> str:
+    """Lines naming the cheapest block, the one with the most lease and the nearest to each amenity, worked out from the
+    candidate table. The judge model compares long lists badly, and rejected true claims such as "Blk 774 is the cheapest"
+    (arch90: every ranking claim it rejected was true); with the answer in front of it, it only has to match a block number."""
+    blocks = [b for b in (state.get("candidate_blocks_intersection") or []) if isinstance(b, dict)]
+    if len(blocks) < 2:
+        return ""
+
+    def name(b: Dict[str, Any]) -> str:
+        return f"Blk {b.get('block')} {b.get('street')}".strip()
+
+    def pick(key: str, best, label: str, fmt) -> Optional[str]:
+        pool = [(b, v) for b in blocks for v in [b.get(key) if key in b else (b.get("distances") or {}).get(key)]
+                if isinstance(v, (int, float))]
+        if len(pool) < 2:
+            return None
+        top = best(v for _, v in pool)
+        winners = [name(b) for b, v in pool if v == top]
+        return f"- {label}: {', '.join(winners)} ({fmt(top)})"
+
+    lines = [pick("median_resale_price", min, "cheapest median price", lambda v: f"${v:,.0f}"),
+             pick("median_remaining_lease_years", max, "most remaining lease", lambda v: f"{v:.1f} years")]
+    lines += [pick(k, min, label, lambda v: f"{v:,.0f} m") for k, label in _DIST_NAMES.items()]
+    lines = [x for x in lines if x]
+    return "RANKINGS (computed from the table, ties listed together):\n" + "\n".join(lines) if lines else ""
+
+
 def _judge_data(state: Dict[str, Any]) -> str:
     """The data the LLM judge reads: the facts section the user sees (short, already checked against the tool results)
     when code writes it, else the evidence JSON."""
     facts = sv.template_response(state) if sv.writes_facts_in_code(state) else ""
-    return facts or evidence_text(state)
+    data = facts or evidence_text(state)
+    ranks = ranking_facts(state)
+    return f"{ranks}\n\n{data}" if ranks else data   # first: the judge reads at most 6,000 characters of it
 
 
 def _max_retries() -> int:
