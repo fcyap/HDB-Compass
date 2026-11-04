@@ -2090,7 +2090,8 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
     # a block search it is not (the carried limits would turn a trend question into an empty search: STATS-05)
     if state.get("fast_path") and not pending and not (
             _BACK_REFERENCE.search(query)
-            and any(prior_c.get(k) for k in ("wants_group_stats", "wants_area_statistics", "wants_price_trend"))):
+            and any(prior_c.get(k) for k in ("wants_group_stats", "wants_area_statistics", "wants_price_trend"))) \
+            and not snapshot_rank(query, prior_c):   # "Which town rose the most?" ranks the snapshot just shown
         # App mode: when code alone pins down every tool a self-contained question needs, a model round trip adds
         # latency but no information. Read from this message only; a reply to an open question never takes this path,
         # nor does a message pointing back at an earlier turn: "How have those prices changed over three years?" after
@@ -2331,6 +2332,84 @@ def about_last_answer(query: str, prior: Optional[Dict[str, Any]]) -> Optional[s
     return None
 
 
+# "Which flat types changed the most?" after a market snapshot (STATS-07 t2: the menu): the same snapshot again, with an
+# opening that names the flat type (or town) whose median moved most and least (snapshot_rank_sentence)
+_RANK_BY = re.compile(r"\b(?:flat[- ]?types?|room types?|types? of flats?)\b|\b(?P<town>towns?|estates?)\b", re.I)
+_RANK_UP = re.compile(r"\b(?:ris\w*|rose|increas\w*|went up|grew|gain\w*|jump\w*|climb\w*)\b", re.I)
+_RANK_DOWN = re.compile(r"\b(?:fell|fall\w*|drop\w*|decreas\w*|went down|dipp?\w*|declin\w*)\b", re.I)
+_RANK_CHANGE = re.compile(r"\b(?:chang\w*|mov\w*|shift\w*|swing\w*)\b", re.I)
+_RANK_LEAST = re.compile(r"\b(?:least|smallest|slowest|lowest)\b", re.I)
+_RANK_MOST = re.compile(r"\b(?:most|biggest|largest|fastest|highest)\b", re.I)
+# the snapshot's comparison columns, by the words that pick one (the question's own, else the earlier question's)
+_RANK_PERIODS = (("change_5y_pct", r"\b(?:5|five)[- ]?years?\b"), ("change_3y_pct", r"\b(?:3|three)[- ]?years?\b"),
+                 ("yoy_change_pct", r"\b(?:year|12 months|annual\w*|yoy)\b"), ("qoq_change_pct", r"\bquarter\b|\bqoq\b"))
+
+
+def snapshot_rank(query: str, prior: Optional[Dict[str, Any]], earlier: str = "") -> Optional[Dict[str, Any]]:
+    """{"by", "period", "direction", "least"} for a question ranking the last market snapshot's rows by their change,
+    or None. Towns are ranked only when the snapshot named two or more (island-wide it has one row per flat type)."""
+    if not (prior or {}).get("wants_market_snapshot") or len(query.split()) > 16:
+        return None
+    by = _RANK_BY.search(query)
+    moved = _RANK_UP.search(query) or _RANK_DOWN.search(query) or _RANK_CHANGE.search(query)
+    least = bool(_RANK_LEAST.search(query))
+    # "Which fell the least?" right after a ranking ranks the same rows
+    by_town = bool(by.group("town")) if by else (prior.get("snapshot_rank") or {}).get("by") == "town"
+    if not ((by or prior.get("snapshot_rank")) and moved and (least or _RANK_MOST.search(query))):
+        return None
+    if by_town and len(prior.get("towns") or []) < 2:
+        return None
+    period = next((col for col, p in _RANK_PERIODS if re.search(p, query, re.I)), None) \
+        or (prior.get("snapshot_rank") or {}).get("period") \
+        or next((col for col, p in _RANK_PERIODS if re.search(p, earlier, re.I)), "yoy_change_pct")
+    direction = "up" if _RANK_UP.search(query) else "down" if _RANK_DOWN.search(query) else "any"
+    return {"by": "town" if by_town else "flat_type", "period": period, "direction": direction, "least": least}
+
+
+_RANK_PERIOD_WORDS = {"qoq_change_pct": "Compared with the previous quarter", "yoy_change_pct": "Compared with a year earlier",
+                      "change_3y_pct": "Over the period you asked about", "change_5y_pct": "Over the period you asked about"}
+
+
+def snapshot_rank_sentence(state: HDBCompassState) -> str:
+    """The opening for a snapshot_rank question: which row's median moved most (or least), in words only, so it passes
+    the figure check; the facts below give every change. "" when the snapshot has fewer than two rows to compare."""
+    c = state.get("user_constraints") or {}
+    rank = c.get("snapshot_rank")
+    snap = (state.get("sql_market_results") or {}).get("get_market_snapshot") or {}
+    if not rank or "error" in snap:
+        return ""
+    col = rank["period"]
+    rows = [r for r in snap.get("rows") or [] if r.get(col) is not None]
+    if rank["by"] == "town":
+        rows = [r for r in rows if r["town"] != "ALL TOWNS"]
+        if len({r["flat_type"] for r in rows}) != 1:
+            return ""   # one town's change across several flat types is not one figure to rank by
+    else:
+        towns = {r["town"] for r in rows}
+        place = next(iter(towns - {"ALL TOWNS"})) if len(towns - {"ALL TOWNS"}) == 1 else "ALL TOWNS"
+        rows = [r for r in rows if r["town"] == place]
+    if len(rows) < 2:
+        return ""
+    sign = {"up": 1, "down": -1}.get(rank["direction"])
+    if sign and len([r for r in rows if sign * r[col] > 0]) >= 2:
+        rows = [r for r in rows if sign * r[col] > 0]   # "fell the least" is among the rows that fell
+    score = (lambda r: sign * r[col]) if sign else (lambda r: abs(r[col]))
+    ordered = sorted(rows, key=score, reverse=True)
+    top, bottom = (ordered[-1], ordered[0]) if rank["least"] else (ordered[0], ordered[-1])
+
+    def name(r: Dict[str, Any]) -> str:
+        return r["town"].title() if rank["by"] == "town" else \
+            re.sub(r"(\d) ROOM", r"\1-room", r["flat_type"]).replace("EXECUTIVE", "executive").replace("MULTI-GENERATION", "multi-generation")
+
+    verb = "rose" if top[col] > 0 else "fell" if top[col] < 0 else "held"
+    if verb == "held":
+        return ""
+    most = "least" if rank["least"] else "most"
+    other = "most" if rank["least"] else "least"
+    return (f"{_RANK_PERIOD_WORDS[col]}, {name(top)} prices {verb} the {most} and {name(bottom)} the {other}; "
+            f"each {'town' if rank['by'] == 'town' else 'flat type'}'s change is below.")
+
+
 def refine_search(carried: Dict[str, Any], fresh: Dict[str, Any], query: str) -> Dict[str, Any]:
     """The earlier search, changed the way a follow-up message asks (no open question): a complete new search starts
     afresh; "also within 500m of a hawker centre" adds a limit; "within 300m" alone changes the one distance limit;
@@ -2518,6 +2597,26 @@ def _instalment(loan: float, rate: float, years: int) -> Dict[str, Any]:
     r, n = rate / 100 / 12, years * 12
     monthly = loan / n if r == 0 else loan * r / (1 - (1 + r) ** -n)
     return {"loan": loan, "rate": rate, "years": years, "monthly": round(monthly), "interest": round(monthly * n - loan)}
+
+
+# A loan stated on its own, with nothing asked: "The loan is $400k.", "Our HDB loan will be about $350,000", "$400k loan"
+_BARE_LOAN = re.compile(r"^\s*(?:(?:the|my|our)\s+)?(?:(?:hdb|bank|housing|home)\s+)?(?:loan|mortgage)(?:\s+amount)?\s*"
+                        r"(?:is|will be|would be|of|=|:)?\s*(?:about|around|roughly)?\s*S?\$\s?\d[\d,]*(?:\.\d+)?\s*"
+                        r"(?:k|m|thousand|million)?\W*$|"
+                        r"^\s*(?:a\s+)?S?\$\s?\d[\d,]*(?:\.\d+)?\s*(?:k|m|thousand|million)?\s+(?:(?:hdb|bank)\s+)?(?:loan|mortgage)\W*$",
+                        re.I)
+
+
+# The figures an instalment question already holds, as held_instalment_question writes them
+_HELD_INSTALMENT = re.compile(r"on an? (?P<loan>S?\$[\d,.]+[km]?) loan(?: at (?P<rate>\d+(?:\.\d+)?)%)?(?: over (?P<years>\d+) years)?")
+
+
+def held_instalment_question(loan: str, rate: Optional[str], years: Optional[str]) -> str:
+    """The instalment question once the loan is known: the figures given so far, and only the missing ones asked for."""
+    held = f"a {loan} loan" + (f" at {rate}%" if rate else "") + (f" over {years} years" if years else "")
+    missing = [w for w, v in (("the interest rate", rate), ("the loan tenure", years)) if not v]
+    example = " over ".join(e for e, v in (("2.6%", rate), ("25 years", years)) if not v)
+    return f"To work out the monthly instalment on {held}, tell me {_join_words(missing)} (for example \"{example}\")."
 
 
 def instalment_question(q: str, prior: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
@@ -2932,13 +3031,47 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         grants.pop("proximity_eligibility_confirmed", None)
         constraints["assumptions"] = list(constraints.get("assumptions") or []) + [
             "The Proximity Housing Grant is left out because your eligibility for it is not confirmed."]
-    inst = instalment_question(query, (state.get("prior_constraints") or {}).get("instalment"))
-    if inst is None and str((pending or {}).get("question") or "").startswith("To work out the monthly instalment"):
+    prior_inst = (state.get("prior_constraints") or {}).get("instalment")
+    inst = instalment_question(query, prior_inst)
+    asked = str((pending or {}).get("question") or "")
+    held = _HELD_INSTALMENT.search(asked) if asked.startswith("To work out the monthly instalment") else None
+    figures = None   # (loan, rate, years) as written, each from this reply or else from the question it answers
+    if inst is None and held:
+        # "2.6% over 25 years" for the loan already held, or "3%" now and "over 20 years" next (each kept in the question)
+        m_rate, m_years = re.search(_INSTALMENT_RATE, query, re.I), re.search(_INSTALMENT_YEARS, query, re.I)
+        new_loan = next((m.group(0) for m in re.finditer(_INSTALMENT_AMOUNT, query, re.I)
+                         if (_instalment_figure(m) or 0) >= 10_000), None)
+        figures = (new_loan or held.group("loan"), m_rate.group(1) if m_rate else held.group("rate"),
+                   m_years.group(1) if m_years else held.group("years"))
+        inst = instalment_question(f"monthly instalment on a {figures[0]} loan" + (f" at {figures[1]}%" if figures[1] else "")
+                                   + (f" over {figures[2]} years" if figures[2] else ""))
+    elif inst is None and asked.startswith("To work out the monthly instalment"):
         inst = instalment_question(f"monthly instalment on a loan of {query}")   # "$500k at 2.6% over 25 years"
+    loan = None
+    if inst is None and _BARE_LOAN.match(query) and not (pending and pending.get("kind", "financial") == "financial"):
+        # "The loan is $400k." states a loan and asks nothing (CLARIFY-07 t2: the menu). After an instalment it changes
+        # that loan; otherwise the instalment's other two figures are asked for, with the loan kept in the question.
+        loan = next((v for v in map(_instalment_figure, re.finditer(_INSTALMENT_AMOUNT, query, re.I)) if v and v >= 10_000), None)
+        if loan and prior_inst and prior_inst.get("monthly"):
+            inst = _instalment(loan, prior_inst["rate"], prior_inst["years"])
+        elif loan:
+            inst = {}
     # this message's own instalment only: the last one was shown again under a later flat search (X-STALE)
     constraints["instalment"] = inst if inst and "monthly" in inst else None
+    # finished from a reply to code's instalment question, or a bare new loan: code's figure is the whole answer
+    constraints["instalment_from_reply"] = bool(constraints["instalment"]) and (
+        asked.startswith("To work out the monthly instalment") or bool(loan))
     if inst is not None and "monthly" not in inst:
+        if loan:
+            figures = (f"${loan:,.0f}", None, None)
+        elif not figures:
+            # "Monthly payment on a $480,000 loan?": the figures the question gives are kept, the rest asked for
+            given = next((v for v in map(_instalment_figure, re.finditer(_INSTALMENT_AMOUNT, query, re.I)) if v and v >= 10_000), None)
+            m_rate, m_years = re.search(_INSTALMENT_RATE, query, re.I), re.search(_INSTALMENT_YEARS, query, re.I)
+            if given:
+                figures = (f"${given:,.0f}", m_rate.group(1) if m_rate else None, m_years.group(1) if m_years else None)
         constraints["clarifications"] = [q for q in constraints.get("clarifications") or [] if q != WHICH_TOWN] + [
+            held_instalment_question(*figures) if figures else
             "To work out the monthly instalment, tell me the loan amount, the interest rate and the loan tenure "
             "(for example \"$500k at 2.6% over 25 years\")."]
     rng = price_range(query)
@@ -3007,6 +3140,19 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         constraints["assumptions"] = [a for a in constraints.get("assumptions") or [] if a != UNCHANGED_NOTE]
         constraints["clarifications"] = []
         constraints["menu_options"] = None
+    said = [m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user"]
+    rank = snapshot_rank(query, prior, said[-2] if len(said) > 1 else "") \
+        if with_history and not pending and inst is None and not constraints["about_results"] else None
+    constraints["snapshot_rank"] = None
+    if rank and not any(v for k, v in rule_based_extract(query).model_dump().items() if k in SEARCH_KEYS + ("addresses",)):
+        # the last snapshot again, for the same towns and flat types; its opening ranks the rows. The research reading's
+        # own guess ("Which town rose the most?" read as a town value ranking) gives way to it.
+        for k in ri.TURN_ONLY_KEYS:
+            if k.startswith(("wants_", "stats_")):
+                constraints[k] = False if k.startswith("wants_") else None
+        constraints.update(wants_market_snapshot=True, towns=list(prior.get("towns") or []),
+                           flat_types=list(prior.get("flat_types") or []), snapshot_rank=rank,
+                           clarifications=[], menu_options=None)
     # a data question no specific intent recognised goes to the market agent's analysis tools instead of the menu
     constraints["analysis_mode"] = False
     if (with_history and not pending and inst is None and not constraints.get("clarifications") and not constraints.get("place_options")
@@ -3617,6 +3763,86 @@ def unplaced_distance(c: Dict[str, Any]) -> bool:
         c.get("towns") or c.get("islandwide") or c.get("addresses") or c.get("map_pin") or c.get("mrt_station"))
 
 
+# A reply that answers none of the open question: "skip", "I don't know" (F06) or a bare "yes" or "no" (F46). Both
+# dropped the household form and got the menu (replay, 4 Nov).
+_SKIP_REPLY = re.compile(r"^\s*(?:skip(?: (?:it|this|that))?|pass|later|not now|no idea|(?:i'?m |i am )?(?:not sure|unsure)|"
+                         r"(?:i )?(?:don'?t|do not) know|dunno|idk|(?:i'?d )?(?:rather|prefer) not(?: to)?(?: say)?)\W*$", re.I)
+_YES_NO_REPLY = re.compile(r"^\s*(?:yes|yeah|yep|yup|ya|ok(?:ay)?|sure|correct|right|no|nope|nah|not really)\W*$", re.I)
+# The facts a grant estimate cannot start without, asked on their own when the user skips the full list (the review's
+# "long household questionnaire" asked for 8-13 facts at once)
+KEY_GRANT_FACTS = ("citizenship_pair", "first_timer_status", "monthly_income")
+
+
+def stay_on_open_question(state: HDBCompassState) -> Optional[Dict[str, Any]]:
+    """The constraints for a reply that answers none of the open question, or None. The question stays open (for the
+    household form, cut to the facts that matter most) under a lead saying why it is asked again. A second such reply
+    leaves it and offers the menu, so nothing is asked twice."""
+    pending = state.get("pending_clarification") or {}
+    query = last_user_query(state)
+    skipped = bool(_SKIP_REPLY.match(query))
+    if not pending.get("question") or pending.get("kind") == "menu" or not (skipped or _YES_NO_REPLY.match(query)):
+        return None
+    c = state.get("user_constraints", {})
+    financial = pending.get("kind", "financial") == "financial"
+    if pending.get("reasked"):
+        menu = scope.menu_for(query)
+        return {**c, "clarifications": [menu["question"]], "menu_options": menu["options"],
+                "fallback_lead": f"Okay, let's leave {'the grant estimate' if financial else 'that'} for now."}
+    question, needed = pending["question"], list(pending.get("needed") or [])
+    if financial:
+        key = [n for n in KEY_GRANT_FACTS if n in needed] or needed[:3]
+        if key:
+            needed = key   # the app's household form shows these fields only (HouseholdForm draws them from "needed")
+            phrases = list(dict.fromkeys(FACT_WORDS.get(n, n.replace("_", " ")) for n in key))
+            question = (f"To start your grant and budget estimate, I only need {_join_words(phrases)} (for example "
+                        "\"We are both citizens, first-timers, earning $9,000 a month\").")
+        lead = "No problem, the full list can wait." if skipped else "I couldn't tell which of my questions that answers."
+    else:
+        lead = "No problem, but I need this to go on." if skipped else "I couldn't tell what that answers."
+    return {**c, "clarifications": [question], "fallback_lead": lead,
+            "kept_clarification": {**pending, "question": question, "needed": needed, "reasked": True}}
+
+
+# A rule question in words no policy topic names: "What happens if I decline to choose a flat when invited in a BTO
+# exercise?" (P-34: the menu). It asks what is allowed, required or what follows, about HDB housing. Advice ("Should I
+# buy BTO or resale?", "What flat should I buy?") is not one: the policy search would return loosely related rules.
+_RULE_ASK = re.compile(r"^\s*(?:what (?:happens|if)\b|what are the (?:rules|conditions|requirements|penalt\w*)\b|"
+                       r"(?:can|may|must) (?:i|we|my|our|a|an|the|one|someone|singles?|couples?|buyers?|owners?)\b|"
+                       r"(?:am i|are we|is it|is there|are there) (?:allowed|eligible|able|required|possible|legal|"
+                       r"an? (?:penalty|limit|rule|cap|fee)|any (?:penalt\w*|limits?|rules?|fees?))\b|"
+                       r"(?:do|does) (?:i|we|my|our|hdb)\b.*\b(?:need|have to|allow\w*|penali[sz]e\w*|require\w*|count)\b|"
+                       r"how (?:long|many times|soon)\b|will (?:i|we|hdb)\b)", re.I)
+_HDB_TOPIC = re.compile(r"\b(?:hdb|bto|sbf|resale|flats?|ballot\w*|applications?|queue|key collection|lease|mop|grants?|"
+                        r"cpf|housing|estates?)\b", re.I)
+
+
+def rule_question_in_other_words(query: str) -> bool:
+    """A question about an HDB rule that no reading recognised, sent to the policy search instead of the menu. Never a
+    data, money or instalment question (those have their own tools)."""
+    return bool(_RULE_ASK.match(query) and _HDB_TOPIC.search(query)) and not scope.mentions_data(query) \
+        and not _MONEY_AMOUNT_ASK.search(query) and not _BUDGET_ASK.search(query) and instalment_question(query) is None
+
+
+# Words that say nothing about which rule is meant: the passage check below needs the question's own words
+_GENERIC_WORDS = frozenset(
+    "a an the i we my our me us you your it its they them their he she his her is are am was were be been being do does "
+    "did can could may might must will would shall should if when what which who whom how why where there this that "
+    "these those to of in on at for from by with about into as or and but not no any some all after before than then "
+    "so just also hdb bto sbf flat flats resale buy buying bought apply applying happens happen rule rules allowed "
+    "able get getting have has had".split())
+
+
+def passage_shares_words(passage: Dict[str, Any], question: str) -> bool:
+    """Whether a policy passage is about the question: at least two of the question's own words (by their first five
+    letters, so "decline" meets "declines"), and at least three in four of them, appear in the passage. Live, 5 Nov:
+    "Can my parents stay in my HDB flat if they are not on the application?" found the multi-generation scheme, which
+    shares "parents" and "application" but not "stay", and the model opened with a rule the passage does not give."""
+    words = {w[:5] for w in re.findall(r"[a-z]+", question.lower()) if len(w) > 2 and w not in _GENERIC_WORDS}
+    text = " ".join(str(passage.get(k) or "") for k in ("section", "text")).lower()
+    found = {w for w in words if re.search(rf"\b{re.escape(w)}", text)}
+    return len(found) >= 2 and len(found) * 4 >= len(words) * 3
+
+
 def route_node(state: HDBCompassState) -> Dict[str, Any]:
     c = state.get("user_constraints", {})
     if c.get("about_results"):
@@ -3646,6 +3872,13 @@ def route_node(state: HDBCompassState) -> Dict[str, Any]:
     if not active and (c.get("instalment") or c.get("listed_pick")):
         return {"active_subagents": active}   # worked out by code; the answer shows it (facts section)
     if not active and not c.get("clarifications"):
+        kept = stay_on_open_question(state)
+        if kept:
+            return {"active_subagents": active, "user_constraints": kept}
+        if rule_question_in_other_words(last_user_query(state)):
+            # the policy search answers it, or the answer says it found no HDB rule on it
+            return {"active_subagents": ["policy_rag"],
+                    "user_constraints": {**c, "policy_question": last_user_query(state), "policy_fallback": True}}
         menu = scope.menu_for(last_user_query(state))
         return {"active_subagents": active,
                 "user_constraints": {**c, "clarifications": [menu["question"]], "menu_options": menu["options"]}}
@@ -4300,6 +4533,9 @@ def _normalise_school_blocks(items: List[str], towns: List[str]) -> List[Dict[st
 POLICY_SCORE_FLOOR = 5.0
 NO_POLICY_ANSWER = ("I couldn't find an HDB rule in my knowledge base that answers this. Please check hdb.gov.sg or ask "
                     "HDB for an HFE letter.")
+NO_RULE_FOUND = ("I couldn't find an HDB rule in my knowledge base that answers this, so I won't guess. Please check "
+                 "hdb.gov.sg or ask HDB directly. I can explain the rules on eligibility, grants, the MOP, renting out, "
+                 "Prime and Plus flats, and the ethnic quota.")
 
 
 def policy_below_floor(out: Any) -> bool:
@@ -4393,6 +4629,10 @@ def make_specialist_node(agent: str) -> Callable[[HDBCompassState], Dict[str, An
                                                 known_points=trusted_points(state), use_model=c.get("extraction_source") != FAST_PATH_SOURCE,
                                                 stop_when_covered=bool(state.get("fast_path")))
         update = slot_outputs(requested_outputs(agent, outputs, c, query), c.get("towns") or [])
+        if c.get("policy_fallback") and update.get("rag_policy_passages") \
+                and not passage_shares_words(update["rag_policy_passages"][0], query):
+            # a question only the fallback sent here: its best passage must be about it, or "no rule found" is said
+            update.update(rag_policy_passages=[], policy_no_match=True)
         update.update({"tool_call_log": log, "errors": errors,
                        "subagent_notes": [{"agent": agent, "text": (final or "")[:4000]}] if final else []})
         return update
@@ -5171,7 +5411,9 @@ def template_response(state: HDBCompassState) -> str:
         # the rule search was not run for: "What information would you need for a bank-loan calculation instead?" got
         # the line under its own answer (HOUSE-03 t3, live 4 Nov: the search ran on the earlier turn's "Can you really
         # use an HDB loan?"). A rule question of this message's own ("Can PRs take an HDB loan?") still gets it.
-        lines.append(NO_POLICY_ANSWER)
+        # a rule question only the fallback sent to the search (route_node) gets no HFE-letter advice: it is rarely
+        # about eligibility ("What happens if my spouse is not on the HDB lease?")
+        lines.append(NO_RULE_FOUND if uc.get("policy_fallback") else NO_POLICY_ANSWER)
     if not lines:
         lines.append(NO_DATA)
     if state.get("financial_breakdown") or passages:
@@ -5865,6 +6107,11 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
             sentences.append("Relaxing any one limit on its own unlocks no block either, as shown below.")
     else:
         # no flat search: policy first (the question was about the rules), then what the calculators could do
+        if c.get("fallback_lead"):
+            sentences.append(c["fallback_lead"])   # why the open question is asked again, or left (stay_on_open_question)
+        ranked = snapshot_rank_sentence(state)
+        if ranked:
+            sentences.append(ranked)
         forced = forced_opening(state)[0]
         if forced:
             sentences.append(forced)
@@ -6385,7 +6632,8 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
         unchecked = (" A limit was not checked: say plainly what could_not_check lists, and never say the blocks meet "
                      "every constraint.")
     rule += unchecked
-    clar = clarification_needed(state) or place_clarification(state)
+    # an open question asked again (stay_on_open_question) keeps its kind, so the next reply is read as its answer
+    clar = clarification_needed(state) or c.get("kept_clarification") or place_clarification(state)
     if clar and clar.get("kind", "financial") == "financial":
         evidence["clarification_needed"] = clar
         rule += (" Some financial facts are missing: state no maximum budget or affordability figure, and end with "
@@ -6402,7 +6650,11 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     # opening. The selected policy passages and the user's question are handed to that call below.
     # a question about the last answer ("Are these live flats?") is answered by code alone: no tool ran this turn, so a
     # model opening would have no evidence to stand on
-    llm = get_llm() if not only_asking and not c.get("about_results") \
+    # Nor are two fallback answers (route_node), where the model only added text the facts do not support (live, 5 Nov):
+    # a rule question that found no rule ("it may affect your eligibility...") and an instalment finished from a reply
+    # to code's question ("There are no specific block options provided to compare...")
+    fallback_only = (c.get("policy_fallback") and state.get("policy_no_match")) or c.get("instalment_from_reply")
+    llm = get_llm() if not only_asking and not c.get("about_results") and not fallback_only \
         and (c.get("extraction_source") != FAST_PATH_SOURCE or policy) else None
     # code's own opening (code_opening_parts). In a block-search answer its answer sentence always goes first and the
     # model's checked sentences follow; otherwise it is used when none of the model's survives, or there is no model.
@@ -6725,7 +6977,10 @@ def initial_state(query: str, variant: str, map_state: Optional[Dict[str, Any]] 
     return {"menu_followup": followup, "messages": history + [{"role": "user", "content": query}], "variant": variant, "active_subagents": [],
             "candidate_blocks_intersection": [], "map_ui_payload": map_state or {}, "draft_response": "",
             "auditor_verdict": {}, "model_opening": "", "tool_call_log": [], "errors": [], "subagent_notes": [],
-            "prior_constraints": (previous or {}).get("user_constraints"),
+            # a lead and a question asked again belong to their own turn (stay_on_open_question)
+            "prior_constraints": {k: v for k, v in ((previous or {}).get("user_constraints") or {}).items()
+                                  if k not in ("fallback_lead", "kept_clarification")}
+            if (previous or {}).get("user_constraints") is not None else None,
             "pending_clarification": (previous or {}).get("clarification"), "clarification": None,
             # the last list shown stays the reference through a turn that listed none ("tell me more about the first one")
             "prior_blocks": [f"Blk {b.get('block')} {b.get('street')}" for b in
