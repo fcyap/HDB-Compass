@@ -2,21 +2,19 @@ import React, { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
-  Compass,
   ChevronDown,
   ChevronRight,
   School,
   Building,
-  CheckCircle2,
   Clock,
   Zap,
-  RotateCcw,
-  Terminal,
-  Sparkles,
+  SquarePen,
   ArrowUp,
   MapPin,
+  TrendingUp,
+  TrainFront,
+  Star,
 } from 'lucide-react';
-import { Mascot3D, MascotAvatar, useMascotFavicon } from './Mascot';
 import { ShortlistTray } from './ShortlistTray';
 import { HouseholdForm } from './HouseholdForm';
 import { useShortlist, blockLabel } from '../shortlist';
@@ -73,6 +71,37 @@ interface AgentChatProps {
   onSelectBlock?: (blockSummary: string) => void;
 }
 
+// Suggested first questions on the empty chat; a click sends `query` as typed
+const SUGGESTIONS: { icon: React.ElementType; title: string; subtitle: string; query: string }[] = [
+  { icon: School, title: 'Ai Tong School', subtitle: 'Bishan 4-room under $950k, ~1 km', query: 'Find 4-room flats in Bishan under $950k within 1km of Ai Tong School' },
+  { icon: School, title: 'Catholic High School', subtitle: 'Bishan 4-room under $950k, ~1 km', query: 'Find 4-room flats in Bishan under $950k within 1km of Catholic High School' },
+  { icon: TrainFront, title: 'Ang Mo Kio MRT', subtitle: '4-room under $750k, 300 m to MRT', query: 'Find 4-room flats in Ang Mo Kio under $750k within 300m of an MRT' },
+  { icon: Building, title: 'Kallang / Whampoa', subtitle: '4-room under $800k, MRT & hawker', query: 'Find 4-room flats in Kallang under $800k within 500m of an MRT and hawker' },
+  { icon: MapPin, title: 'Schools near an address', subtitle: 'Blk 147 Bishan St 11, within 2 km', query: 'Which primary schools are near Blk 147 Bishan Street 11?' },
+  { icon: TrendingUp, title: 'Resale market now', subtitle: 'Latest medians & recent change', query: 'How is the HDB resale market doing now?' },
+];
+
+/** The HDB-Compass mark: a compass needle on a teal gradient tile (same art as public/compass-mark.svg). */
+const BrandMark: React.FC<{ size?: number }> = ({ size = 28 }) => (
+  <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" className="brand-mark">
+    <defs>
+      <linearGradient id="bm-bg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stopColor="#00A39D" />
+        <stop offset="0.55" stopColor="#006865" />
+        <stop offset="1" stopColor="#073E40" />
+      </linearGradient>
+      <linearGradient id="bm-tip" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stopColor="#FFAB94" />
+        <stop offset="1" stopColor="#F36550" />
+      </linearGradient>
+    </defs>
+    <rect width="32" height="32" rx="9" fill="url(#bm-bg)" />
+    <path d="M16 6.5 19.2 16H12.8Z" fill="url(#bm-tip)" />
+    <path d="M12.8 16H19.2L16 25.5Z" fill="#F8EFDC" />
+    <circle cx="16" cy="16" r="1.6" fill="#073E40" />
+  </svg>
+);
+
 export const AgentChat: React.FC<AgentChatProps> = ({
   messages,
   agentStatus,
@@ -88,7 +117,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
   const shortlist = useShortlist();
   const busy = agentStatus === 'SEARCHING';   // one answer at a time: the app tracks a single running reply
 
-  // the composer grows with the text, up to about six lines, like Grok's
+  // the composer grows with the text, up to about six lines
   useEffect(() => {
     const el = inputRef.current;
     if (!el) return;
@@ -124,143 +153,54 @@ export const AgentChat: React.FC<AgentChatProps> = ({
     onSendQuery(prompt);
   };
 
-  useMascotFavicon();
+  const modelLine = !modelInfo ? 'Reading model configuration…' : modelInfo.status === 'fallback'
+    ? `Model fallback: ${modelInfo.message}`
+    : modelInfo.mode === 'deterministic'
+      ? 'Rule-based mode — no language model. Use explicit search criteria.'
+      : modelInfo.status === 'error' || modelInfo.status === 'unavailable'
+        ? `Model unavailable: ${modelInfo.message}`
+        : `Model configured: ${modelInfo.profile} / ${modelInfo.model}`;
+  const modelWarning = !!modelInfo && ['fallback', 'error', 'unavailable'].includes(modelInfo.status || '');
 
   return (
     <aside className="left-panel">
-      {/* Sleek Minimal Header */}
       <header className="header-bar">
         <div className="brand-badge">
-          <div className="brand-icon mascot">
-            <MascotAvatar size={32} fallback={<Compass size={18} />} />
-          </div>
-          <div>
-            <h1 className="brand-title">HDB-Compass</h1>
-            <p className="brand-subtitle">AI Decision Support for Singapore Housing</p>
-          </div>
+          <BrandMark size={28} />
+          <h1 className="brand-title">HDB-Compass</h1>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div className={`status-pill ${wsConnected ? 'connected' : 'disconnected'}`}>
-            <span className="status-dot" />
-            <span className="status-text">{wsConnected ? 'Live' : 'Connecting'}</span>
-          </div>
-
-          <button
-            onClick={onClear}
-            className="clear-btn"
-            title="Reset Conversation"
-          >
-            <RotateCcw size={12} />
-            <span>Clear</span>
+        <div className="header-actions">
+          <span
+            className={`status-dot ${wsConnected ? 'connected' : 'disconnected'}`}
+            role="status"
+            aria-label={wsConnected ? 'Connected' : 'Connecting'}
+            title={wsConnected ? 'Connected' : 'Connecting…'}
+          />
+          <button onClick={onClear} className="clear-btn" title="New chat" aria-label="New chat">
+            <SquarePen size={16} />
           </button>
         </div>
       </header>
 
-      {/* Conversational Chat Thread */}
-      <div role="status" style={{ padding: '8px 20px', fontSize: 12, color: '#94a3b8', borderBottom: '1px solid rgba(148,163,184,0.15)' }}>
-        {!modelInfo ? 'Reading model configuration…' : modelInfo.status === 'fallback'
-          ? `Model fallback: ${modelInfo.message}`
-          : modelInfo.mode === 'deterministic'
-            ? 'Rule-based mode — no language model. Use explicit search criteria.'
-            : modelInfo.status === 'error' || modelInfo.status === 'unavailable'
-              ? `Model unavailable: ${modelInfo.message}`
-              : `Model configured: ${modelInfo.profile} / ${modelInfo.model}`}
-      </div>
       <div className="chat-container">
-        {/* Before the first question, show the mascot welcome with suggested prompts */}
+        {/* Before the first question: a greeting and suggested prompts */}
         {messages.length === 0 && (
           <div className="welcome-hero-card">
-            <div className="welcome-mascot-stage">
-              <Mascot3D size={150} mood="wave" />
-            </div>
-            <div className="welcome-header">
-              <Sparkles size={16} color="#008F8A" />
-              <span>Explore Singapore Public Housing</span>
-            </div>
+            <h2 className="welcome-title">Where would you like to call home?</h2>
             <p className="welcome-desc">
-              Hi, I'm your HDB-Compass home guide. Search flats by budget and distance, find primary schools near an
-              address, see what is near a block, or check resale prices and market trends. Distances are approximate
-              straight-line estimates, not official MOE registration distances.
+              Search flats by budget and distance, find schools near an address, or check resale prices and trends.
             </p>
             <div className="welcome-prompts-grid">
-              <button
-                className="welcome-prompt-card"
-                onClick={() => handleQuickPrompt('Find 4-room flats in Bishan under $950k within 1km of Ai Tong School')}
-              >
-                <div className="prompt-card-icon school">
-                  <School size={14} />
-                </div>
-                <div className="prompt-card-text">
-                  <span className="prompt-title">Ai Tong School</span>
-                  <span className="prompt-subtitle">Bishan 4-Room &lt; $950k · ~1km straight-line</span>
-                </div>
-              </button>
-
-              <button
-                className="welcome-prompt-card"
-                onClick={() => handleQuickPrompt('Find 4-room flats in Bishan under $950k within 1km of Catholic High School')}
-              >
-                <div className="prompt-card-icon school">
-                  <School size={14} />
-                </div>
-                <div className="prompt-card-text">
-                  <span className="prompt-title">Catholic High School</span>
-                  <span className="prompt-subtitle">Bishan 4-Room &lt; $950k · ~1km straight-line</span>
-                </div>
-              </button>
-
-              <button
-                className="welcome-prompt-card"
-                onClick={() => handleQuickPrompt('Find 4-room flats in Ang Mo Kio under $750k within 300m of an MRT')}
-              >
-                <div className="prompt-card-icon transit">
-                  <Zap size={14} />
-                </div>
-                <div className="prompt-card-text">
-                  <span className="prompt-title">Ang Mo Kio MRT</span>
-                  <span className="prompt-subtitle">4-Room &lt; $750k · 300m MRT Walk</span>
-                </div>
-              </button>
-
-              <button
-                className="welcome-prompt-card"
-                onClick={() => handleQuickPrompt('Find 4-room flats in Kallang under $800k within 500m of an MRT and hawker')}
-              >
-                <div className="prompt-card-icon location">
-                  <Building size={14} />
-                </div>
-                <div className="prompt-card-text">
-                  <span className="prompt-title">Kallang / Whampoa</span>
-                  <span className="prompt-subtitle">4-Room &lt; $800k · 500m MRT &amp; Hawker</span>
-                </div>
-              </button>
-
-              <button
-                className="welcome-prompt-card"
-                onClick={() => handleQuickPrompt('Which primary schools are near Blk 147 Bishan Street 11?')}
-              >
-                <div className="prompt-card-icon location">
-                  <MapPin size={14} />
-                </div>
-                <div className="prompt-card-text">
-                  <span className="prompt-title">Schools near an address</span>
-                  <span className="prompt-subtitle">Blk 147 Bishan St 11 · within 2km</span>
-                </div>
-              </button>
-
-              <button
-                className="welcome-prompt-card"
-                onClick={() => handleQuickPrompt('How is the HDB resale market doing now?')}
-              >
-                <div className="prompt-card-icon transit">
-                  <Compass size={14} />
-                </div>
-                <div className="prompt-card-text">
-                  <span className="prompt-title">Resale market now</span>
-                  <span className="prompt-subtitle">Latest medians &amp; recent change</span>
-                </div>
-              </button>
+              {SUGGESTIONS.map(({ icon: Icon, title, subtitle, query }) => (
+                <button key={title} className="welcome-prompt-card" onClick={() => handleQuickPrompt(query)}>
+                  <Icon size={15} className="prompt-card-icon" />
+                  <span className="prompt-card-text">
+                    <span className="prompt-title">{title}</span>
+                    <span className="prompt-subtitle">{subtitle}</span>
+                  </span>
+                </button>
+              ))}
             </div>
           </div>
         )}
@@ -269,35 +209,20 @@ export const AgentChat: React.FC<AgentChatProps> = ({
         {messages.map((msg) => (
           <div key={msg.id} className={`chat-message-row ${msg.sender}`}>
             {msg.sender === 'user' ? (
-              <div className="user-message-bubble">
+              <div className="user-message-bubble" title={msg.timestamp}>
                 <p className="message-text">{msg.text}</p>
-                <span className="message-time">{msg.timestamp}</span>
               </div>
             ) : (
               <div className="agent-message-card">
-                {/* Agent Header */}
-                <div className="agent-card-header">
-                  <div className="agent-avatar mascot">
-                    <MascotAvatar size={24} fallback={<Compass size={14} color="#008F8A" />} />
+                {/* While no answer has arrived, a shimmering line names the current step */}
+                {msg.status === 'running' && !msg.structuredData ? (
+                  <div className="agent-running-banner" role="status">
+                    <span className="thinking-orb" />
+                    <span className="thinking-text">
+                      {msg.stepLogs?.length ? msg.stepLogs[msg.stepLogs.length - 1].title : 'Thinking'}
+                    </span>
                   </div>
-                  <div className="agent-title-group">
-                    <span className="agent-name">HDB-Compass Assistant</span>
-                    <span className="agent-role-tag">Multi-Agent AI</span>
-                  </div>
-                  <span className="message-time" style={{ marginLeft: 'auto' }}>
-                    {msg.timestamp}
-                  </span>
-                </div>
-
-                {/* Loading indicator */}
-                {msg.status === 'running' && (
-                  <div className="agent-running-banner">
-                    <Mascot3D size={40} mood="thinking" framing="portrait" />
-                    <span>Querying SVY21 spatial index and government APIs...</span>
-                  </div>
-                )}
-
-                {/* Formatted Content */}
+                ) : (
                 <div className="agent-card-body">
                   <div className="agent-summary-text">
                     <ReactMarkdown
@@ -340,10 +265,12 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                     <div className="candidate-blocks-section">
                       <div className="section-title-bar">
                         <span className="section-title">
-                          <CheckCircle2 size={13} color="#008F8A" />
-                          Matching HDB Resale Blocks ({msg.structuredData.total_blocks_found || msg.structuredData.qualifying_blocks.length}):
+                          Matching blocks
+                          <span className="section-count">
+                            {msg.structuredData.total_blocks_found || msg.structuredData.qualifying_blocks.length}
+                          </span>
                         </span>
-                        <span className="section-subtext">Click any pin on map</span>
+                        <span className="section-subtext">Tap a card to find it on the map</span>
                       </div>
 
                       <div className="candidate-cards-grid">
@@ -383,7 +310,25 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                             >
                               <div className="block-pill-header">
                                 <span className="block-code" title={cleanName}>{cleanName}</span>
-                                {dist && <span className="block-distance-badge">{dist}</span>}
+                                <button type="button" className={`card-star${saved ? ' saved' : ''}`}
+                                  aria-pressed={saved} aria-label={saved ? `Remove ${blockName} from shortlist` : `Add ${blockName} to shortlist`}
+                                  title={saved ? 'Remove from shortlist' : 'Add to shortlist'}
+                                  onClick={(e) => { e.stopPropagation(); shortlist.toggle({ block: blockName, flat_type: flatType }); }}>
+                                  <Star size={14} fill={saved ? 'currentColor' : 'none'} />
+                                </button>
+                              </div>
+                              <div className="block-meta">
+                                {dist ? (
+                                  <>
+                                    <Clock size={11} />
+                                    {/* straight-line metres at ~80 m a minute; not a routed walk */}
+                                    <span>{dist} · ~{Math.max(1, Math.round(parseFloat(dist) / 80))} min walk</span>
+                                  </>
+                                ) : priceInfo ? (
+                                  <span>{priceInfo}{leaseInfo ? ` · ${leaseInfo} lease` : ''}</span>
+                                ) : (
+                                  <span>HDB resale flat</span>
+                                )}
                               </div>
                               <div className="card-actions">
                                 <button type="button" className="card-action" disabled={agentStatus !== 'READY'}
@@ -394,25 +339,6 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                                   onClick={(e) => { e.stopPropagation(); handleQuickPrompt(`Can we afford a ${flatType} at ${blockName}?`); }}>
                                   Afford?
                                 </button>
-                                <button type="button" className={`card-action card-star${saved ? ' saved' : ''}`}
-                                  aria-pressed={saved} aria-label={saved ? `Remove ${blockName} from shortlist` : `Add ${blockName} to shortlist`}
-                                  title={saved ? 'Remove from shortlist' : 'Add to shortlist'}
-                                  onClick={(e) => { e.stopPropagation(); shortlist.toggle({ block: blockName, flat_type: flatType }); }}>
-                                  {saved ? '\u2605' : '\u2606'}
-                                </button>
-                              </div>
-                              <div className="block-meta">
-                                {dist ? (
-                                  <>
-                                    <Clock size={10} color="#6E8F8C" />
-                                    {/* straight-line metres at ~80 m a minute; not a routed walk */}
-                                    <span>~{Math.max(1, Math.round(parseFloat(dist) / 80))} min walk (straight-line)</span>
-                                  </>
-                                ) : priceInfo ? (
-                                  <span>{priceInfo}{leaseInfo ? ` • ${leaseInfo} lease` : ''}</span>
-                                ) : (
-                                  <span>HDB Resale Flat</span>
-                                )}
                               </div>
                             </div>
                           );
@@ -424,48 +350,39 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                   {/* Nearest Transit & Amenities Pill */}
                   {msg.structuredData?.nearby_amenities && msg.structuredData.nearby_amenities.length > 0 && (
                     <div className="amenities-summary-badge">
-                      <Zap size={12} color="#F36550" />
+                      <Zap size={12} />
                       <span>
-                        Nearest Transit: <strong>{msg.structuredData.nearby_amenities[0].name}</strong> at{' '}
-                        <strong>{msg.structuredData.nearby_amenities[0].distance_meters?.toFixed(0)}m</strong>
+                        Nearest transit: <strong>{msg.structuredData.nearby_amenities[0].name}</strong> ·{' '}
+                        <strong>{msg.structuredData.nearby_amenities[0].distance_meters?.toFixed(0)} m</strong>
                       </span>
                     </div>
                   )}
-
-                  {/* Collapsible Execution Trace */}
-                  {msg.stepLogs && msg.stepLogs.length > 0 && (
-                    <div className="trace-accordion">
-                      <button
-                        className="trace-toggle-btn"
-                        onClick={() => toggleTrace(msg.id)}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <Terminal size={12} color="#6E8F8C" />
-                          <span>View Execution Steps ({msg.stepLogs.length})</span>
-                        </div>
-                        {expandedTraceIds[msg.id] ? (
-                          <ChevronDown size={14} />
-                        ) : (
-                          <ChevronRight size={14} />
-                        )}
-                      </button>
-
-                      {expandedTraceIds[msg.id] && (
-                        <div className="trace-content-box">
-                          {msg.stepLogs.map((log) => (
-                            <div key={log.id} className="trace-item">
-                              <div className="trace-item-header">
-                                <span className="trace-title">{log.title}</span>
-                                <span className="trace-timestamp">{log.timestamp}</span>
-                              </div>
-                              <p className="trace-detail">{log.detail}</p>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
+                )}
+
+                {/* Collapsible execution trace */}
+                {msg.stepLogs && msg.stepLogs.length > 0 && (
+                  <div className="trace-accordion">
+                    <button className="trace-toggle-btn" onClick={() => toggleTrace(msg.id)} aria-expanded={!!expandedTraceIds[msg.id]}>
+                      <span>{msg.stepLogs.length} {msg.stepLogs.length === 1 ? 'step' : 'steps'}</span>
+                      {expandedTraceIds[msg.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    </button>
+
+                    {expandedTraceIds[msg.id] && (
+                      <div className="trace-content-box">
+                        {msg.stepLogs.map((log) => (
+                          <div key={log.id} className="trace-item">
+                            <div className="trace-item-header">
+                              <span className="trace-title">{log.title}</span>
+                              <span className="trace-timestamp">{log.timestamp}</span>
+                            </div>
+                            <p className="trace-detail">{log.detail}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -473,8 +390,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({
         <div ref={chatEndRef} />
       </div>
 
-      {/* Composer, after Grok's: one floating pill with a helper button on the left and a round send button on the
-          right. Only controls that work here: no mic or model picker. */}
+      {/* Composer, after ChatGPT's: one floating pill with a helper button on the left and a round send button on the
+          right, and a one-line note underneath. Only controls that work here: no mic or model picker. */}
       <footer className="chat-input-bar">
         {showPinHint && (
           <div className="composer-hint" role="status">
@@ -502,7 +419,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
             ref={inputRef}
             rows={1}
             className="composer-input"
-            placeholder={wsConnected ? 'Ask anything about HDB flats…' : 'Connecting to HDB-Compass…'}
+            placeholder={wsConnected ? 'Ask anything about HDB flats' : 'Connecting to HDB-Compass…'}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={(e) => {
@@ -525,6 +442,9 @@ export const AgentChat: React.FC<AgentChatProps> = ({
             {busy ? <span className="composer-spinner" /> : <ArrowUp size={18} strokeWidth={2.4} />}
           </button>
         </form>
+        <p className={`composer-footnote${modelWarning ? ' warn' : ''}`} role="status">
+          {modelLine} · Distances are straight-line estimates.
+        </p>
       </footer>
     </aside>
   );
