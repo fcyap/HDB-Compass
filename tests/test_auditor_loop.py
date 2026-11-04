@@ -90,3 +90,36 @@ def test_without_sentences_removes_only_the_models_text():
     draft = "Code answer. " + BAD + "\n\n**4 candidate block(s)** match."
     out = g._without_sentences(draft, BAD)
     assert BAD not in out and out.startswith("Code answer.") and "candidate block(s)" in out
+
+
+# ------------------------------------------------- arch90: the judge rejected true ranking claims
+def _blocks():
+    return [
+        {"block": "774", "street": "PASIR RIS ST 71", "median_resale_price": 538888.0, "median_remaining_lease_years": 68.9,
+         "distances": {"school_dist_m": 237.0, "mrt_dist_m": 900.0}},
+        {"block": "760", "street": "PASIR RIS ST 71", "median_resale_price": 600000.0, "median_remaining_lease_years": 69.0,
+         "distances": {"school_dist_m": 181.0, "mrt_dist_m": 650.0}},
+        {"block": "637", "street": "PASIR RIS DR 1", "median_resale_price": 591500.0, "median_remaining_lease_years": 68.0,
+         "distances": {"school_dist_m": 635.0, "mrt_dist_m": 650.0}},
+    ]
+
+
+def test_ranking_facts_names_the_winner_of_each_comparison():
+    from agents import guardrails as g
+    text = g.ranking_facts({"candidate_blocks_intersection": _blocks()})
+    assert "cheapest median price: Blk 774 PASIR RIS ST 71 ($538,888)" in text
+    assert "most remaining lease: Blk 760 PASIR RIS ST 71 (69.0 years)" in text
+    assert "nearest school: Blk 760 PASIR RIS ST 71 (181 m)" in text
+    assert "nearest MRT: Blk 760 PASIR RIS ST 71, Blk 637 PASIR RIS DR 1 (650 m)" in text   # a tie lists both
+
+
+def test_ranking_facts_is_empty_for_one_block_or_none():
+    from agents import guardrails as g
+    assert g.ranking_facts({}) == "" and g.ranking_facts({"candidate_blocks_intersection": _blocks()[:1]}) == ""
+
+
+def test_the_judge_reads_the_rankings_first_and_is_told_to_compare_the_numbers():
+    from agents import guardrails as g
+    data = g._judge_data({"candidate_blocks_intersection": _blocks()})
+    assert data.startswith("RANKINGS")
+    assert "RANKINGS lines" in g._JUDGE_PROMPT and "compare the numbers" in g._JUDGE_PROMPT
