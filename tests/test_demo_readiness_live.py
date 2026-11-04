@@ -318,3 +318,33 @@ def test_b_coverage_check_adds_no_block_search_to_a_price_history_question(monke
     # with a stated limit the skipped block search is still added
     _, log, errors, _ = sv.run_react("market_sql", tools, "sys", q, {**c, "max_budget_sgd": 600_000})
     assert any(r["tool"] == "query_resale_blocks_by_criteria" and r["agent"] == "supervisor" for r in log)
+
+
+# ---------------------------------------------------------------------------
+# "Can we afford Blk 264 Bishan St 24?" for buyers aged 27 (user's screen, 4 Nov): 64.8 years of lease left
+# ---------------------------------------------------------------------------
+BISHAN_FACTS = ("We are both Singapore citizens. We are first-time buyers. We are aged 27 and 27. We have no children. "
+                "Our household income is $7,000 a month. Our CPF OA balance is $30,000. We have $150,000 in cash savings. "
+                "We have no monthly debt. We have both worked continuously for the past 12 months. We are not buying "
+                "near our parents. Our grant eligibility is confirmed. Our HDB loan eligibility is confirmed.")
+
+
+def test_a_short_lease_block_is_explained_once_and_clearly():
+    _, st = conversation("Can we afford Blk 264 Bishan St 24?", BISHAN_FACTS)
+    text = st["draft_response"]
+    assert text.startswith("I can't give an affordability verdict for Blk 264 BISHAN ST 24")
+    assert "is in line with the nearby median" not in text          # no verdict of the assumed price against itself
+    assert text.count("stamp duty on this price") == 1 and "Upfront funding" not in text
+    assert "more information needed" not in text and not st.get("clarification")
+    assert "\n\n**Financials:**" in text and "\n\n**Can you afford" in text
+    assert "The ceiling excludes" not in text                         # no ceiling was given
+
+
+def test_the_price_check_takes_only_a_stated_asking_price():
+    errors = []
+    held = sv.search_args("assess_resale_price", {"address": "Blk 264 Bishan St 24", "asking_price": 840444.0},
+                          {"asking_price_sgd": None}, errors, "market_sql")
+    assert held["asking_price"] is None and errors
+    kept = sv.search_args("assess_resale_price", {"address": "Blk 264 Bishan St 24", "asking_price": 800000.0},
+                          {"asking_price_sgd": 800000.0}, [], "market_sql")
+    assert kept["asking_price"] == 800000.0

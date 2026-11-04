@@ -2885,6 +2885,8 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         _add_flat_purchase(constraints)
         if not constraints.get("flat_purchase"):
             _assume_flat_basics(constraints)   # the block's own facts are unknown: the same 4-room default as any estimate
+        else:
+            _flag_short_lease(constraints)
     elif constraints.get("wants_area_affordability"):
         _add_area_purchase(constraints)
     elif constraints.get("household_income") or any((constraints.get("financial_inputs") or {}).get(sec)
@@ -3267,6 +3269,17 @@ def answer_place_question(c: Dict[str, Any], query: str, default: bool = True) -
             "Your reply did not match one of the options I offered, so this shows "
             + ("the block's past sales." if is_block else "what is near it.")])
     c[picked] = True
+
+
+def _flag_short_lease(c: Dict[str, Any]) -> None:
+    """The block's own lease ends before the youngest buyer turns 95 ("Can we afford Blk 264 Bishan St 24?": 64.8
+    years left, buyers aged 27): the same short-lease case as a stated lease, so no fact is asked for and the
+    financial lines say why there is no estimate, instead of "more information needed — total grants"."""
+    fin = c.get("financial_inputs") or {}
+    ages = [v.get("youngest_buyer_age") for v in fin.values() if isinstance(v, dict) and v.get("youngest_buyer_age")]
+    lease = (c.get("flat_purchase") or {}).get("remaining_lease_years")
+    if ages and lease and min(ages) + float(lease) < 95:
+        c["short_lease"] = {"lease": float(lease), "age": min(ages)}
 
 
 def _add_flat_purchase(c: Dict[str, Any]) -> None:
@@ -3841,6 +3854,10 @@ def search_args(name: str, args: Dict[str, Any], c: Dict[str, Any], errors: List
         want = {"amenity_constraints": radii} if radii else {}
         if c.get("towns"):
             want["towns"] = list(c["towns"])
+    elif name == "assess_resale_price":
+        # an asking price the user stated, or none: the model passed the assumed median ("Price for Blk 264 taken as
+        # $840,444") as the asking price, and the check then said "$840,444 is in line with the median of $840,444"
+        want = {"asking_price": c.get("asking_price_sgd")}
     elif name == "verify_primary_school_distance" and c.get("school_name"):
         r = (c.get("amenity_radii_meters") or {}).get("school") or 1000
         want = {"school_name": c["school_name"], "bracket": "2km" if r >= 2000 else "1km"}
@@ -5066,6 +5083,8 @@ def template_response(state: HDBCompassState) -> str:
             if "error" in value:
                 lines.append(f"- {label}: calculation unavailable.")
                 continue
+            if name == "calculate_bsd_and_upfront_outlay" and uc.get("flat_purchase"):
+                continue   # "Can you afford Blk X?" shows the duty in its own section; listing it here showed it twice
             if value.get("status", "ok") != "ok":
                 if name == "calculate_bsd_and_upfront_outlay" and _stamp_duty_only(state) is not None:
                     # "stamp duty on $650k?": the duty needs only the price; the funding facts were not asked for
@@ -5135,7 +5154,7 @@ def template_response(state: HDBCompassState) -> str:
         lines.append(NO_DATA)
     if state.get("financial_breakdown") or passages:
         lines.append(HFE_DISCLAIMER)
-    return "\n".join(lines)
+    return "\n".join(_with_section_breaks(lines))
 
 
 def _duty_price_basis(state: HDBCompassState) -> str:
@@ -5189,6 +5208,21 @@ def area_affordability_lines(state: HDBCompassState) -> List[str]:
     return out
 
 
+def _with_section_breaks(lines: List[str]) -> List[str]:
+    """A blank line before a section title ("**Financials:**") or a note ("_Assumption: …_") that follows a list item:
+    in Markdown it otherwise joins that item, and the screen showed "…not an HDB valuation. Assumption: … Financials:"
+    run together on one line."""
+    out: List[str] = []
+    for line in lines:
+        title = line.startswith("**")
+        note = line.startswith("_")
+        prev = out[-1] if out else ""
+        if prev.strip() and (title or (note and prev.lstrip().startswith(("- ", "* ")))):
+            out.append("")
+        out.append(line)
+    return out
+
+
 def flat_affordability_lines(state: HDBCompassState) -> List[str]:
     """'Can you afford Blk X?': the verdict, from tool results only (the block's price and its source, the affordability
     ceiling, the instalment, the grants and the stamp duty). Nothing here is computed beyond one subtraction."""
@@ -5225,7 +5259,8 @@ def flat_affordability_lines(state: HDBCompassState) -> List[str]:
         out.append(f"- Housing grants you would get: ${g['total_grants']:,.0f}.")
     if u.get("buyer_stamp_duty") is not None:
         out.append(f"- Buyer's stamp duty on this price: ${u['buyer_stamp_duty']:,.0f}.")
-    out.append("- The ceiling excludes stamp duty, legal and valuation fees, and any cash over valuation.")
+    if a.get("status", "ok") == "ok" and a.get("max_purchase_price") is not None:
+        out.append("- The ceiling excludes stamp duty, legal and valuation fees, and any cash over valuation.")
     return out
 
 
@@ -5826,6 +5861,11 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
             if duty_needs_income_question(state):
                 sentences.append("No — BSD depends only on the price (or valuation, if higher).")
             sentences.append("Here is the buyer's stamp duty.")
+        elif fin and not done and c.get("short_lease") and c.get("flat_purchase"):
+            # no figures: the opening's figure check reads "95" as a figure the facts do not state; they show the lease
+            sentences.append(f"I can't give an affordability verdict for {c['flat_purchase']['block']}: its remaining lease "
+                             "is too short for your ages, so HDB prorates the CPF you can use, the loan and the grants, "
+                             "which this estimate doesn't model (the details are below).")
         elif fin and not done:
             sentences.append("Your estimate could not be worked out in full; what is missing is said below.")
         sql = state.get("sql_market_results") or {}
