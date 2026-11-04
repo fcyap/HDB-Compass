@@ -2037,6 +2037,9 @@ def read_constraints_with_model(llm: Any, messages: List[Any],
     return None, notes
 
 
+_BACK_REFERENCE = re.compile(r"\b(?:those|these|that|them|it|there|same)\b", re.I)
+
+
 def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
     query = last_user_query(state)
     pending = state.get("pending_clarification")
@@ -2046,9 +2049,16 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
         c["requested_tools"] = requested_tools(query)
         c["extraction_source"] = "regex"
         return {"user_constraints": c, "errors": []}
-    if state.get("fast_path") and not pending:
+    prior_c = state.get("prior_constraints") or {}
+    # a back-reference ("How have those prices changed?") after a statistics answer is read with the earlier turns; after
+    # a block search it is not (the carried limits would turn a trend question into an empty search: STATS-05)
+    if state.get("fast_path") and not pending and not (
+            _BACK_REFERENCE.search(query)
+            and any(prior_c.get(k) for k in ("wants_group_stats", "wants_area_statistics", "wants_price_trend"))):
         # App mode: when code alone pins down every tool a self-contained question needs, a model round trip adds
-        # latency but no information. Read from this message only; a reply to an open question never takes this path.
+        # latency but no information. Read from this message only; a reply to an open question never takes this path,
+        # nor does a message pointing back at an earlier turn: "How have those prices changed over three years?" after
+        # "What are resale prices within 300m of Novena MRT?" was read alone, as an island-wide snapshot (SPAT-48).
         fast = _finalize_constraints(rule_based_extract(query).model_dump(), query, state, [], from_model=False,
                                      with_history=False)
         if ri.answerable_without_model(fast, query):
@@ -2191,6 +2201,11 @@ _BARE_DISTANCE = re.compile(r"^\W*(?:(?:what|how) about|try|make it|change (?:it
                             r"ok(?:ay)?|and|then|or|only|just)?\s*"
                             r"(?:within|under|less than|below|<|up to)?\s*(\d+(?:\.\d+)?)\s*(km|m|metres?|meters?)\b"
                             r"(?:\s+(?:instead|then|only|radius|away))?(?:\W*(?:please|pls|thanks|thank you))?\W*$", re.I)
+# a new radius for the last place's question, as an area: "Use a 1km area instead." after "Show the price distribution
+# for 4-room within 500m of Blk 510 Bedok North St 3." (SPAT-50: it fell back to a town-wide block shortlist)
+_AREA_RADIUS = re.compile(r"^\W*(?:(?:use|try|make it|change (?:it )?to|what about|how about|and|ok(?:ay)?|then)\s+)?"
+                          r"(?:a|an|the)?\s*(?:within|radius of|up to)?\s*(\d+(?:\.\d+)?)\s*(km|m|metres?|meters?)\b"
+                          r"(?:\s+(?:area|radius|circle))?(?:\s+(?:instead|then|only|away))?\W*$", re.I)
 _SHORT_FOLLOWUP = re.compile(r"^\W*(?:(?:and|so|ok(?:ay)?|then)\W+)?(?:what|how) about\b|^\W*and (?:for|if|what|with)\b"
                              r"|^\W*(?:what|how) if\b|^\W*same (?:for|with)\b|^\W*(?:and|also) (?:the )?\w+\s*(?:flats?)?\s*\?*\s*$", re.I)
 _REFINE_WORDS = re.compile(r"\b(?:cheap\w*|expensive|nicer|better|bigger|smaller|larger|closer|nearer|further|more|less|"
@@ -2381,8 +2396,8 @@ def refine_search(carried: Dict[str, Any], fresh: Dict[str, Any], query: str) ->
 
 def _pin_radius_followup(c: Dict[str, Any], query: str, prior: Dict[str, Any], fresh: Dict[str, Any]) -> None:
     """"within 1km" after "What's near here?" on a map pin: the same pin and question, with that radius. The same for
-    a school lookup around an address and for a nearby answer about one place."""
-    m = _BARE_DISTANCE.search(query)
+    a school lookup around an address, for a nearby answer about one place and for area statistics around a place."""
+    m = _BARE_DISTANCE.search(query) or _AREA_RADIUS.search(query)
     dist = int(float(m.group(1)) * (1000 if m.group(2).lower() == "km" else 1)) if m else None
     if dist and prior.get("nearby_schools") and not (fresh.get("addresses") or fresh.get("towns") or fresh.get("nearby_schools")):
         # "Only within 1km, please." after "Which primary schools are within 2km of Blk 510 Bedok North St 3?": the
@@ -2390,10 +2405,22 @@ def _pin_radius_followup(c: Dict[str, Any], query: str, prior: Dict[str, Any], f
         c["nearby_schools"] = {**prior["nearby_schools"], "radius_meters": float(dist)}
         c["clarifications"] = []
         return
+    new_towns = set(fresh.get("towns") or []) - set(prior.get("towns") or [])
+    if dist and prior.get("wants_area_statistics") and prior.get("addresses") and not (
+            fresh.get("addresses") or fresh.get("map_pin") or new_towns):
+        # "Use a 1km area instead." after "Show the price distribution for 4-room within 500m of Blk 510 Bedok North St
+        # 3.": the same place and question over 1 km, not the town's block shortlist (SPAT-50)
+        c["addresses"] = list(prior["addresses"])
+        for k in ("wants_area_statistics", "wants_nearby_amenities", "wants_price_trend", "wants_block_history"):
+            if prior.get(k):
+                c[k] = True
+        c.update(area_radius_meters=dist, amenity_radii_meters={}, analysis_mode=False)
+        c["assumptions"] = [a for a in c.get("assumptions") or [] if a != UNCHANGED_NOTE]
+        return
     radii = {k: v for k, v in (fresh.get("amenity_radii_meters") or {}).items() if k != "school"}
     if prior.get("wants_nearby_amenities") and len(prior.get("addresses") or []) == 1 and (radii or dist) and not (
             fresh.get("flat_types") or fresh.get("max_budget_sgd") or fresh.get("addresses") or fresh.get("map_pin")
-            or set(fresh.get("towns") or []) - set(prior.get("towns") or [])):
+            or new_towns):
         # "Which hawker centres are within 700m?" after "Where is Blk 288B Jurong East St 21?": what is near that block
         # within 700 m, not a block search for blocks within 700 m of a hawker centre (SPAT-36: it searched the Central
         # Area, read from "centres are", and opened with "No block meets every limit")
@@ -2566,6 +2593,62 @@ def policy_followup(query: str, prior: Dict[str, Any], c: Dict[str, Any], fresh:
     return bool(_FOLLOW_REF.search(query)) or not decide_routing({**c, "analysis_mode": False})
 
 
+# The grouped-statistics analysis a follow-up keeps (research_intents.extract_group_stats fills these). They are turn-only
+# keys, so without this a follow-up lost the analysis: "And for 5-room instead?" after "Which towns have the lowest
+# median price for a 4-room resale over the last year?" asked "Which town?" (SEM-04), "Now use 5-room sales." after a
+# distance-band question got a town ranking (SPAT-42), "Limit it to Tampines." after a storey-since-2020 question got a
+# block shortlist (SPAT-45).
+STATS_CARRY_KEYS = ("wants_group_stats", "stats_group_by", "stats_near", "stats_distance_m", "stats_bands", "stats_trend",
+                    "stats_lookback_years", "stats_since_year", "stats_sort", "stats_order", "stats_listings",
+                    "stats_min_sales")
+_STATS_ASC = re.compile(r"\bcheap\w*\s+(?:to|first)\b|\blow(?:est)?\s+to\s+high\w*\b|\bascending\b|\bincreasing\b", re.I)
+_STATS_DESC = re.compile(r"\b(?:expensive|highest|priciest|dearest)\s+(?:to|first)\b|\bhigh(?:est)?\s+to\s+low\w*\b"
+                         r"|\bdescending\b|\bdecreasing\b", re.I)
+_STATS_MIN_SALES = re.compile(r"\b(?:at least|min(?:imum)?(?: of)?|>=?)\s*(\d{1,4})\s+(?:sales|transactions)\b"
+                              r"|\b(\d{1,4})\+\s+(?:sales|transactions)\b", re.I)
+_STATS_YEARS = re.compile(r"(?:last|past|over|previous)\s+(\d{1,2}|two|three|four|five|ten)\s+years?", re.I)
+
+
+def _carry_analysis(c: Dict[str, Any], prior: Dict[str, Any], fresh: Dict[str, Any], query: str) -> bool:
+    """A short follow-up to a grouped-statistics answer keeps that analysis, changing only what the message states: a
+    flat type or town (through the merge), the order ("Sort from cheapest to most expensive.", SPAT-46: it stayed
+    descending and switched per-sqm to total price), a minimum group size ("Only groups with at least 20 sales.") or
+    the period ("over three years"). c: the merged constraints; fresh: this message's own reading. Whether the message
+    asks a statistics question of its own is code's reading (rule_based_extract), not the model's: a live model that
+    reads "And for 5-room instead?" as a market snapshot must not end the analysis. Returns whether it was carried."""
+    if not prior.get("wants_group_stats") or len(query.split()) > 12 or _NEW_SEARCH.search(query):
+        return False                    # "find 4-room flats in Tampines" after a statistics answer is a new search
+    own = rule_based_extract(query).model_dump()
+    if own.get("wants_group_stats") or own.get("wants_data_catalog"):
+        return False                    # its own statistics question, read afresh
+    if any(v for k, v in own.items() if k.startswith("wants_") and k != "wants_price_trend"):
+        return False                    # another question ("Is Blk 510 fairly priced?"); "how have those changed" is not
+    if any(fresh.get(k) for k in ("addresses", "map_pin", "policy_question", "max_budget_sgd", "min_remaining_lease_years",
+                                  "school_name", "work_destinations")) or any(stated_financial_inputs(query).values()):
+        return False
+    for k in STATS_CARRY_KEYS:
+        c[k] = prior.get(k)
+    if _STATS_ASC.search(query):
+        c["stats_order"] = "asc"        # the same measure (per sqm stays per sqm), the other way round
+        c["stats_sort"] = c.get("stats_sort") or "median_price"
+    elif _STATS_DESC.search(query):
+        c["stats_order"] = "desc"
+        c["stats_sort"] = c.get("stats_sort") or "median_price"
+    m = _STATS_MIN_SALES.search(query)
+    if m:
+        c["stats_min_sales"] = min(max(int(m.group(1) or m.group(2)), 1), 1000)   # the tool's own range
+    m = _STATS_YEARS.search(query)
+    if m:
+        years = int({**NUMBER_WORDS, "ten": "10"}.get(m.group(1).lower(), m.group(1)))
+        c["stats_lookback_years"], c["stats_trend"], c["stats_since_year"] = min(max(years, 1), 10), True, None
+    for k in ("wants_price_trend", "wants_market_snapshot", "wants_town_ranking", "analysis_mode"):
+        c[k] = False
+    c["trend_years"] = None
+    c["clarifications"] = [q for q in c.get("clarifications") or [] if q != WHICH_TOWN]
+    c["assumptions"] = [a for a in c.get("assumptions") or [] if a != UNCHANGED_NOTE]
+    return True
+
+
 def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCompassState, errors: List[str],
                           from_model: bool, with_history: bool = True, model_policy: bool = True) -> Dict[str, Any]:
     """Everything code does to a reading, whichever path produced it (model, regex fallback or the app's fast path),
@@ -2651,6 +2734,7 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     # search resale blocks. If old towns, budgets or amenity limits are carried into it, the market/spatial agents
     # can produce thousands of unrelated candidate flats alongside the policy answer.
     fresh_constraints = dict(constraints)
+    analysis_carried = False
     if prior:
         # A new question does not inherit the last one's one-off asks (block history, a snapshot, a clarifying
         # question); a reply to an open question keeps them, since it completes that request.
@@ -2659,6 +2743,10 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         if not pending:
             carried = refine_search(carried, constraints, query)
         constraints = merge_constraints(carried, constraints)
+        if not pending:
+            # a minimum group size belongs to the analysis it was set for: kept only when _carry_analysis keeps that
+            constraints.pop("stats_min_sales", None)
+            analysis_carried = _carry_analysis(constraints, prior, fresh_constraints, query)
         if not pending and prior.get("policy_question") and _SHORT_FOLLOWUP.search(query) \
                 and (len(str(constraints.get("policy_question") or "").split()) <= 3 or not policy_wording(query)) \
                 and not any(fresh_constraints.get(k) for k in SEARCH_KEYS):
@@ -2681,11 +2769,13 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
                                state.get("prior_block_facts") or [])
         _pin_radius_followup(constraints, query, prior, fresh_constraints)
     # "the same search as before" only when it is: checked after the follow-up readings above, which may have read the
-    # message as a question about a listed block or a new radius for the last place, and never for a conditional ask
+    # message as a question about a listed block, a new radius for the last place or a change to the last analysis
+    # ("Sort from cheapest to most expensive.": _carry_analysis), and never for a conditional ask
     # ("If nothing fits, show which one change would help." got the note above 5 matching blocks: SEM-17)
-    if prior and not pending and not constraints.get("clarifications") and not constraints.get("listed_pick") \
-            and not constraints.get("addresses") and not constraints.get("map_pin") and not constraints.get("nearby_schools") \
-            and not _CONDITIONAL_ASK.search(query) and _search_unchanged(prior, constraints, fresh_constraints, query):
+    if prior and not pending and not analysis_carried and not constraints.get("clarifications") \
+            and not constraints.get("listed_pick") and not constraints.get("addresses") and not constraints.get("map_pin") \
+            and not constraints.get("nearby_schools") and not _CONDITIONAL_ASK.search(query) \
+            and _search_unchanged(prior, constraints, fresh_constraints, query):
         constraints["assumptions"] = list(constraints.get("assumptions") or []) + [UNCHANGED_NOTE]
     if pending and pending.get("kind") == "school" and _DONT_KNOW.search(query) and not constraints.get("school_name"):
         # "I have not picked a school yet." in reply to "Which primary school?": the place lookup ran on "a good primary
@@ -3602,12 +3692,23 @@ def asked_for(name: str, c: Dict[str, Any], query: str = "") -> bool:
     return name in (asked if asked is not None else requested_tools(query))
 
 
+def area_statistics_only(c: Dict[str, Any]) -> bool:
+    """Resale prices around an address or pin with no budget, lease or distance limit: the area statistics answer it,
+    and the town's block search is not asked for. "Show the price distribution for 4-room within 500m of Blk 510 Bedok
+    North St 3." listed the 100 cheapest Bedok blocks first, "meeting all stated constraints" (SPAT-49; research_intents
+    .is_block_search reads "show" as a search verb). The school limit is the school lookup's, not a block filter."""
+    stated = c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or \
+        {k: v for k, v in (c.get("amenity_radii_meters") or {}).items() if k != "school"}
+    return bool(c.get("wants_area_statistics") and (c.get("addresses") or c.get("map_pin")) and not stated)
+
+
 # A Variant C specialist is offered only the tools its task needs, read from the stated constraints the same way its
 # deterministic plan reads them: a price trend only when one is asked for, the BTO comparison only when asked, the school
 # check only for a named school, the commute only for two workplaces. The map is drawn by code (build_map_payload), so
 # the map-sync tool is never offered. In the 31 Oct live run C's models called these unasked in 6-10 of 15 questions
 # each (Tool F1 0.81 vs 0.94 for A and B). Variants A and B keep their full lists.
 TASK_TOOLS = {"compute_town_price_timeseries": lambda c: bool(c.get("wants_price_trend")),
+              "query_resale_blocks_by_criteria": lambda c: not area_statistics_only(c),   # SPAT-49
               # a named launch (research_intents.known_bto_project) is an ask too, not only "BTO vs resale" wording
               "compare_bto_launch_vs_resale": lambda c: bool(c.get("wants_bto_comparison") or c.get("bto_project_name")),
               "verify_primary_school_distance": lambda c: bool(c.get("school_name")),
@@ -3672,6 +3773,10 @@ def statistics_args(args: Dict[str, Any], c: Dict[str, Any], errors: List[str], 
     """'Resale prices within 300m of an MRT' compares sales within 300 m with the rest: one band at the distance the
     user named, the bands code's own plan passes. A model that grouped by its default bands (0-200, 200-500, ...) and
     capped the distance answered a different question (A1-04, 2 Nov), so code puts the user's distance back."""
+    if c.get("stats_min_sales") and args.get("min_sales") != c["stats_min_sales"]:
+        # "Only groups with at least 20 sales.": the size the user named (_carry_analysis), not the tool's default 10
+        errors.append(f"{label}: statistics limited to groups with at least {c['stats_min_sales']} sales, as asked")
+        args = {**args, "min_sales": int(c["stats_min_sales"])}
     d = c.get("stats_distance_m")
     if not (d and "distance_band" in (args.get("group_by") or []) and not c.get("stats_bands")):
         return args
@@ -3694,7 +3799,7 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
     if agent == "market_sql":
         if c.get("comparable_resale") and asked_for("query_comparable_resale_transactions", c, query):
             plan.append(("query_comparable_resale_transactions", c["comparable_resale"]))
-        if (towns or c.get("islandwide")) and ri.is_block_search(c, query):
+        if (towns or c.get("islandwide")) and ri.is_block_search(c, query) and not area_statistics_only(c):
             plan.append(("query_resale_blocks_by_criteria", dict(
                 towns=towns, flat_types=c.get("flat_types") or ["4 ROOM"],
                 max_price=c.get("max_budget_sgd") or NO_PRICE_LIMIT, min_lease_years=c.get("min_remaining_lease_years") or 0)))
@@ -3743,6 +3848,10 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
             plan.append(("calculate_bsd_and_upfront_outlay", dict(purchase_price=price or 0.0, loan_type="hdb", total_grants=0.0)))
     elif agent == "policy_rag":
         plan.append(("retrieve_hdb_policy_knowledge", dict(query=c.get("policy_question") or query, policy_domain=None)))
+    if c.get("stats_min_sales"):
+        # "Only groups with at least 20 sales." (_carry_analysis); research_intents.stats_call_args has no such field
+        plan = [(n, {**a, "min_sales": int(c["stats_min_sales"])}) if n == "query_resale_statistics" else (n, a)
+                for n, a in plan]
     return plan
 
 
