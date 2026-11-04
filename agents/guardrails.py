@@ -241,6 +241,8 @@ _JUDGE_PROMPT = """You check an assistant's reply about Singapore HDB housing ag
 Flag only claims in the REPLY that the DATA contradicts or does not support: invented prices, distances, lease years,
 block numbers, rules or grants, a statement that a block meets a limit the data does not show, or advice that promises
 profit. Do not flag wording, general knowledge that is not a specific figure, or things the user said.
+A comparison between the listed blocks (the cheapest, the nearest MRT, the most lease left) is supported when the figures
+in DATA show it: compare the numbers, and use the RANKINGS lines when they are given. Flag it only if the figures disagree.
 Answer with JSON only: {{"passed": true|false, "ungrounded_claims": ["..."]}}
 
 DATA:
@@ -285,11 +287,44 @@ def _model_text(state: Dict[str, Any]) -> str:
     return draft.split(facts, 1)[0].strip() if facts and facts in draft else draft
 
 
+_DIST_NAMES = {"mrt_dist_m": "nearest MRT", "school_dist_m": "nearest school", "hawker_dist_m": "nearest hawker centre",
+               "supermarket_dist_m": "nearest supermarket"}
+
+
+def ranking_facts(state: Dict[str, Any]) -> str:
+    """Lines naming the cheapest block, the one with the most lease and the nearest to each amenity, worked out from the
+    candidate table. The judge model compares long lists badly, and rejected true claims such as "Blk 774 is the cheapest"
+    (arch90: every ranking claim it rejected was true); with the answer in front of it, it only has to match a block number."""
+    blocks = [b for b in (state.get("candidate_blocks_intersection") or []) if isinstance(b, dict)]
+    if len(blocks) < 2:
+        return ""
+
+    def name(b: Dict[str, Any]) -> str:
+        return f"Blk {b.get('block')} {b.get('street')}".strip()
+
+    def pick(key: str, best, label: str, fmt) -> Optional[str]:
+        pool = [(b, v) for b in blocks for v in [b.get(key) if key in b else (b.get("distances") or {}).get(key)]
+                if isinstance(v, (int, float))]
+        if len(pool) < 2:
+            return None
+        top = best(v for _, v in pool)
+        winners = [name(b) for b, v in pool if v == top]
+        return f"- {label}: {', '.join(winners)} ({fmt(top)})"
+
+    lines = [pick("median_resale_price", min, "cheapest median price", lambda v: f"${v:,.0f}"),
+             pick("median_remaining_lease_years", max, "most remaining lease", lambda v: f"{v:.1f} years")]
+    lines += [pick(k, min, label, lambda v: f"{v:,.0f} m") for k, label in _DIST_NAMES.items()]
+    lines = [x for x in lines if x]
+    return "RANKINGS (computed from the table, ties listed together):\n" + "\n".join(lines) if lines else ""
+
+
 def _judge_data(state: Dict[str, Any]) -> str:
     """The data the LLM judge reads: the facts section the user sees (short, already checked against the tool results)
     when code writes it, else the evidence JSON."""
     facts = sv.template_response(state) if sv.writes_facts_in_code(state) else ""
-    return facts or evidence_text(state)
+    data = facts or evidence_text(state)
+    ranks = ranking_facts(state)
+    return f"{ranks}\n\n{data}" if ranks else data   # first: the judge reads at most 6,000 characters of it
 
 
 def _max_retries() -> int:
