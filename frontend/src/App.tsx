@@ -34,6 +34,7 @@ export function App() {
   const wsRef = useRef<WebSocket | null>(null);
   const pendingResetRef = useRef(false);
   const currentMsgIdRef = useRef<string | null>(null);
+  const activeRequestIdRef = useRef<string | null>(null);
   // The user's last map click; sent with each question so "here" / "this block" resolve to it.
   const pinnedRef = useRef<{ lat: number; lng: number } | null>(null);
   // Radius set on the map (default 1500 m, remembered in this browser); sent with each question as radius_meters.
@@ -73,6 +74,14 @@ export function App() {
       ws.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
+
+          // PLAT-34: Discard incoming updates for stale or cancelled requests (e.g. after Clear or superseded queries)
+          if (payload.request_id && payload.request_id !== activeRequestIdRef.current) {
+            return;
+          }
+          if (!activeRequestIdRef.current && (payload.type === 'STEP_UPDATE' || payload.type === 'AGENT_FINISHED' || payload.type === 'ERROR')) {
+            return;
+          }
 
           switch (payload.type) {
             case 'MODEL_STATUS':
@@ -163,6 +172,7 @@ export function App() {
 
             case 'AGENT_FINISHED':
               setAgentStatus('READY');
+              activeRequestIdRef.current = null;
               if (currentMsgIdRef.current) {
                 const finishedId = currentMsgIdRef.current;
                 setMessages((prev) =>
@@ -176,6 +186,7 @@ export function App() {
 
             case 'ERROR':
               setAgentStatus('ERROR');
+              activeRequestIdRef.current = null;
               if (currentMsgIdRef.current) {
                 const errorId = currentMsgIdRef.current;
                 setMessages((prev) =>
@@ -204,6 +215,8 @@ export function App() {
       ws.onclose = () => {
         setWsConnected(false);
         setAgentStatus('OFFLINE');
+        activeRequestIdRef.current = null;
+        currentMsgIdRef.current = null;
         reconnectTimeout = setTimeout(connectWebSocket, 2500);
       };
 
@@ -242,9 +255,11 @@ export function App() {
       timestamp: timeStr,
     };
 
-    // 2. Pending Assistant Response
+    // 2. Pending Assistant Response with Request ID
     const agentMsgId = `agent-${Date.now()}`;
+    const reqId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
     currentMsgIdRef.current = agentMsgId;
+    activeRequestIdRef.current = reqId;
 
     const pendingAgentMsg: ChatMessage = {
       id: agentMsgId,
@@ -261,6 +276,7 @@ export function App() {
     wsRef.current.send(
       JSON.stringify({
         type: 'RUN_AGENT',
+        request_id: reqId,
         query: queryText,
         radius_meters: radiusMeters,
         ...(pinnedRef.current ? { lat: pinnedRef.current.lat, lng: pinnedRef.current.lng } : {}),
@@ -286,6 +302,7 @@ export function App() {
     setClearTrigger((prev) => prev + 1);
     pinnedRef.current = null;
     currentMsgIdRef.current = null;
+    activeRequestIdRef.current = null;
     setAgentStatus('READY');
   };
 

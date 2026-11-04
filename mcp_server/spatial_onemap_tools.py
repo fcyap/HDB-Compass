@@ -62,6 +62,8 @@ def create_buffer_geojson(
     resolution: int = 64
 ) -> Dict[str, Any]:
     """Generate exact metric boundary polygon in SVY21, exported as GeoJSON (WGS84)."""
+    if radius_meters <= 0:
+        raise ValueError(f"radius_meters must be greater than 0, got {radius_meters}")
     cx, cy = wgs84_to_svy21(lat, lng)
     metric_point = Point(cx, cy)
     metric_poly = metric_point.buffer(radius_meters, quad_segs=resolution)
@@ -541,10 +543,9 @@ def resolve_destination_coords(dest_query: str) -> Tuple[str, float, float, floa
     if geo:
         return str(geo.get("building") or geo.get("name") or raw), geo["lat"], geo["lng"], geo["x"], geo["y"]
 
-    # Deterministic fallback to Raffles Place if completely unrecognised
-    lat, lng = _EMPLOYMENT_HUBS["RAFFLES PLACE"]
-    x, y = wgs84_to_svy21(lat, lng)
-    return raw or "Raffles Place", lat, lng, x, y
+    raise ValueError(
+        f"Could not resolve workplace location '{raw}'. Please specify a recognized Singapore employment hub, address, or postal code."
+    )
 
 
 def route_onemap_pt_minutes(

@@ -387,22 +387,53 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_text()
-            message = json.loads(data)
+            try:
+                message = json.loads(data)
+                if not isinstance(message, dict):
+                    raise ValueError("Message payload must be a JSON object")
+            except Exception as e:
+                print(f"[WebSocket] Malformed payload received: {e}")
+                await send_clean(websocket, {
+                    "type": "ERROR",
+                    "error": "Malformed WebSocket message: invalid JSON or unexpected payload structure."
+                })
+                continue
+
+            req_id = message.get("request_id")
+
             if message.get("reset"):
                 previous = None
                 remember(session_id, None)
                 continue
             # Identifiers (NRIC, phone, card, bank account...) are removed here, before the graph, the remembered session,
             # the chat log or a trace can see them (agents/sanitizer.py)
-            query_text, _redacted = sanitize_text(message.get("query", "").strip())
+            raw_query = message.get("query")
+            query_text, _redacted = sanitize_text(raw_query.strip()) if isinstance(raw_query, str) else ("", "")
             pinned_lat = message.get("lat")
             pinned_lng = message.get("lng")
-            radius = float(message.get("radius_meters", 500.0))
+
+            # PLAT-26: Validate radius; reject zero or negative radius values
+            raw_radius = message.get("radius_meters")
+            try:
+                radius = float(raw_radius) if raw_radius is not None else 500.0
+            except (ValueError, TypeError):
+                radius = 500.0
+
+            if radius <= 0:
+                await send_clean(websocket, {
+                    "type": "ERROR",
+                    **({"request_id": req_id} if req_id else {}),
+                    "error": "Search radius must be greater than 0 meters."
+                })
+                continue
 
             if not query_text and pinned_lat is None:
                 continue
 
-            await send_clean(websocket, {"type": "AGENT_STARTED"})
+            await send_clean(websocket, {
+                "type": "AGENT_STARTED",
+                **({"request_id": req_id} if req_id else {})
+            })
 
             try:
                 # -------------------------------------------------------------
@@ -410,9 +441,17 @@ async def websocket_endpoint(websocket: WebSocket):
                 # -------------------------------------------------------------
                 if query_text:
                     model_info = await asyncio.to_thread(model_status)
-                    await send_clean(websocket, {"type": "MODEL_STATUS", **model_info})
+                    await send_clean(websocket, {
+                        "type": "MODEL_STATUS",
+                        **({"request_id": req_id} if req_id else {}),
+                        **model_info
+                    })
                     if model_info["status"] == "error":
-                        await send_clean(websocket, {"type": "ERROR", "error": model_info["message"]})
+                        await send_clean(websocket, {
+                            "type": "ERROR",
+                            **({"request_id": req_id} if req_id else {}),
+                            "error": model_info["message"]
+                        })
                         continue
                     map_state = {}
                     if pinned_lat is not None and pinned_lng is not None:
@@ -461,7 +500,9 @@ async def websocket_endpoint(websocket: WebSocket):
                                 for error in node_errors
                             ):
                                 await send_clean(websocket, {
-                                    "type": "MODEL_STATUS", **model_info,
+                                    "type": "MODEL_STATUS",
+                                    **({"request_id": req_id} if req_id else {}),
+                                    **model_info,
                                     "status": "fallback",
                                     "message": "A model step failed or produced no valid tool call; rule-based processing was used for part of this answer.",
                                 })
@@ -529,7 +570,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                     current_markers = mp["markers"]
                                 if mp.get("viewport"):
                                     current_viewport = mp["viewport"]
-                                current_summary = node_output.get("draft_response")
+                                # PLAT-32: Draft answer is not sent until runtime auditor approves it and finalize executes.
                                 if mp.get("candidate_blocks") and not current_qualifying:
                                     # Try to preserve distances from markers if available
                                     marker_dists = {}
@@ -576,10 +617,13 @@ async def websocket_endpoint(websocket: WebSocket):
                                 msgs = node_output.get("messages", [])
                                 if msgs:
                                     current_summary = msgs[-1].get("content", current_summary)
+                                elif final_state and final_state.get("draft_response"):
+                                    current_summary = final_state.get("draft_response")
                                 step_desc = "Multi-agent decision support results finalized."
 
                             await send_clean(websocket, {
                                 "type": "STEP_UPDATE",
+                                **({"request_id": req_id} if req_id else {}),
                                 "node": node_name,
                                 "geojson_buffer": current_buffer,
                                 "geojson_amenities": current_markers,
@@ -630,6 +674,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                             await send_clean(websocket, {
                                 "type": "STEP_UPDATE",
+                                **({"request_id": req_id} if req_id else {}),
                                 "node": node_name,
                                 "geojson_buffer": node_output.get("geojson_buffer"),
                                 "geojson_amenities": node_output.get("geojson_amenities"),
@@ -641,12 +686,16 @@ async def websocket_endpoint(websocket: WebSocket):
                             })
                             await asyncio.sleep(0.05)
 
-                await send_clean(websocket, {"type": "AGENT_FINISHED"})
+                await send_clean(websocket, {
+                    "type": "AGENT_FINISHED",
+                    **({"request_id": req_id} if req_id else {})
+                })
 
             except Exception as e:
                 print(f"[WebSocket] Execution error: {e}")
                 await send_clean(websocket, {
                     "type": "ERROR",
+                    **({"request_id": req_id} if req_id else {}),
                     "error": safe_error_message(e)   # the real error stays in the server log above
                 })
 

@@ -118,5 +118,17 @@ def test_dual_transit_commute_depends_on_work_destinations():
     assert by_blk_cw["450C"]["commute_to_dest_b_mins"] != by_blk_east["450C"]["commute_to_dest_b_mins"]
 
 
+def test_unknown_workplace_raises_error_not_silent_fallback():
+    """An unknown workplace location must raise ValueError instead of silently defaulting to Raffles Place (QA)."""
+    import pytest
+    with pytest.raises(ValueError, match="Could not resolve workplace location"):
+        compute_dual_transit_commute(
+            candidate_blocks=["Blk 34 TANGLIN HALT RD"],
+            work_dest_a="Completely Nonexistent Workplace 9999XYZ",
+            work_dest_b="one-north",
+            max_minutes=40
+        )
+
+
 if __name__ == "__main__":
     run_tests()
