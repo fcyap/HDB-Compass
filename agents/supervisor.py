@@ -537,6 +537,11 @@ _SCHEME_FAMILIES = {
     "quota": {"eip": r"\beip\b|\bethnic|\bracial|\brace\b", "spr": r"\bsprs?\b|\bpermanent residents?\b"},
     "grant": {"ehg": r"\behg\b|\benhanced\b", "family": r"\bfamily grant", "phg": r"\bphg\b|\bproximity\b",
               "singles": r"\bsingles grant"},
+    # a loan's interest (and the rate its affordability is assessed at) is not the Prime/Plus subsidy recovery: "Is the
+    # actual rate the same as the affordability assessment rate?" opened with "the actual rate for subsidy recovery upon
+    # resale is 3% to 6%" (POLICY-06 t2, live 4 Nov)
+    "rate": {"interest": r"\binterest(?: rates?)?\b|\bassessment rates?\b|\b(?:loan|mortgage|concessionary) rates?\b",
+             "recovery": r"\bsubsidy recovery\b|\bclaw-?backs?\b|\bresale levy\b"},
 }
 
 
@@ -1823,6 +1828,31 @@ def stated_across_turns(turns: List[str], unsure: Optional[set] = None) -> Dict[
     return {sec: vals for sec, vals in out.items() if vals}
 
 
+def flat_choice_stated(field: str, value: Any, text: str) -> bool:
+    """Whether the user's words state this flat type ("4 ROOM": "4-room", "four room", "4rm", "3 or 4 room") or flat
+    category ("bto": "BTO", "build-to-order", "new flat"; "resale"), as the model read it."""
+    t = text or ""
+    for word, digit in NUMBER_WORDS.items():
+        t = re.sub(rf"\b{word}(?=[- ]?(?:room|rm)\b)", digit, t, flags=re.I)
+    v = str(value or "").strip().upper().replace("-", " ") if field == "flat_type" else str(value or "").strip().lower()
+    if field == "flat_category":
+        if v == "bto":
+            return bool(re.search(r"\bbto\b|\bbuild[- ]to[- ]order\b|\bnew (?:hdb )?flats?\b", t, re.I))
+        return bool(v) and bool(re.search(rf"\b{re.escape(v)}\b", t, re.I))
+    if v == "EXECUTIVE":
+        return bool(re.search(r"\bexec(?:utive)?\b", t, re.I))
+    if v in ("MULTI GENERATION", "MULTIGENERATION"):
+        return bool(re.search(r"\bmulti[- ]?gen|\b3[- ]?gen\b", t, re.I))
+    m = re.fullmatch(r"([1-5]) ROOM", v)
+    if not m:
+        return False
+    n = int(m.group(1))
+    if re.search(rf"\b{n}\s*[- ]?\s*(?:room|rm)s?\b", t, re.I):
+        return True
+    return any(int(lo) <= n <= int(hi) for lo, hi in   # "3 to 5 room", "4/5-room"
+               re.findall(r"\b([1-5])\s*(?:,|or|and|/|-|–|to)\s*([1-5])\s*[- ]?\s*(?:room|rm)s?\b", t, re.I))
+
+
 def trusted_financial_inputs(model: Optional[Dict[str, Any]], stated: Dict[str, Dict[str, Any]],
                              text: str = "", unsure: Optional[set] = None) -> Optional[Dict[str, Any]]:
     """The calculator facts to use: the model's reading kept only where the user's words support it
@@ -1838,6 +1868,12 @@ def trusted_financial_inputs(model: Optional[Dict[str, Any]], stated: Dict[str, 
     for sec in ("grants", "affordability"):
         for k, v in ((model or {}).get(sec) or {}).items():
             if v is None or k in flat or k in unsure:
+                continue
+            if k in ("flat_type", "flat_category") and text and not flat_choice_stated(k, v, text):
+                # a flat type or category the user never gave: the live model filled in "4 ROOM" for "We are
+                # first-timers." (CLARIFY-03 t2), so the 4-room assumption was not disclosed, and "bto" for "HDB has not
+                # confirmed our grant eligibility." (HOUSE-06 t2), so the grants were refused as a BTO case. Code's own
+                # default (a resale 4-room, disclosed: _assume_flat_basics) applies instead.
                 continue
             if k not in FACT_FIELDS or fact_is_grounded(k, v, text):
                 flat[k] = v
@@ -2153,16 +2189,24 @@ def _stamp_duty_only(state: Dict[str, Any]) -> Optional[float]:
     "that duty" counts, and so does a message that corrects the price of a duty-only question asked earlier
     ("Change price and valuation to $360,000.") or asks what that duty needs ("Do I have to give you my income just to
     calculate that duty?"): SEM-18, SEM-06 listed the whole funding checklist instead."""
+    if not asks_duty_only(state):
+        return None
+    up = (state.get("financial_breakdown") or {}).get("calculate_bsd_and_upfront_outlay") or {}
+    return up.get("buyer_stamp_duty")
+
+
+def asks_duty_only(state: Dict[str, Any]) -> bool:
+    """Whether the latest message asks for the stamp duty alone (_stamp_duty_only's reading of the words, before any
+    calculator has run)."""
     users = [m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user"]
     q = users[-1] if users else last_user_query(state)
     if _FUNDING_WORDS.search(q):
-        return None
+        return False
     if not _DUTY_WORDS.search(q):
         follows_duty = any(_DUTY_WORDS.search(u) and not _FUNDING_WORDS.search(u) for u in users[:-1])
         if not (follows_duty and (_PRICE_FIX.search(q) or (re.search(r"\bincome\b", q, re.I) and "?" in q))):
-            return None
-    up = (state.get("financial_breakdown") or {}).get("calculate_bsd_and_upfront_outlay") or {}
-    return up.get("buyer_stamp_duty")
+            return False
+    return True
 
 
 def duty_needs_income_question(state: Dict[str, Any]) -> bool:
@@ -2186,6 +2230,8 @@ _NEW_SEARCH = re.compile(r"^\W*(?:(?:can you |could you |please |pls |now |ok(?:
 _REMOVE = re.compile(r"\b(?:remove|drop|without|no|forget|ignore|skip|don'?t need|do not need|don'?t care about|any|clear)\b"
                      r"(?:\s+just)?(?:\s+(?:the|my|a|an|that|limit on|filter on|need for))?\s+"
                      r"(mrt|lrt|train|hawker|supermarket|school|commute|travel|budget|price|lease|distance)", re.I)
+_REMOVE_SCHOOL = re.compile(_REMOVE.pattern.replace(r"(mrt|lrt|train|hawker|supermarket|school|commute|travel|budget|price|lease|distance)",
+                                                    r"(school)"), re.I)
 _REMOVES = {"mrt": ("amenity_radii_meters", "mrt"), "lrt": ("amenity_radii_meters", "lrt"),
             "train": ("amenity_radii_meters", "mrt"), "hawker": ("amenity_radii_meters", "hawker"),
             "supermarket": ("amenity_radii_meters", "supermarket"), "school": ("school_name", None),
@@ -2702,6 +2748,16 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         if kind in rb_radii and "mrt" in radii and kind not in radii and "mrt" not in rb_radii:
             radii[kind] = radii.pop("mrt")
     _verify_extraction(constraints, query, errors, from_model=from_model)
+    price = ((constraints.get("financial_inputs") or {}).get("upfront") or {}).get("purchase_price")
+    if from_model and price and constraints.get("max_budget_sgd") == price \
+            and rule_based_extract(query).max_budget_sgd != price \
+            and (asks_duty_only({"messages": state.get("messages") or [{"role": "user", "content": query}]})
+                 or _PRICE_FIX.search(query)):
+        # the price of the flat the duty is worked out on is not a search budget: the live model read "Change price and
+        # valuation to $360,000." after a BSD-only question as a $360,000 budget, and the grant and affordability
+        # questionnaire came with the duty (MONEY-07/08/09/12 t2, 4 Nov)
+        constraints["max_budget_sgd"] = None
+        errors.append("extract_constraints: model's budget dropped: it is the purchase price the stamp duty is worked out on")
     _note_unchecked_places(constraints, query)
     strong_facts = any(v is not None and k not in _WEAK_FINANCIAL_FACTS
                        for vals in stated_financial_inputs(query).values() for k, v in (vals or {}).items())
@@ -2743,6 +2799,19 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         if not pending:
             carried = refine_search(carried, constraints, query)
         constraints = merge_constraints(carried, constraints)
+        if not pending and prior.get("school_name") and not names_a_school(query) and not _REMOVE_SCHOOL.search(query):
+            said_school = rule_based_extract(query).school_name
+            if (constraints.get("school_name") != prior["school_name"] or ri.SCHOOL_CLARIFICATION in (constraints.get("clarifications") or [])) \
+                    and (not said_school or ri.generic_school_phrase(said_school)):
+                # "Expand the school distance to 2km." after a search near Ai Tong School: the live model filed "school
+                # distance" as the school, and the answer said it could not tell which school (SPATIAL-01 t2, 4 Nov).
+                # A message that names no school of its own keeps the school the conversation named.
+                if constraints.get("school_name") != prior["school_name"]:
+                    errors.append(f"extract_constraints: school {constraints.get('school_name')!r} names no school; "
+                                  f"kept {prior['school_name']!r} from the earlier turn")
+                constraints["school_name"] = prior["school_name"]
+                if ri.SCHOOL_CLARIFICATION in (constraints.get("clarifications") or []):
+                    constraints["clarifications"] = [q for q in constraints["clarifications"] if q != ri.SCHOOL_CLARIFICATION]
         if not pending:
             # a minimum group size belongs to the analysis it was set for: kept only when _carry_analysis keeps that
             constraints.pop("stats_min_sales", None)
@@ -2916,6 +2985,13 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         constraints["search_stated"] = False
         if not re.search(r"\b(?:budget|afford\w*|max(?:imum)?|ceiling|grants?)\b", asked_part(query), re.I):
             constraints["money_asked"] = False
+        if constraints.get("policy_question") and not rule_based_extract(query).policy_question:
+            # code works the instalment out; a rule search on its words adds a policy block nobody asked for: the live
+            # model filed "Monthly repayment on a $500,000 loan at 2.6% for 25 years?" as a policy question, and the
+            # answer opened with an EHG income tier and listed loan rules (DEMO-11 t1), and its follow-up "What if I
+            # repay over 20 years instead?" carried it on (t2)
+            constraints["policy_question"] = None
+            errors.append("extract_constraints: policy reading dropped: an instalment question, worked out by code")
     # a question about the last answer is answered by code from what it showed (about_last_answer); the carried search
     # stays in the constraints, so the next follow-up ("within 300m") still refines it
     constraints["about_results"] = about_last_answer(query, prior) if inst is None else None
@@ -3339,6 +3415,14 @@ def _drop_unstated(c: Dict[str, Any], query: str, errors: List[str]) -> None:
     if c.get("school_name") and not any(w in query.lower() for w in words(c["school_name"])):
         dropped.append("school_name"); c["school_name"] = None
         (c.get("amenity_radii_meters") or {}).pop("school", None)
+    if c.get("flat_types"):
+        # a flat type the message does not state (CLARIFY-03 t2, live 4 Nov: "4 ROOM" for "We are first-timers.");
+        # code's reading of the message, or the earlier turns' type the merge carries, stands instead
+        # (a value that is no HDB flat type at all, "BLK 884", is _verify_extraction's to drop and report)
+        kept = [t for t in c["flat_types"] if str(t).upper() not in FLAT_TYPES or str(t).upper() in (rb.flat_types or [])
+                or flat_choice_stated("flat_type", t, query)]
+        if kept != list(c["flat_types"]):
+            dropped.append("flat_types"); c["flat_types"] = kept
     if c.get("bto_project_name") and not any(w in query.lower() for w in words(c["bto_project_name"])):
         dropped.append("bto_project_name"); c["bto_project_name"] = None
     if c.get("work_destinations"):
@@ -3777,6 +3861,19 @@ def statistics_args(args: Dict[str, Any], c: Dict[str, Any], errors: List[str], 
         # "Only groups with at least 20 sales.": the size the user named (_carry_analysis), not the tool's default 10
         errors.append(f"{label}: statistics limited to groups with at least {c['stats_min_sales']} sales, as asked")
         args = {**args, "min_sales": int(c["stats_min_sales"])}
+    # the period the user named, carried to a follow-up: "Limit it to Tampines." after "How have 4-room prices changed
+    # by storey since 2020?" was answered for the last 12 months, the model's call leaving out the start (STATS-03 t2,
+    # live 4 Nov). Code's plan passes the same (research_intents' statistics arguments).
+    if c.get("stats_since_year"):
+        start = f"{int(c['stats_since_year'])}-01"
+        if args.get("start_month") != start or args.get("lookback_years") is not None:
+            errors.append(f"{label}: statistics period held to the stated start, {start}")
+            args = {**{k: v for k, v in args.items() if k != "lookback_years"}, "start_month": start}
+    elif c.get("stats_lookback_years"):
+        years = min(max(int(c["stats_lookback_years"]), 1), 10)   # the tool's range, as code reads it
+        if args.get("lookback_years") != years or args.get("start_month") or args.get("end_month"):
+            errors.append(f"{label}: statistics period held to the stated {years} year(s)")
+            args = {**{k: v for k, v in args.items() if k not in ("start_month", "end_month")}, "lookback_years": years}
     d = c.get("stats_distance_m")
     if not (d and "distance_band" in (args.get("group_by") or []) and not c.get("stats_bands")):
         return args
@@ -4053,7 +4150,11 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
             # and the block search, distance filter or school check the plan needs: the live model answered "I could
             # not find data" for a search the code path answers (LIVE-SEARCH-01)
             core = [(n, a) for n, a in deterministic_plan(agent, c, query)
-                    if n in ("query_resale_blocks_by_criteria", "filter_blocks_by_amenity_proximity", "verify_primary_school_distance")]
+                    if n in ("query_resale_blocks_by_criteria", "filter_blocks_by_amenity_proximity", "verify_primary_school_distance")
+                    # not a town-wide block list for a question about price history that sets no limit: "Then show
+                    # historical 4-room prices in Bedok." got the 100 cheapest blocks above the trend the model fetched
+                    # (LIMIT-03 t2, live 4 Nov)
+                    and not (n == "query_resale_blocks_by_criteria" and history_question_without_limits(c))]
             for name, args in core + addons.plan(agent, c, query):
                 if name in runners and name not in outputs:
                     backstop = ToolRunner(name)
@@ -4064,6 +4165,16 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
 
     log = [rec.model_dump() for r in runners.values() for rec in r.log] + extra_log
     return outputs, log, errors, final_text
+
+
+def history_question_without_limits(c: Dict[str, Any]) -> bool:
+    """A trend or price-history question (a town trend, grouped or area statistics) that states no budget, lease,
+    distance or school: the block search is not part of its answer."""
+    history = any(c.get(k) for k in ("wants_price_trend", "wants_group_stats", "wants_area_statistics", "stats_trend",
+                                     "wants_block_history"))
+    limits = (c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or c.get("amenity_radii_meters")
+              or c.get("school_name"))
+    return history and not limits
 
 
 def run_financial_sequence(runners, constraints, query):
@@ -5010,10 +5121,15 @@ def template_response(state: HDBCompassState) -> str:
     elif passages:
         lines.append("**Policy:**")
         lines.extend(policy_fact_lines(passages, user_request(state)))
-    elif state.get("policy_no_match") and not (state.get("financial_breakdown") and _OWN_GRANT_ASK.search(
-            str((state.get("user_constraints") or {}).get("policy_question") or ""))):
+    elif state.get("policy_no_match") and not (state.get("financial_breakdown") and (_OWN_GRANT_ASK.search(
+            str((state.get("user_constraints") or {}).get("policy_question") or ""))
+            or (money_question(last_user_query(state), uc) and not policy_wording(last_user_query(state))
+                and last_user_query(state).strip() not in str(uc.get("policy_question") or "")))):
         # "What grants can we get?" is answered by the calculators (which ask for the household's facts); a "no rule
-        # found" line beside them reads as no answer (CLARIFY-03)
+        # found" line beside them reads as no answer (CLARIFY-03). So is a money question about the calculation that
+        # the rule search was not run for: "What information would you need for a bank-loan calculation instead?" got
+        # the line under its own answer (HOUSE-03 t3, live 4 Nov: the search ran on the earlier turn's "Can you really
+        # use an HDB loan?"). A rule question of this message's own ("Can PRs take an HDB loan?") still gets it.
         lines.append(NO_POLICY_ANSWER)
     if not lines:
         lines.append(NO_DATA)
@@ -5893,6 +6009,100 @@ def policy_scope_conflict(sentence: str, question: str, shown: List[Dict[str, An
     return False
 
 
+# Claims about the user's own case that the calculators settle, and that the model got the other way round on the live
+# model (4 Nov). Each check below reads only code's results, never the passages.
+_GRANT_WORD = r"\bgrants?\b|\behg\b|\bphg\b"
+_CEILING_WORD = re.compile(r"\b(?:ceiling|budget|max(?:imum)?|purchase price|price|afford\w*|figure|number|amount|limit)\b", re.I)
+_GRANTS_LEFT_OUT = re.compile(
+    r"\b(?:does not|doesn'?t|do not|don'?t|is not|isn'?t|are not|aren'?t|has not|hasn'?t|have not|haven'?t|not)\s+"
+    r"(?:yet\s+|already\s+|been\s+)*(?:include|including|included|account\w*|factor\w*|count\w*|incorporat\w*|built)\b"
+    rf"|\bexclud\w*\b[^.;]{{0,40}}(?:{_GRANT_WORD})|(?:{_GRANT_WORD})[^.;]{{0,50}}\b(?:separately|on top|in addition|excluded|"
+    rf"not included|left out)\b|\b(?:without|before|excluding|on top of)\b[^.;]{{0,20}}(?:{_GRANT_WORD})", re.I)
+_GRANTS_COUNTED = re.compile(
+    rf"\b(?:already\s+)?(?:includes?|included|including|accounts? for|factors? in|incorporat\w*|counts?)\b[^.;]{{0,40}}(?:{_GRANT_WORD})"
+    rf"|(?:{_GRANT_WORD})[^.;]{{0,30}}\b(?:are|is|were|was|have been|has been)\s+(?:already\s+)?(?:included|counted|factored|"
+    rf"accounted|built)\b|\b(?:with|after|plus)\s+(?:the\s+|your\s+)?(?:housing\s+)?(?:{_GRANT_WORD})", re.I)
+
+
+def ceiling_grants_claim_wrong(sentence: str, state: HDBCompassState) -> bool:
+    """A sentence saying the budget ceiling does, or does not, include the grants, the other way round from the
+    affordability result. "The ceiling does not include grants" stood above a $704,472 ceiling that counts the $105,000
+    of grants (HOUSE-02 t3: "Does that ceiling already include grants?"). The ceiling counts them when the calculator
+    included grants (grants_included) and there were any (the grant calculator's total, or the total the user gave)."""
+    if not re.search(_GRANT_WORD, sentence, re.I) or not _CEILING_WORD.search(sentence):
+        return False
+    fin = state.get("financial_breakdown") or {}
+    aff = fin.get("calculate_maximum_affordability") or {}
+    if aff.get("status", "ok") != "ok" or "error" in aff or aff.get("max_purchase_price") is None:
+        return False
+    g = fin.get("calculate_cpf_housing_grants") or {}
+    if g.get("status", "ok") == "ok" and "error" not in g and g.get("total_grants") is not None:
+        total = float(g["total_grants"] or 0)
+    else:
+        given = (((state.get("user_constraints") or {}).get("financial_inputs") or {}).get("affordability") or {}).get("total_grants")
+        total = float(given or 0)
+    counted = bool(aff.get("grants_included")) and total > 0
+    left_out = bool(_GRANTS_LEFT_OUT.search(sentence))
+    return (left_out and counted) or (not left_out and bool(_GRANTS_COUNTED.search(sentence)) and not counted)
+
+
+# "They may still be eligible for the Proximity Housing Grant" for two PRs (POLICY-03 t2): code's own assumption line
+# says two permanent residents get no CPF housing grant, so a sentence giving them one contradicts it.
+_ANY_GRANT = re.compile(r"\b(?:grants?|ehg|phg)\b", re.I)
+_GETS_GRANT = re.compile(r"\b(?:eligible|qualif(?:y|ies|ied)|entitled|get|gets|receive|receives|claim|claims|apply for|enjoy)\b"
+                         r"[^.;,]{0,60}\b(?:grants?|ehg|phg)\b", re.I)
+_DENIED = re.compile(r"\b(?:not|n't|never|no longer|neither|nor|ineligible|cannot|can'?t|unable)\b[^.;,]{0,25}$", re.I)
+
+
+def pr_couple_grant_claim(sentence: str, state: HDBCompassState) -> bool:
+    """A sentence saying two Singapore PRs may get a CPF housing grant (any of them), when code reads the buyers as a PR
+    couple (pr_couple). "They are not eligible for the CPF Family Grant" agrees with code and stays."""
+    if not (state.get("user_constraints") or {}).get("pr_couple") or not _ANY_GRANT.search(sentence):
+        return False
+    for m in _GETS_GRANT.finditer(sentence):
+        clause = re.split(r"[.;,]", sentence[:m.start()])[-1]
+        if _DENIED.search(sentence[:m.start()]) or re.search(r"\b(?:not|n't|never|ineligible)\b", m.group(0), re.I):
+            continue
+        if re.search(r"\b(?:citizens?|SCs?)\b", clause, re.I):
+            continue   # "only couples with a citizen receive the Family Grant" is about other buyers
+        return True
+    return False
+
+
+# A distance or nearness to a kind of place the facts give no distance for: "Blk 515 offers a slightly higher price but
+# similar proximity to the MRT station" above area statistics whose only distances are to the user's block (STATS-06,
+# live 4 Nov). Each kind's words in a sentence, and in a facts line with a distance figure.
+_PLACE_KINDS = {"mrt": r"\bmrt\b|\blrt\b|\bstations?\b|\btrains?\b", "hawker": r"\bhawker|\bfood cent(?:re|er)s?\b",
+                "school": r"\bschools?\b", "supermarket": r"\bsupermarkets?\b|\bgrocer"}
+_NEARNESS = re.compile(r"\b(?:near(?:er|est|by|ness)?|close(?:r|st|ness)?|proximity|distances?|far(?:ther|thest)?|further|furthest|"
+                       r"walk(?:ing|able)?|within|away from|next to|access(?:ible)?|convenient(?:ly)? (?:to|for))\b", re.I)
+_DISTANCE_FIGURE = re.compile(r"\d[\d,]*(?:\.\d+)?\s?(?:m|km|min)\b", re.I)
+
+
+def unsupported_proximity(sentence: str, facts: str) -> bool:
+    """Whether the sentence says how near or far a kind of place (MRT, hawker centre, school, supermarket) is, when no
+    facts line gives a distance to that kind of place."""
+    if not _NEARNESS.search(sentence):
+        return False
+    lines = [line for line in (facts or "").splitlines() if _DISTANCE_FIGURE.search(line)]
+    for pattern in _PLACE_KINDS.values():
+        if re.search(pattern, sentence, re.I) and not any(re.search(pattern, line, re.I) for line in lines):
+            return True
+    return False
+
+
+# An opening sentence with nothing in it, written on the pattern of OPENING_EXAMPLE when there are no blocks to compare:
+# "The choice between price and convenience depends on the specific blocks available." above a loan instalment
+# (DEMO-12 t2), "The available options depend on the specific blocks and their details" above a budget (HOUSE-04 t2).
+_BLOCK_FILLER = re.compile(r"\bprice and convenience\b|\b(?:depends?|depending|based|rests?) on (?:the |your )?(?:specific |available |"
+                           r"individual |particular |actual )*(?:blocks?|options?|flats?|listings?|units?)\b", re.I)
+
+
+def block_filler(sentence: str, facts: str) -> bool:
+    """A sentence about choosing among blocks when the facts list no block."""
+    return not re.search(r"\bBlk\s+\d", facts or "") and bool(_BLOCK_FILLER.search(sentence))
+
+
 def check_model_opening(text: str, state: HDBCompassState, facts: str,
                         policy: Optional[List[Dict[str, Any]]] = None) -> Tuple[List[str], Dict[str, int]]:
     """The sentences of the model's opening that may be shown, and how many were dropped for each reason. Every
@@ -5904,7 +6114,7 @@ def check_model_opening(text: str, state: HDBCompassState, facts: str,
     notes_are_facts = searched or not state.get("rag_policy_passages")
     kept: List[str] = []
     dropped = {"figures": 0, "comparisons": 0, "notes": 0, "leans_back": 0, "restated": 0, "lead_ins": 0, "relevance": 0,
-               "scope": 0}
+               "scope": 0, "grants_ceiling": 0, "pr_grants": 0, "proximity": 0, "filler": 0}
     fact_lines = {_plain(line) for line in (facts or "").splitlines() if _plain(line)}
     nothing_found = (facts or "").strip() == NO_DATA
     shown = shown_policy_passages(policy, user_request(state)) if policy else []
@@ -5924,6 +6134,14 @@ def check_model_opening(text: str, state: HDBCompassState, facts: str,
             reason = "figures"
         elif not says_something(sentence) or (policy and (_GENERIC_POLICY_LEAD.search(sentence) or _SOURCE_ONLY.match(sentence))):
             reason = "lead_ins"
+        elif ceiling_grants_claim_wrong(sentence, state):
+            reason = "grants_ceiling"
+        elif pr_couple_grant_claim(sentence, state):
+            reason = "pr_grants"
+        elif unsupported_proximity(sentence, facts):
+            reason = "proximity"
+        elif block_filler(sentence, facts):
+            reason = "filler"
         elif policy and not policy_opening_is_relevant(sentence, user_request(state)):
             reason = "relevance"
         elif policy and policy_scope_conflict(sentence, user_request(state), shown):
@@ -6221,6 +6439,10 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
                        "notes": "repeated a note the facts carry", "leans_back": "leaned on the sentence before"}
                 why["relevance"] = "answered a different policy topic from the user's question"
                 why["scope"] = "named a scheme the question does not ask about"
+                why["grants_ceiling"] = "said the budget ceiling does or does not include grants, against the calculator"
+                why["pr_grants"] = "gave two permanent residents a CPF housing grant"
+                why["proximity"] = "stated a distance to a place the facts give no distance for"
+                why["filler"] = "talked about choosing among blocks when none are listed"
                 drops = [f"synthesize: dropped {dropped[r]} opening sentence(s) that {w}" for r, w in why.items() if dropped[r]]
                 if drops and code_only:
                     drops[0] += "; code opening used"
