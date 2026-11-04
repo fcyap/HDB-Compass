@@ -2758,6 +2758,12 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         # questionnaire came with the duty (MONEY-07/08/09/12 t2, 4 Nov)
         constraints["max_budget_sgd"] = None
         errors.append("extract_constraints: model's budget dropped: it is the purchase price the stamp duty is worked out on")
+    # a stamp-duty-only turn offers the model only the duty calculator: it called the affordability calculator
+    # itself on "Change price and valuation to $500,000." and a household questionnaire came with the duty (MONEY-08)
+    # Only with a stated price: "the stamp duty on that number" (the ceiling, HOUSE-04) needs the affordability result.
+    constraints["duty_only"] = bool(
+        asks_duty_only({"messages": state.get("messages") or [{"role": "user", "content": query}]})
+        and ((constraints.get("financial_inputs") or {}).get("upfront") or {}).get("purchase_price"))
     _note_unchecked_places(constraints, query)
     strong_facts = any(v is not None and k not in _WEAK_FINANCIAL_FACTS
                        for vals in stated_financial_inputs(query).values() for k, v in (vals or {}).items())
@@ -3425,7 +3431,11 @@ def _drop_unstated(c: Dict[str, Any], query: str, errors: List[str]) -> None:
         if c.get(k) and not _amount_in(c[k], query) and getattr(rb, k, None) != c[k]:
             dropped.append(k); c[k] = None
     words = lambda s: [w for w in re.findall(r"[a-z]{4,}", str(s).lower()) if w not in ("school", "primary", "high", "secondary")]
-    if c.get("school_name") and not any(w in query.lower() for w in words(c["school_name"])):
+    place_words = {w for t in HDB_TOWNS for w in re.findall(r"[a-z]{4,}", t.lower())} | {"north", "south", "east", "west", "central"}
+    # a school only when the message speaks of one: the live model made up "BEDOK PRIMARY SCHOOL" from "Blk 510 Bedok
+    # North St 3" (STATS-06, 4 Nov), and the town word alone kept it, so a school search ran on an area question
+    if c.get("school_name") and (not re.search(r"(?:school|primary|secondary|p1|kindergarten)", query, re.I)
+                                 and not any(w in query.lower() for w in words(c["school_name"]) if w not in place_words)):
         dropped.append("school_name"); c["school_name"] = None
         (c.get("amenity_radii_meters") or {}).pop("school", None)
     if c.get("flat_types"):
@@ -3809,6 +3819,8 @@ TASK_TOOLS = {"compute_town_price_timeseries": lambda c: bool(c.get("wants_price
               # a named launch (research_intents.known_bto_project) is an ask too, not only "BTO vs resale" wording
               "compare_bto_launch_vs_resale": lambda c: bool(c.get("wants_bto_comparison") or c.get("bto_project_name")),
               "verify_primary_school_distance": lambda c: bool(c.get("school_name")),
+              "calculate_cpf_housing_grants": lambda c: not c.get("duty_only"),
+              "calculate_maximum_affordability": lambda c: not c.get("duty_only"),
               "compute_dual_transit_commute": lambda c: len(c.get("work_destinations") or []) >= 2,
               "sync_interactive_map_ui": lambda c: False}
 TASK_TOOLS.update(addons.task_tools())   # add-on tools: offered only when their intent was read
@@ -6446,6 +6458,11 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
             model_text = text   # with code_written_facts off the whole draft is the model's
             if facts:
                 kept, dropped = check_model_opening(text, state, facts, policy)
+                # a fragment cut from a longer sentence ("only a bank loan is available. To proceed…", HOUSE-03 t3 live)
+                fragments = [k for k in kept if re.match(r"[a-z]", k.strip())]
+                if fragments:
+                    kept = [k for k in kept if k not in fragments]
+                    dropped["leans_back"] = dropped.get("leans_back", 0) + len(fragments)
                 if policy and not kept:
                     # A model sometimes returns only a source link or a generic lead. Repair it with a second,
                     # answer-first instruction instead of deciding the opening from query-specific rules.

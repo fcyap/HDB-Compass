@@ -348,3 +348,22 @@ def test_the_price_check_takes_only_a_stated_asking_price():
     kept = sv.search_args("assess_resale_price", {"address": "Blk 264 Bishan St 24", "asking_price": 800000.0},
                           {"asking_price_sgd": 800000.0}, [], "market_sql")
     assert kept["asking_price"] == 800000.0
+
+
+def test_a_school_made_up_from_the_address_is_dropped():
+    # STATS-06 live (4 Nov): the model read "BEDOK PRIMARY SCHOOL" from "Blk 510 Bedok North St 3" and a school search
+    # put a 65-block list in front of the area statistics
+    c = {"school_name": "BEDOK PRIMARY SCHOOL", "amenity_radii_meters": {"school": 1000}}
+    sv._drop_unstated(c, "Show the price distribution for 4-room within 500m of Blk 510 Bedok North St 3.", [])
+    assert c["school_name"] is None
+    c = {"school_name": "Ai Tong School"}
+    sv._drop_unstated(c, "4-room in Bishan within 1km of Ai Tong", [])
+    assert c["school_name"] == "Ai Tong School"
+
+
+def test_a_duty_only_turn_offers_only_the_duty_calculator():
+    # MONEY-08 t2 live: the model called the affordability calculator on "Change price and valuation to $500,000."
+    c = {"duty_only": True}
+    assert not sv.TASK_TOOLS["calculate_maximum_affordability"](c)
+    assert not sv.TASK_TOOLS["calculate_cpf_housing_grants"](c)
+    assert sv.TASK_TOOLS["calculate_maximum_affordability"]({})
