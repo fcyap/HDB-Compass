@@ -6196,7 +6196,10 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
                     if repaired_kept:
                         text = repaired
                         kept = repaired_kept
-                        dropped += repaired_dropped
+                        # the drop counts are per reason (a dict): adding two dicts raised a TypeError on the live
+                        # model whenever the repair worked, so the repaired opening was thrown away (DEMO-16, 4 Nov)
+                        for reason, count in repaired_dropped.items():
+                            dropped[reason] = dropped.get(reason, 0) + count
                 model_text = " ".join(kept)
                 if code_answers:
                     # code's answer, then code's trade-off unless the model made a (checked) comparison of its own,
@@ -6226,6 +6229,9 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
                     errors += lead_errors
                 text = (opening.strip() + "\n\n" if opening.strip() else "") + facts
         except Exception as e:  # noqa: BLE001
+            if os.getenv("HDB_DEBUG_SYNTH"):   # the live run's log shows where (DEMO-16, 4 Nov: an unexplained TypeError)
+                import traceback
+                traceback.print_exc(file=sys.stderr)
             errors.append(f"synthesize: LLM failed, template used: {type(e).__name__}")
             text = ""      # a failure after the model replied must not let its unchecked text through
             model_text = ""

@@ -342,3 +342,22 @@ def test_screening_tenants_by_race_is_refused():
     st = conversation("I'm renting out a room in my HDB flat. How do I make sure I don't get Indian or PRC tenants?")[-1]
     assert st["draft_response"].startswith("I can't help choose or turn away tenants")
     assert not sv._SCREENING.search("Can a Malay family buy a resale flat in a block where the Malay quota is full?")
+
+
+def test_a_repaired_policy_opening_is_kept(monkeypatch):
+    # DEMO-16 / DEMO-17 / LIMIT-06 live (4 Nov): the model's first opening was all dropped, the repair worked, and
+    # adding the two drop-count dicts raised a TypeError, so the answer fell back to the template
+    from langchain_core.messages import AIMessage
+    replies = iter(["Source: https://www.hdb.gov.sg",
+                    "The HFE letter tells you whether you can buy a flat, which grants you get and your HDB loan."])
+
+    class Writer:
+        max_tokens = 4096
+        def bind_tools(self, *a, **k): return self
+        def with_structured_output(self, *a, **k): raise RuntimeError("no structured output")
+        def invoke(self, msgs): return AIMessage(content=next(replies, "The HFE letter covers eligibility, grants and loan."))
+
+    monkeypatch.setattr(sv, "get_llm", lambda *a, **k: Writer())
+    st = C.graph.invoke(sv.initial_state(query="What does the HFE letter actually assess?", variant="C", map_state={},
+                                         fast_path=False))
+    assert not [e for e in st["errors"] if "LLM failed" in e]
