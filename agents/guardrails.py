@@ -46,6 +46,8 @@ _SPECULATIVE = re.compile(
     r"|\b(?:profit|gains?|returns?)\b[^.?!]{0,25}\b(?:i|we)\s+(?:will|would|can|could|'ll)\s+(?:make|earn|get|gain)\b"
     r"|\bhow much (?:profit|money)\b[^.?!]{0,30}\b(?:will|would|can)\b[^.?!]{0,15}\b(?:make|earn|gain)\b",
     re.I)
+# profit on a sale price the user states ("sell my Plus flat for $600k, how much profit after clawback") is arithmetic
+_OWN_SALE_PRICE = re.compile(r"\b(?:sell|sold|selling|sale)\b[^.?!]{0,50}\b(?:for|at)\s*\$?\s?\d")
 _OFF_TASK = re.compile(
     r"\b(?:write|create|generate|build|code|debug|fix)\b[^.?!]{0,30}\b(?:python|javascript|java|sql|html|css|script|program|code|"
     r"function|bot|scraper|essay|poem|story|email|cover letter)\b|\bscrape\w*\b[^.?!]{0,30}\b(?:web|website|listings?|sites?)\b",
@@ -54,12 +56,19 @@ _OFF_TASK = re.compile(
 # Asking the app to rank or avoid areas by who lives there (residents, class, race) or to call one a ghetto or slum. The
 # Ethnic Integration Policy and its quotas are an HDB rule, not a ranking of people, so they never match.
 _PEOPLE = r"(?:residents?|neighbou?rs|people|crowd|tenants|community|class|races?|racial|ethnic\w*|foreigners|poor|low[- ]income)"
+_GROUPS = (r"(?:chinese|malays?|indians?|eurasians?|muslims?|christians?|hindus?|buddhists?|sikhs?|jews?|jewish|"
+           r"foreigners?|pr|prs|immigrants?|bangladeshis?|filipinos?|africans?|caucasians?|races?|racial|religio\w*)")
 _BIAS = re.compile(
     r"\b(?:ghetto\w*|slums?)\b"
-    r"|\b(?:worst|bad|good|best|nice|nicer|better|rough|dangerous|decent)\b[^.?!]{0,25}\b(?:residents?|neighbou?rs|people|crowd|tenants|community)\b"
+    r"|\b(?:worst|bad|nice|nicer|rough|dangerous|decent)\b(?:\s+(?:kind|type|sort)s?\s+of)?\s+(?:residents?|neighbou?rs|people|crowd|tenants|community)\b"
+    r"|\b(?:best|good|better)\s+(?:kind|type|sort)s?\s+of\s+(?:residents?|neighbou?rs|people|crowd|tenants)\b"
     r"|\bavoid\b[^.?!]{0,70}\b(?:because of|due to|since)\b[^.?!]{0,35}\b" + _PEOPLE + r"\b"
     r"|\b(?:full of|filled with|too many)\b[^.?!]{0,25}\b(?:foreigners|poor|low[- ]income|rich|chinese|malays?|indians?|racial|ethnic\w*)\b"
-    r"|\bwhich\b[^.?!]{0,30}\b(?:races?|ethnic groups?)\b[^.?!]{0,40}\b(?:live|stay|reside)\w*\b",
+    r"|\bwhich\b[^.?!]{0,30}\b(?:races?|ethnic groups?)\b[^.?!]{0,40}\b(?:live|stay|reside)\w*\b"
+    r"|\b(?:avoid|away from|fewest|least|most|more|less|only|no)\b[^.?!]{0,40}\b" + _GROUPS + r"\b"
+    r"|\b" + _GROUPS + r"\b[^.?!]{0,50}\b(?:avoid|stay away|keep out|don'?t want|do not want|not welcome)\b"
+    r"|\b(?:screen|filter|reject|exclude|choose|select|pick|vet|prefer|rank)\w*\b[^.?!]{0,40}\b(?:tenants?|renters?|buyers?|neighbou?rs|residents?)\b[^.?!]{0,40}\b(?:by|based on|according to|because of|of)?\s*(?:races?|racial|ethnic\w*|religio\w*|nationalit\w*|" + _GROUPS + r")\b"
+    r"|\b(?:rent|let|sell)\w*\b[^.?!]{0,40}\b(?:not|never|except|only)\s+(?:to\s+)?" + _GROUPS + r"\b",
     re.I)
 _POLICY_NOT_BIAS = re.compile(r"\bethnic (?:integration|quota|limit|proportion)\b|\bEIP\b|\bSPR quota\b|\bquota\b", re.I)
 BIAS_REPLY = ("I don't rate neighbourhoods by who lives there. I can compare areas on facts instead: median price, remaining "
@@ -120,7 +129,7 @@ def classify_input(text: str, mid_conversation: bool = False) -> Tuple[str, Opti
         return scope.OFF_TOPIC, scope.REPLIES[scope.OFF_TOPIC]
     if scope.classify(t, mid_conversation) == scope.PRIVATE:   # before the speculative check: "best condo for investment"
         return scope.PRIVATE, scope.REPLIES[scope.PRIVATE]
-    if _SPECULATIVE.search(t):
+    if _SPECULATIVE.search(t) and not (_OWN_SALE_PRICE.search(t) and not re.search(r"guarantee|risk[- ]?free|can'?t lose|\bwhich\b", t, re.I)):
         return "speculative_advice", SPECULATIVE_REPLY
     if _BIAS.search(t) and not _POLICY_NOT_BIAS.search(t):
         return "neighbourhood_bias", bias_reply(t)
