@@ -1223,6 +1223,20 @@ def first_timer_stated(text: str) -> Optional[bool]:
 _KID_WORDS = re.compile(r"\b(?:kids?|child(?:ren)?|sons?|daughters?|baby|babies|toddlers?|infants?)\b", re.I)
 
 
+# Someone else who will live in the flat with a single buyer: a child, a parent or sibling, or a co-applicant
+_OTHER_OCCUPANT = re.compile(r"\b(?:with|and|plus) (?:my |our )?(?:parents?|mother|father|mum|mom|dad|siblings?|brothers?|"
+                             r"sisters?|grand\w+|friends?|partner|fianc\w*)\b|\bjoint singles?\b|\bco-?applicants?\b", re.I)
+
+
+def single_buying_alone(text: str) -> bool:
+    """A single buyer with no one else named who will live in the flat: the buyer is the youngest core member, so
+    their age is that fact too. Live, 5 Nov (HOUSE-05): "Single citizen aged 38, first-timer ..." was asked three times
+    for "the age of the youngest person who will live in the flat"."""
+    s = statements(text)
+    return citizenship_stated(text) == "SC_Single" and not _KID_WORDS.search(re.sub(_NO_KIDS, " ", s, flags=re.I)) \
+        and not _OTHER_OCCUPANT.search(s)
+
+
 def no_children(text: str) -> bool:
     """The buyers say they have no children, and nothing they say later mentions one ("we just had a baby")."""
     s = statements(text)
@@ -1342,7 +1356,9 @@ _CONTINUOUS_WORK = (rf"(?:continuous(?:ly)?\s+(?:employ\w*|working)|{_WORKED}\s+
                     # "Both worked 12 months", "we both worked continuously for the last 12 months" (SEM-19)
                     r"|\b(?:we\s+)?(?:both|each|all)\s+(?:have\s+)?worked\s+(?:continuously\s+)?(?:for\s+)?(?:the\s+)?"
                     r"(?:last|past)?\s*(?:12|twelve)\s*(?:months?|mths?)\b"
-                    r"|\bworked\s+continuously\s+(?:for\s+)?(?:the\s+)?(?:last|past)\s+(?:12|twelve)\s*(?:months?|mths?)\b")
+                    # "worked continuously 12 months" in a list of facts (live, 5 Nov: asked again)
+                    r"|\bworked\s+continuously\s+(?:for\s+)?(?:the\s+)?(?:(?:last|past)\s+)?(?:12|twelve)\s*(?:months?|mths?)\b"
+                    r"(?!\s+(?:in|during|back in|until)\s+\d{4}|\s+ago|\s+before)")   # not "for 12 months in 2019"
 # the buyers say they have NOT worked the 12 months (the household form's "No": "We have not worked continuously for the
 # past 12 months"; "I haven't been employed continuously for 12 months"; "not continuously employed for 12 months")
 _NOT_CONTINUOUS_WORK = (r"(?:\bnot|n't|\bnever)\s+(?:\w+\s+){0,3}(?:continuous(?:ly)?|consistently)\s+(?:\w+\s+){0,2}"
@@ -1435,7 +1451,7 @@ def stated_financial_inputs(text: str, context: str = "") -> Dict[str, Dict[str,
     ages = buyer_ages(own, couple=is_couple(f"{context} {t}"))
     if ages:
         f.update(youngest_buyer_age=min(ages), oldest_buyer_age=max(ages), average_applicant_age=sum(ages) / len(ages))
-        if no_children(f"{context}. {t}"):
+        if no_children(f"{context}. {t}") or single_buying_alone(f"{context}. {t}"):
             f["youngest_core_member_age"] = min(ages)
     f.update(bound_amounts(own, is_couple(f"{context} {t}")))
     if no_debts_stated(s):
@@ -1680,7 +1696,7 @@ def fact_is_grounded(field: str, value: Any, text: str) -> bool:
         if m and _isint(value) and int(value) == int(m.group(1)):
             return True
         return _isint(value) and int(value) not in corrected and int(value) in (_ages_anywhere(own) or _bare_ages(own)) \
-            and no_children(t)
+            and (no_children(t) or single_buying_alone(t))
     if field in MONEY_FIELDS:
         bound, ambiguous = _bind_amounts(own, is_couple(t))
         if field in ambiguous:
@@ -2441,7 +2457,10 @@ def refine_search(carried: Dict[str, Any], fresh: Dict[str, Any], query: str) ->
     # "Use MRT stations only instead." keeps the distance and changes which stations count (SPAT-38)
     only = re.search(r"\b(mrt|lrt)(?:\s+stations?)?\s+only\b|\bonly\s+(?:the\s+)?(mrt|lrt)\b", query, re.I)
     rail = next((k for k in ("mrt", "lrt", "mrt_only") if k in radii), None)
-    if only and rail and not new_radii:                                                   # "Use MRT stations only instead."
+    # code's own reading decides whether a new distance was given: the live model's reading of "Use MRT stations only
+    # instead." carried the old {"lrt": 250}, so the limit stayed LRT (SPATIAL-07 t2, live 5 Nov)
+    if only and rail and not (rule_based_extract(query).amenity_radii_meters or {}):        # "Use MRT stations only instead."
+        new_radii = {}
         radii["mrt_only" if (only.group(1) or only.group(2)).lower() == "mrt" else "lrt"] = radii.pop(rail)
     m = _BARE_DISTANCE.search(query)
     if m and not new_radii:
@@ -2654,6 +2673,13 @@ def instalment_question(q: str, prior: Optional[Dict[str, Any]] = None) -> Optio
     return _instalment(loan, rate, years)
 
 
+# Words that ask whether a flat is affordable for the household, which a search's price limit does not
+_AFFORD_WORDS = re.compile(r"\bafford\w*|\bbudget\b|\bhow much (?:can|could) (?:we|i)\b|\bwithin (?:my|our) means\b|"
+                           r"\b(?:can|could) (?:we|i) (?:buy|get)\b|\bceiling\b|\bgrants?\b|\bloan\b", re.I)
+# A flat's price asked against the ceiling: "is a $450k flat within the ceiling?", "would a $500k flat fit my budget?"
+_PRICE_AGAINST_CEILING = re.compile(r"\b(?:within|under|below|above|over|exceed\w*|fits?|beyond)\b[^?.]{0,25}"
+                                    r"\b(?:the |my |our |this |that )?(?:ceiling|budget|max(?:imum)?(?: price| budget)?|limit)\b",
+                                    re.I)
 _BUDGET_ASK = re.compile(r"\b(?:budget|afford\w*|borrow\w*|how much (?:hdb |bank )?loan|max(?:imum)? (?:hdb |bank )?loan|"
                          r"max(?:imum)? (?:purchase )?price|ceiling)\b", re.I)
 
@@ -2847,6 +2873,19 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         if kind in rb_radii and "mrt" in radii and kind not in radii and "mrt" not in rb_radii:
             radii[kind] = radii.pop("mrt")
     _verify_extraction(constraints, query, errors, from_model=from_model)
+    name = str(constraints.get("bto_project_name") or "")
+    if from_model and name and not (re.search(r"\b(?:bto|launch\w*|projects?|new flats?)\b", query, re.I)
+                                    and any(w.lower() in query.lower() for w in re.findall(r"[A-Za-z]{4,}", name))):
+        # a launch the message does not name: "Show the price distribution for 4-room within 500m of Blk 510 Bedok North
+        # St 3." was read as BTO project "BEDOK NORTH 2025", and the answer opened with "I don't have prices for BEDOK
+        # NORTH 2025" (STATS-06 t1, live 5 Nov)
+        constraints["bto_project_name"] = None
+        errors.append("extract_constraints: model's BTO project dropped: the message names no launch")
+    if from_model and constraints.get("wants_area_affordability") and not _AFFORD_WORDS.search(query):
+        # "4-room below 750k" is a price limit on the search, not "can we afford a flat there?": the live model's
+        # reading added an affordability section and a household questionnaire nobody asked for (SPATIAL-07 t1, 5 Nov)
+        constraints["wants_area_affordability"] = False
+        errors.append("extract_constraints: model's affordability reading dropped: the message asks nothing about affording")
     price = ((constraints.get("financial_inputs") or {}).get("upfront") or {}).get("purchase_price")
     if from_model and price and constraints.get("max_budget_sgd") == price \
             and rule_based_extract(query).max_budget_sgd != price \
@@ -3058,9 +3097,11 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
             inst = {}
     # this message's own instalment only: the last one was shown again under a later flat search (X-STALE)
     constraints["instalment"] = inst if inst and "monthly" in inst else None
-    # finished from a reply to code's instalment question, or a bare new loan: code's figure is the whole answer
+    # finished from a reply to code's instalment question, a bare new loan, or a follow-up changing the last instalment
+    # ("What if I repay over 20 years instead?": live, 5 Nov, DEMO-11 t2, the model's opening spoke of "more lease left"):
+    # code's figure is the whole answer
     constraints["instalment_from_reply"] = bool(constraints["instalment"]) and (
-        asked.startswith("To work out the monthly instalment") or bool(loan))
+        asked.startswith("To work out the monthly instalment") or bool(loan) or bool((prior_inst or {}).get("monthly")))
     if inst is not None and "monthly" not in inst:
         if loan:
             figures = (f"${loan:,.0f}", None, None)
@@ -3093,6 +3134,11 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         constraints["bto_project_name"] = prior["bto_project_name"]
     m = re.search(r"\b(?:can|could) (?:we|i) afford\b[^?.]{0,30}?(?:S?\$\s?)(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million)?"
                   r"|\b(?:can|could) (?:we|i) afford\b[^?.]{0,30}?\b(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million)\b", query, re.I)
+    if not m and _PRICE_AGAINST_CEILING.search(query):
+        # "If I look at a $450k flat, is that within the ceiling?" (HOUSE-05 t3, live 5 Nov: the ceiling was shown but
+        # the question it asked was not answered)
+        m = re.search(r"(?:S?\$\s?)(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million)?\s*(?:resale |bto |hdb )?(?:flat|unit|home)\b",
+                      query, re.I)
     constraints["asked_price"] = None   # this message's own question only
     constraints["budget_asked"] = bool(_BUDGET_ASK.search(asked_part(query)))
     if m:
@@ -3472,6 +3518,14 @@ FOUR_ROOM_GRANT_NOTE = ("Grants were worked out for a 4-room flat (a 5-room or l
                         "name a flat type to change this.")
 
 
+# The affordability calculator models buyers below 55 only (CPF withdrawal limits and the loan tenure to age 65 change
+# from then on); it returns "unsupported" for an older buyer, after first asking for every other fact (HOUSE-09)
+SENIOR_BUYER_AGE = 55
+SENIOR_BUYER_NOTE = ("This estimate covers buyers below 55 only: from 55, CPF withdrawal limits and a loan tenure that "
+                     "must end by age 65 change how much you can borrow, which it doesn't model. HDB's HFE letter gives your "
+                     "loan amount.")
+
+
 def _assume_flat_basics(c: Dict[str, Any]) -> None:
     """A budget question with no flat chosen: rather than asking which flat type and what lease to assume (a flat the
     user has not picked has neither), the grants use their stated flat type or a 4-room one, and the lease is taken to
@@ -3485,9 +3539,17 @@ def _assume_flat_basics(c: Dict[str, Any]) -> None:
         if not c.get("flat_types"):
             c.setdefault("assumptions", []).append(FOUR_ROOM_GRANT_NOTE)
     ages = [v.get("youngest_buyer_age") for v in fin.values() if isinstance(v, dict) and v.get("youngest_buyer_age")]
+    oldest = [v.get("oldest_buyer_age") for v in fin.values() if isinstance(v, dict) and v.get("oldest_buyer_age")]
+    if oldest and max(oldest) >= SENIOR_BUYER_AGE:
+        c["senior_buyer"] = max(oldest)
+        c.setdefault("assumptions", []).append(SENIOR_BUYER_NOTE)
     stated = c.get("min_remaining_lease_years")
+    held = [(fin.get(sec) or {}).get("remaining_lease_years") for sec in ("grants", "affordability")]
+    # the lease code assumed (until the youngest buyer turns 95) gives way to one the user states later: "Use a flat
+    # with 55 years left." kept 34 years in the calculators (HOUSE-09 t2, live 5 Nov)
+    assumed = max(95 - int(min(ages)), 20) if ages else None
     if stated and not c.get("wants_area_affordability") and \
-            not any((fin.get(sec) or {}).get("remaining_lease_years") for sec in ("grants", "affordability")):
+            (not any(held) or (assumed is not None and all(h in (None, assumed) for h in held) and stated != assumed)):
         # "Buying 4-room resale with 40 years left": that lease, not the age-95 one (SEM-21: it assumed 68 years)
         for sec in ("grants", "affordability"):
             if fin.get(sec) is not None:
@@ -3508,6 +3570,8 @@ def _assume_flat_basics(c: Dict[str, Any]) -> None:
         lease = max(95 - int(min(ages)), 20)
         for sec in ("grants", "affordability"):
             fin.setdefault(sec, {})["remaining_lease_years"] = lease
+        if c.get("senior_buyer"):
+            return   # no ceiling is given (SENIOR_BUYER_NOTE), so the lease it would assume is not said
         c.setdefault("assumptions", []).append(
             f"The ceiling assumes a flat with at least {lease} years of lease left (until the youngest buyer turns 95). "
             "For a flat with less, HDB reduces the CPF you can use, the loan and the grants, so your ceiling there is lower.")
@@ -5359,6 +5423,13 @@ def template_response(state: HDBCompassState) -> str:
                     lines.append(f"- {label}: not worked out — the lease ends before the youngest buyer turns 95, a case "
                                  "this estimate does not model.")
                     continue
+                if value.get("status") in ("needs_information", "unsupported") and name != "calculate_bsd_and_upfront_outlay" \
+                        and uc.get("senior_buyer"):
+                    # only the loan model stops at 55; the grants were not asked about, so their facts are not either
+                    lines.append(f"- {label}: not worked out — " + (
+                        f"this estimate covers buyers below {SENIOR_BUYER_AGE} only." if name == "calculate_maximum_affordability"
+                        else "ask me for a grant estimate if you'd like one."))
+                    continue
                 if value.get("status") == "needs_information" and name == "calculate_cpf_housing_grants" and grants_unconfirmed:
                     lines.append(f"- {label}: not worked out — your grant eligibility is not confirmed yet (HDB confirms "
                                  "it in the HFE letter).")
@@ -5373,7 +5444,11 @@ def template_response(state: HDBCompassState) -> str:
         fin = {name: value for name, value in fin.items() if value.get("status", "ok") == "ok" and "error" not in value}
         g = fin.get("calculate_cpf_housing_grants")
         if g:
-            lines.append(f"- Grants: EHG ${g['enhanced_housing_grant']:,.0f} + Family ${g['family_grant']:,.0f} + PHG ${g['proximity_housing_grant']:,.0f} = **${g['total_grants']:,.0f}**")
+            # a single buyer's CPF Housing Grant is the Singles Grant, not the Family Grant (the calculator's
+            # family_grant field holds either)
+            single = (((uc.get("financial_inputs") or {}).get("grants") or {}).get("citizenship_pair") == "SC_Single")
+            lines.append(f"- Grants: EHG ${g['enhanced_housing_grant']:,.0f} + {'Singles' if single else 'Family'} "
+                         f"${g['family_grant']:,.0f} + PHG ${g['proximity_housing_grant']:,.0f} = **${g['total_grants']:,.0f}**")
         a = fin.get("calculate_maximum_affordability")
         if a:
             lines.append(f"- Max purchase price ${a['max_purchase_price']:,.0f} (loan ${a['max_loan_amount']:,.0f}, instalment ${a['monthly_instalment']:,.0f}/mth, binding: {a['binding_constraint']})")
@@ -5773,6 +5848,8 @@ def clarification_needed(state: HDBCompassState) -> Optional[Dict[str, Any]]:
     c = state.get("user_constraints") or {}
     if c.get("short_lease"):
         return None   # the lease ends before the youngest buyer turns 95: no fact asked for could give an estimate (SEM-21)
+    if c.get("senior_buyer"):
+        return None   # a buyer aged 55 or over: the calculators give no loan or ceiling whatever else is told (HOUSE-09)
     grants_unconfirmed = ((c.get("financial_inputs") or {}).get("grants") or {}).get("eligibility_confirmed") is False
     if c.get("pr_couple") or grants_unconfirmed:
         # no grant can be worked out (two PRs; grant eligibility not confirmed: "HDB has not confirmed our grant
@@ -6119,6 +6196,11 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
             sentences.append(policy_fallback_opening(state))
         elif state.get("rag_policy_passages") and "retrieve_hdb_policy_knowledge" not in unbuilt:
             sentences.append("The policy search found no HDB passage that answers this directly.")
+        ceiling = (fin.get("calculate_maximum_affordability") or {}).get("max_purchase_price")
+        if done and c.get("asked_price") and "calculate_maximum_affordability" in fin_ok and ceiling:
+            # the question it asked first, in words (the facts give both figures): "is a $450k flat within the ceiling?"
+            sentences.append("Yes, that flat is within your estimated ceiling." if c["asked_price"] <= ceiling
+                             else "No, that flat is above your estimated ceiling.")
         if done:
             words = [w for w, _ in done]
             sentences.append(f"Here {'is' if len(done) == 1 and not done[0][1] else 'are'} your {_join_words(words)}, "
@@ -6135,6 +6217,10 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
             sentences.append(f"I can't give an affordability verdict for {c['flat_purchase']['block']}: its remaining lease "
                              "is too short for your ages, so HDB prorates the CPF you can use, the loan and the grants, "
                              "which this estimate doesn't model (the details are below).")
+        elif fin and not done and c.get("senior_buyer"):
+            # no figures (the facts state the age limit): the question it asked is answered first
+            sentences.append("I can't estimate a loan or budget ceiling for your ages: this estimate covers younger buyers "
+                             "only, and HDB works out an older buyer's loan in its HFE assessment (details below).")
         elif fin and not done:
             sentences.append("Your estimate could not be worked out in full; what is missing is said below.")
         sql = state.get("sql_market_results") or {}
@@ -6216,6 +6302,11 @@ def _named_blocks(text: str, listed: List[Dict[str, Any]]) -> List[Tuple[int, Op
             same = [i for i in same if str(listed[i].get("street") or "").upper() in text.upper()]
         out.append((at, same[0] if len(same) == 1 else None))
     return out
+
+
+# Comparative words _COMPARISON does not hold, for blocks compared where no listed set can check them
+_LOOSE_COMPARISON = re.compile(r"\b(?:lower|higher|cheaper|pricier|(?:more|less) expensive|similar|varying|longer|shorter|"
+                               r"nearer|closer|further|farther|above|below)\b", re.I)
 
 
 def comparisons_hold(sentence: str, listed: List[Dict[str, Any]]) -> bool:
@@ -6458,6 +6549,11 @@ def check_model_opening(text: str, state: HDBCompassState, facts: str,
         elif searched and _LEANS_BACK.match(sentence):
             reason = "leans_back"
         elif searched and not comparisons_hold(sentence, blocks[:LISTED_BLOCKS]):
+            reason = "comparisons"
+        elif not searched and _BLOCK_LIST.search(sentence) and (_COMPARISON.search(sentence) or _LOOSE_COMPARISON.search(sentence)):
+            # blocks compared outside a block search (an area's price breakdown) cannot be checked against a listed set:
+            # "Blk 507 has ... a shorter distance" than Blk 515 was false by its own table (STATS-06 t2, live 5 Nov), and
+            # "Blk 507 and Blk 508 have lower prices compared to the area median ... varying lease years" (t1)
             reason = "comparisons"
         elif notes_are_facts and _NOTE.search(sentence):
             reason = "notes"
