@@ -40,6 +40,7 @@ from agents.llm import active_profile, get_llm, load_config
 from agents import addons
 from agents import sanitizer, scope
 from agents import research_intents as ri
+from agents.research_schemas import STATS_DIMENSIONS
 from agents.schemas import (
     TOOL_OWNER,
     LLMExtractedConstraints,
@@ -514,6 +515,12 @@ _LIVE_QUOTA_ASK = re.compile(r"\b(?:can|could|do|does|will|would)\s+(?:you|this 
                              r"(?:(?:eip|spr|ethnic(?:ity)?|racial|block'?s?|neighbou?rhood)\s+)*quotas?\b"
                              r"|\bquotas?\b[^.?!]{0,30}\b(?:right now|currently|live|real[- ]time)\b", re.I)
 APP_ESTIMATE_OPENING = "No, these are estimates; only HDB's HFE letter confirms eligibility, grants and loan."
+# A rule other than the grants, which a PR couple's question may ask about as well
+_OTHER_RULE = re.compile(r"\b(?:eip|spr|quotas?|ethnic\w*|bto|mop|minimum occupation|wait\w*|sell\w*|rent\w*|loans?|"
+                         r"resale levy|ballot\w*|lease)\b", re.I)
+# Two Singapore PRs: no CPF housing grant (CPF Family Grant, EHG, PHG) is open to a household with no citizen buyer
+PR_COUPLE_OPENING = ("Buyers who are both Singapore permanent residents get no CPF housing grants: each grant for a "
+                     "resale flat needs at least one buyer who is a Singapore citizen.")
 LIVE_QUOTA_OPENING = ("I can't check a block's current EIP/SPR quota here; HDB's quota enquiry service on hdb.gov.sg "
                       "shows it — check before the OTP.")
 APP_ESTIMATE_POLICY_QUERY = "HDB Flat Eligibility HFE letter housing grant loan eligibility"
@@ -1145,7 +1152,10 @@ _SC_COUPLE = re.compile(
     # buyers" (SEM-19: each asked for the citizenship again)
     r"|\b(?:we(?:'re| are)\s+(?:a\s+)?)?married\s+(?:singapore(?:an)?\s+)?citizens\b"
     r"|^\W*(?:we(?:'re| are)\s+)?(?:singapore(?:an)?\s+)?citizen\s+(?:first[- ]?timers|first[- ]?timer buyers|buyers|first[- ]time buyers)\b"
-    r"|\bwe(?:'re| are)\s+(?:married\s+)?(?:singapore(?:an)?\s+)?citizen\s+(?:first[- ]?timers?|first[- ]?timer buyers|buyers)\b", re.I)
+    r"|\bwe(?:'re| are)\s+(?:married\s+)?(?:singapore(?:an)?\s+)?citizen\s+(?:first[- ]?timers?|first[- ]?timer buyers|buyers)\b"
+    # the other order: "We are first-timer Singapore citizens." (live 5 Nov: the next turn still asked for citizenship)
+    r"|\bwe(?:'re| are)\s+(?:both\s+)?(?:married\s+)?(?:first[- ]?timers?|first[- ]?time(?: buyers?)?)\s+(?:singapore(?:an)?\s+)?"
+    r"(?:citizens|singaporeans|SCs)\b", re.I)
 # buying with someone who is not a spouse: not the couple schemes
 _NOT_A_COUPLE = re.compile(r"\bjoint singles?\b|\btwo singles\b|\bwith (?:my|a) (?:friend|sister|brother|sibling|cousin|colleague)\b"
                            r"|\b(?:me|i) and my (?:friend|sister|brother|sibling|cousin|colleague)\b", re.I)
@@ -1226,6 +1236,10 @@ _KID_WORDS = re.compile(r"\b(?:kids?|child(?:ren)?|sons?|daughters?|baby|babies|
 # Someone else who will live in the flat with a single buyer: a child, a parent or sibling, or a co-applicant
 _OTHER_OCCUPANT = re.compile(r"\b(?:with|and|plus) (?:my |our )?(?:parents?|mother|father|mum|mom|dad|siblings?|brothers?|"
                              r"sisters?|grand\w+|friends?|partner|fianc\w*)\b|\bjoint singles?\b|\bco-?applicants?\b", re.I)
+
+
+SINGLE_ALONE_NOTE = ("You are taken to be buying alone under the Single Singapore Citizen scheme, so you are the "
+                     "only core member; tell me if someone else will be in the application.")
 
 
 def single_buying_alone(text: str) -> bool:
@@ -2676,6 +2690,35 @@ def instalment_question(q: str, prior: Optional[Dict[str, Any]] = None) -> Optio
 # Words that ask whether a flat is affordable for the household, which a search's price limit does not
 _AFFORD_WORDS = re.compile(r"\bafford\w*|\bbudget\b|\bhow much (?:can|could) (?:we|i)\b|\bwithin (?:my|our) means\b|"
                            r"\b(?:can|could) (?:we|i) (?:buy|get)\b|\bceiling\b|\bgrants?\b|\bloan\b", re.I)
+# Words in an address that do not say which place it is
+_ADDRESS_FILLER = frozenset({"blk", "block", "road", "street", "avenue", "drive", "crescent", "lane", "close", "walk",
+                             "central", "north", "south", "east", "west", "upper", "lower", "singapore", "station",
+                             "centre", "center", "flat", "flats", "near", "town"})
+
+
+def place_in_text(place: str, text: str) -> bool:
+    """Whether a place the model read is one the text names. A block or postal code: its number is in the text ("Blk
+    884" for "Tampines blk884"). A place with no number: one of its own words is, or the HDB town it names ("Ang Mo
+    Kio Hub" for "AMK hub")."""
+    low = str(text).lower()
+    num = re.search(r"\d+[a-z]?", str(place).lower())
+    if num:
+        return bool(re.search(rf"(?<!\d){re.escape(num.group(0))}(?![\da-z])", low)) or (
+            num.group(0)[-1].isalpha() and bool(re.search(rf"(?<!\d){num.group(0)[:-1]}\s*{num.group(0)[-1]}\b", low)))
+    words = [w for w in re.findall(r"[a-z]{3,}", str(place).lower()) if w not in _ADDRESS_FILLER]
+    if any(re.search(rf"\b{re.escape(w)}", low) for w in words):
+        return True
+    initials = "".join(w[0] for w in re.findall(r"[A-Za-z]+", str(place)) if w.lower() not in ("of", "the", "and"))
+    if len(initials) >= 2 and re.search(rf"\b{re.escape(initials)}\b", str(text), re.I):
+        return True              # "National University of Singapore" for "near NUS"
+    towns = set(named_towns(str(place), any_case_short=True))
+    return bool(towns & set(named_towns(str(text), any_case_short=True)))
+
+
+# Words that say who the buyers are (citizenship, residency, marital or first-timer status)
+_BUYER_STATUS_WORDS = re.compile(r"\b(?:citizens?|singaporeans?|scs?|sprs?|prs?|permanent residents?|foreign\w*|non[- ]?residents?|"
+                          r"singles?|unmarried|married|couple|spouse|husband|wife|fianc\w*|first[- ]?timers?|"
+                          r"second[- ]?timers?)\b", re.I)
 # A flat's price asked against the ceiling: "is a $450k flat within the ceiling?", "would a $500k flat fit my budget?"
 _PRICE_AGAINST_CEILING = re.compile(r"\b(?:within|under|below|above|over|exceed\w*|fits?|beyond)\b[^?.]{0,25}"
                                     r"\b(?:the |my |our |this |that )?(?:ceiling|budget|max(?:imum)?(?: price| budget)?|limit)\b",
@@ -2780,6 +2823,12 @@ _STATS_MIN_SALES = re.compile(r"\b(?:at least|min(?:imum)?(?: of)?|>=?)\s*(\d{1,
 _STATS_YEARS = re.compile(r"(?:last|past|over|previous)\s+(\d{1,2}|two|three|four|five|ten)\s+years?", re.I)
 
 
+# A follow-up that names a grouping of its own
+_NAMES_GROUPING = re.compile(r"\b(?:group\w*|break\w*\s+(?:it\s+|this\s+|that\s+)?down|split\w*)\b|\b(?:by|per|across)\s+"
+                             r"(?:the\s+)?(?:towns?|years?|months?|storeys?|floors?|flat\s*types?|leases?|blocks?|streets?|"
+                             r"stations?|regions?|areas?|distances?)\b", re.I)
+
+
 def _carry_analysis(c: Dict[str, Any], prior: Dict[str, Any], fresh: Dict[str, Any], query: str) -> bool:
     """A short follow-up to a grouped-statistics answer keeps that analysis, changing only what the message states: a
     flat type or town (through the merge), the order ("Sort from cheapest to most expensive.", SPAT-46: it stayed
@@ -2881,11 +2930,33 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         # NORTH 2025" (STATS-06 t1, live 5 Nov)
         constraints["bto_project_name"] = None
         errors.append("extract_constraints: model's BTO project dropped: the message names no launch")
-    if from_model and constraints.get("wants_area_affordability") and not _AFFORD_WORDS.search(query):
-        # "4-room below 750k" is a price limit on the search, not "can we afford a flat there?": the live model's
-        # reading added an affordability section and a household questionnaire nobody asked for (SPATIAL-07 t1, 5 Nov)
-        constraints["wants_area_affordability"] = False
-        errors.append("extract_constraints: model's affordability reading dropped: the message asks nothing about affording")
+    said_here = rule_based_extract(query) if from_model else None   # code's own reading of this message
+    if from_model and constraints.get("addresses"):
+        # a place nobody in the conversation named: "BSD only for a residential purchase of $360,000" was read with
+        # 123, 456 and 789 Bishan Road, and the next turn's "Change price and valuation to $500,000." checked prices at
+        # 123 Bishan Road "which you mentioned earlier" (MONEY-08, live 5 Nov). A block from the last answer ("the
+        # cheapest one") is in the conversation and stays.
+        said = " ".join(str(m.get("content", "")) for m in state.get("messages") or [] if isinstance(m, dict)) or query
+        kept = [a for a in constraints["addresses"] if place_in_text(a, said)]
+        kept += [a for a in said_here.addresses or [] if a not in kept] if not kept else []   # code's own reading
+        if kept != list(constraints["addresses"]):
+            errors.append(f"extract_constraints: places not in the conversation were dropped: "
+                          f"{[a for a in constraints['addresses'] if a not in kept]}")
+            constraints["addresses"] = kept
+    for flag in ("wants_area_affordability", "wants_flat_affordability"):
+        if from_model and constraints.get(flag) and not _AFFORD_WORDS.search(query) and not getattr(said_here, flag, False):
+            # "4-room below 750k" is a price limit on the search, not "can we afford a flat there?": the live model's
+            # reading added an affordability section and a household questionnaire nobody asked for (SPATIAL-07 t1,
+            # DEMO-01 t1, 5 Nov)
+            constraints[flag] = False
+            errors.append("extract_constraints: model's affordability reading dropped: the message asks nothing about affording")
+    if from_model and constraints.get("citizenship_scheme") and not _BUYER_STATUS_WORDS.search(query) \
+            and not citizenship_stated(query) and first_timer_stated(query) is None:
+        # who the buyers are, when the message says nothing about them: with the budget of "4-room resale in Tampines
+        # below $650k, please." the live model's guessed scheme sent the search to the grant calculators, and the
+        # answer ended with a household questionnaire (DEMO-01 t1, 5 Nov). Code's reading carries an earlier turn's.
+        constraints["citizenship_scheme"] = None
+        errors.append("extract_constraints: model's citizenship dropped: the message says nothing about the buyers")
     price = ((constraints.get("financial_inputs") or {}).get("upfront") or {}).get("purchase_price")
     if from_model and price and constraints.get("max_budget_sgd") == price \
             and rule_based_extract(query).max_budget_sgd != price \
@@ -2985,6 +3056,9 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     # message as a question about a listed block, a new radius for the last place or a change to the last analysis
     # ("Sort from cheapest to most expensive.": _carry_analysis), and never for a conditional ask
     # ("If nothing fits, show which one change would help." got the note above 5 matching blocks: SEM-17)
+    # a follow-up that keeps the analysis and names no grouping of its own ("Limit it to Tampines.") keeps its
+    # grouping in the model's statistics call too (statistics_args); "Group it by town instead." regroups
+    constraints["stats_group_held"] = bool(analysis_carried and not _NAMES_GROUPING.search(query))
     if prior and not pending and not analysis_carried and not constraints.get("clarifications") \
             and not constraints.get("listed_pick") and not constraints.get("addresses") and not constraints.get("map_pin") \
             and not constraints.get("nearby_schools") and not _CONDITIONAL_ASK.search(query) \
@@ -3070,6 +3144,11 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         grants.pop("proximity_eligibility_confirmed", None)
         constraints["assumptions"] = list(constraints.get("assumptions") or []) + [
             "The Proximity Housing Grant is left out because your eligibility for it is not confirmed."]
+    if grants.get("youngest_core_member_age") is not None and grants.get("citizenship_pair") == "SC_Single" \
+            and single_buying_alone(users) and SINGLE_ALONE_NOTE not in (constraints.get("assumptions") or []):
+        # the core member's age code took from the buyer's own (stated_financial_inputs), said so: the grants and
+        # ceiling are a single buyer's on their own (HOUSE-05 t2/t3, 5 Nov rerun: "inferred without disclosure")
+        constraints["assumptions"] = list(constraints.get("assumptions") or []) + [SINGLE_ALONE_NOTE]
     prior_inst = (state.get("prior_constraints") or {}).get("instalment")
     inst = instalment_question(query, prior_inst)
     asked = str((pending or {}).get("question") or "")
@@ -4187,6 +4266,13 @@ def statistics_args(args: Dict[str, Any], c: Dict[str, Any], errors: List[str], 
         # "Only groups with at least 20 sales.": the size the user named (_carry_analysis), not the tool's default 10
         errors.append(f"{label}: statistics limited to groups with at least {c['stats_min_sales']} sales, as asked")
         args = {**args, "min_sales": int(c["stats_min_sales"])}
+    group = [g for g in (c.get("stats_group_by") or []) if g in STATS_DIMENSIONS][:2]
+    if c.get("stats_group_held") and group and list(args.get("group_by") or []) != group:
+        # the grouping the question asked for, carried to a follow-up: "Limit it to Tampines." after "How have 4-room
+        # prices changed by storey since 2020?" was grouped by town, the model's call dropping the storey (STATS-03 t2,
+        # live 5 Nov). Code's plan passes the same (research_intents.stats_call_args).
+        errors.append(f"{label}: statistics grouped by {', '.join(group)}, as asked")
+        args = {**args, "group_by": group}
     # the period the user named, carried to a follow-up: "Limit it to Tampines." after "How have 4-room prices changed
     # by storey since 2020?" was answered for the last 12 months, the model's call leaving out the start (STATS-03 t2,
     # live 4 Nov). Code's plan passes the same (research_intents' statistics arguments).
@@ -6115,6 +6201,17 @@ def forced_opening(state: HDBCompassState) -> Tuple[Optional[str], bool]:
         return LIVE_QUOTA_OPENING, False
     if _APP_ESTIMATE_ASK.search(query) and _ASKED.search(query):
         return APP_ESTIMATE_OPENING, False
+    users = [str(m.get("content", "")) for m in state.get("messages") or [] if isinstance(m, dict) and m.get("role") == "user"]
+    other_rule = _OTHER_RULE.search(query)
+    # a grant question on this turn, or "What if both buyers are PRs?" straight after one (a short follow-up naming no
+    # other rule): a later "What is the SPR quota rule?" in the same conversation is answered for its own topic
+    grant_turn = _ANY_GRANT.search(query) or (
+        len(users) >= 2 and _ANY_GRANT.search(users[-2]) and not other_rule and len(query.split()) <= 12)
+    if (state.get("user_constraints") or {}).get("pr_couple") and grant_turn and not state.get("financial_breakdown"):
+        # the answer is code's (pr_couple), not a passage. The live model opened with the EIP rule and the no-model
+        # answer with "Previous housing grant recipients can still claim the PHG" (POLICY-03 t2, 5 Nov). A question
+        # that also asks another rule ("... grants. Can we buy a BTO flat?") keeps the model's checked sentences after it
+        return PR_COUPLE_OPENING, bool(other_rule)
     return None, False
 
 
@@ -6302,6 +6399,40 @@ def _named_blocks(text: str, listed: List[Dict[str, Any]]) -> List[Tuple[int, Op
             same = [i for i in same if str(listed[i].get("street") or "").upper() in text.upper()]
         out.append((at, same[0] if len(same) == 1 else None))
     return out
+
+
+# A statistics table cut short (research_intents' grouped-statistics facts), and the words that rank a whole set
+# high or low ("for the most part", "most recent" and "on top of" rank nothing)
+_GROUPS_NOT_SHOWN = "more group(s) not shown"
+_RANK_HIGH = (r"highest|priciest|dearest|most expensive|most costly|top(?=\s+(?:\d+|three|five|ten)\b)|at the top|"
+              r"(?:rose|risen|grew|increased|gained|climbed|went up)\s+(?:the\s+)?most")
+_RANK_LOW = (r"lowest|cheapest|least expensive|most affordable|least costly|at the bottom|"
+             r"(?:fell|fallen|dropped|decreased|declined|went down)\s+(?:the\s+)?most|rose\s+(?:the\s+)?least")
+_RANKS_A_SET = re.compile(rf"\b(?:{_RANK_HIGH}|{_RANK_LOW}|biggest|smallest|largest|fastest|slowest)\b", re.I)
+_RANKS_HIGH = re.compile(rf"\b(?:{_RANK_HIGH})\b", re.I)
+_RANKS_LOW = re.compile(rf"\b(?:{_RANK_LOW})\b", re.I)
+_OF_THE_SHOWN = re.compile(
+    r"\b(?:of|among|in)\s+(?:the\s+|these\s+)?(?:\d+\s+|ten\s+)?(?:(?:towns?|groups?|streets?|rows?|areas?|ones?)\s+)?"
+    r"(?:shown|listed|below|above|here)\b|\b(?:towns?|groups?|streets?|rows?|areas?|ones?)\s+(?:shown|listed|here)\b"
+    r"|\b(?:in|of|from)\s+(?:the|this)\s+(?:table|list)\b|\b(?:of|among)\s+(?:these|those)\b", re.I)
+# The statistics table's headline (research_intents): "Queenstown has the highest median price ($1,028,000), ..."
+_TABLE_HEADLINE = re.compile(r"^(.+?) has the (highest|lowest) ", re.M)
+
+
+def ranks_part_table(sentence: str, facts: str) -> bool:
+    """A sentence that ranks a whole set from a statistics table showing only some of its groups. Not one limited to
+    the rows shown ("Of the towns shown, ..."), nor one making the headline's own claim ("Queenstown has the highest
+    median price" above a table that leads with Queenstown, highest first): the headline ranks the whole set."""
+    if _GROUPS_NOT_SHOWN not in (facts or "") or not _RANKS_A_SET.search(sentence) or _OF_THE_SHOWN.search(sentence):
+        return False
+    head = _TABLE_HEADLINE.search(facts)
+    if head and head.group(1).strip().lower() in sentence.lower():
+        same_way = _RANKS_HIGH if head.group(2) == "highest" else _RANKS_LOW
+        other_way = _RANKS_LOW if head.group(2) == "highest" else _RANKS_HIGH
+        rest = re.sub(re.escape(head.group(1).strip()), " ", sentence, flags=re.I)
+        if same_way.search(sentence) and not other_way.search(rest):
+            return False   # the headline's group and direction, with no other group ranked in the same sentence
+    return True
 
 
 # Comparative words _COMPARISON does not hold, for blocks compared where no listed set can check them
@@ -6514,7 +6645,8 @@ def check_model_opening(text: str, state: HDBCompassState, facts: str,
     notes_are_facts = searched or not state.get("rag_policy_passages")
     kept: List[str] = []
     dropped = {"figures": 0, "comparisons": 0, "notes": 0, "leans_back": 0, "restated": 0, "lead_ins": 0, "relevance": 0,
-               "scope": 0, "grants_ceiling": 0, "pr_grants": 0, "proximity": 0, "filler": 0}
+               "scope": 0, "grants_ceiling": 0, "pr_grants": 0, "proximity": 0, "filler": 0, "part_table": 0}
+    part_table = _GROUPS_NOT_SHOWN in (facts or "")
     fact_lines = {_plain(line) for line in (facts or "").splitlines() if _plain(line)}
     nothing_found = (facts or "").strip() == NO_DATA
     shown = shown_policy_passages(policy, user_request(state)) if policy else []
@@ -6546,6 +6678,12 @@ def check_model_opening(text: str, state: HDBCompassState, facts: str,
             reason = "relevance"
         elif policy and policy_scope_conflict(sentence, user_request(state), shown):
             reason = "scope"
+        elif part_table and not (searched and _BLOCK_LIST.search(sentence)) and ranks_part_table(sentence, facts):
+            # a statistics table that shows only some of its groups: "Central Area has the highest median price ...,
+            # while Tampines offers the lowest" read the bottom of 10 shown towns as the lowest of 26 (live 5 Nov,
+            # "Group it by town instead."; STATS-04 t2 called Yishun "the most expensive" of a 10-cheapest table).
+            # The facts' own headline ranks the whole set. A sentence about listed blocks is comparisons_hold's below.
+            reason = "part_table"
         elif searched and _LEANS_BACK.match(sentence):
             reason = "leans_back"
         elif searched and not comparisons_hold(sentence, blocks[:LISTED_BLOCKS]):
@@ -6858,6 +6996,7 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
                 why["pr_grants"] = "gave two permanent residents a CPF housing grant"
                 why["proximity"] = "stated a distance to a place the facts give no distance for"
                 why["filler"] = "talked about choosing among blocks when none are listed"
+                why["part_table"] = "ranked the whole set from a table that shows only part of it"
                 drops = [f"synthesize: dropped {dropped[r]} opening sentence(s) that {w}" for r, w in why.items() if dropped[r]]
                 if drops and code_only:
                     drops[0] += "; code opening used"

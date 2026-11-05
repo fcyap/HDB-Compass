@@ -119,8 +119,9 @@ def test_a_two_prs_are_not_told_they_may_get_a_housing_grant():
             "Proximity Housing Grant, which has no income ceiling and is available to both first-timers and second-timers.")
     out = with_model_opening(second, live)
     assert "may still be eligible" not in out["draft_response"]
-    assert opening(out).startswith("If both buyers are PRs, they are not eligible for the CPF Family Grant.")
-    assert any("gave two permanent residents a CPF housing grant" in e for e in out["errors"])
+    # code's rule leads, and the model's sentences do not follow it (5 Nov rerun: the live model opened with EIP)
+    assert opening(out).startswith(sv.PR_COUPLE_OPENING)
+    assert "Proximity Housing Grant" not in opening(out)
 
 
 def test_a_mrt_nearness_is_dropped_when_the_facts_give_no_mrt_distance():
