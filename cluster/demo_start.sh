@@ -130,7 +130,7 @@ if [[ "$DRY_RUN" == 1 ]]; then
     echo "   start or reuse the hdb-vllm GPU job, open the tunnel and smoke-test the model"
     echo "   run the backend with LLM_PROFILE=vllm LLM_TIMEOUT_S=$TIMEOUT_S LLM_MAX_RETRIES=${LLM_MAX_RETRIES:-0}"
   elif [[ "$MODE" == claude ]]; then
-    echo "   smoke-test Claude, then run the backend with LLM_PROFILE=claude LLM_TIMEOUT_S=${LLM_TIMEOUT_S:-60} LLM_MAX_RETRIES=${LLM_MAX_RETRIES:-1} HDB_TRUST_MODEL_READING=${HDB_TRUST_MODEL_READING:-0} HDB_READING_CONTEXT=${HDB_READING_CONTEXT:-1}"
+    echo "   smoke-test Claude, then run the backend with LLM_PROFILE=claude LLM_TIMEOUT_S=${LLM_TIMEOUT_S:-60} LLM_MAX_RETRIES=${LLM_MAX_RETRIES:-1} HDB_TRUST_MODEL_READING=${HDB_TRUST_MODEL_READING:-0} HDB_READING_CONTEXT=${HDB_READING_CONTEXT:-1} HDB_ANSWER_STYLE=${HDB_ANSWER_STYLE:-conversational}"
   else
     echo "   run the backend with LLM_PROFILE=none (no model)"
   fi
@@ -225,13 +225,16 @@ elif [[ "$MODE" == claude ]]; then
   # checks on its reading stay on (the 6 Nov full run: switching them off made 69 QA turns worse).
   # HDB_TRUST_MODEL_READING=1 bash cluster/demo_start.sh --claude switches the checks off again for a test.
   export HDB_TRUST_MODEL_READING="${HDB_TRUST_MODEL_READING:-0}" HDB_READING_CONTEXT="${HDB_READING_CONTEXT:-1}"
+  # how the app answers on Claude (agents/supervisor.py answer_style): focused answers what each message asks and asks a
+  # few facts at a time; conversational also lets Claude write the reply from code's checked facts
+  export HDB_ANSWER_STYLE="${HDB_ANSWER_STYLE:-conversational}"
   # a hosted model now and then answers the test question in text instead of calling the tool: one more try
   for _ in 1 2; do
     .venv/bin/python cluster/smoke_test.py > "$LOGS/smoke.log" 2>&1
     grep -q "OK: well-formed" "$LOGS/smoke.log" && break
   done
   grep -q "OK: well-formed" "$LOGS/smoke.log" || { tail -5 "$LOGS/smoke.log"; echo "Claude smoke test failed (log: $LOGS/smoke.log). Check ANTHROPIC_API_KEY, or use --offline."; exit 1; }
-  echo "== Claude ready ($(grep -o 'latency=[0-9.]*s' "$LOGS/smoke.log"); model: $(.venv/bin/python -c 'from agents.llm import active_profile as a; print(a()["model"])' 2>/dev/null); earlier turns read: $([[ "$HDB_READING_CONTEXT" =~ ^(1|true|yes|on)$ ]] && echo yes || echo no); code's checks: $([[ "$HDB_TRUST_MODEL_READING" =~ ^(1|true|yes|on)$ ]] && echo off || echo on))"
+  echo "== Claude ready ($(grep -o 'latency=[0-9.]*s' "$LOGS/smoke.log"); model: $(.venv/bin/python -c 'from agents.llm import active_profile as a; print(a()["model"])' 2>/dev/null); earlier turns read: $([[ "$HDB_READING_CONTEXT" =~ ^(1|true|yes|on)$ ]] && echo yes || echo no); code's checks: $([[ "$HDB_TRUST_MODEL_READING" =~ ^(1|true|yes|on)$ ]] && echo off || echo on); answer style: $HDB_ANSWER_STYLE)"
 else
   export LLM_PROFILE=none
 fi

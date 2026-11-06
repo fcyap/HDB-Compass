@@ -41,7 +41,12 @@ export interface StructuredAgentData {
   clarification?: { kind?: string; question?: string; needed?: string[]; options: { label: string; text: string }[] };
   school_lookup?: { status: string; schools: { name: string; distance_meters: number }[] };
   flat_type?: string;
+  // conversational style (HDB_ANSWER_STYLE): each card's own figures, so they are not read back out of the answer text
+  candidate_cards?: { name: string; price?: number | null; lease?: number | null; distance?: number | null }[];
 }
+
+// A composed reply (conversational style) keeps code's checked facts under this line; they show as collapsed Details
+const DETAILS_SEP = '\n\n---\n\n**Details (checked figures)**\n\n';
 
 export interface ChatMessage {
   id: string;
@@ -51,6 +56,7 @@ export interface ChatMessage {
   status?: 'running' | 'completed' | 'error';
   structuredData?: StructuredAgentData;
   stepLogs?: LogMessage[];
+  streamText?: string;   // the composed reply as it streams in (REPLY_DELTA), until the final answer replaces it
 }
 
 export interface ModelInfo {
@@ -59,6 +65,14 @@ export interface ModelInfo {
   mode?: string;
   status?: string;
   message?: string;
+  answer_style?: string;   // "conversational" on the Claude app; every other value renders as before
+}
+
+export interface ModelOption {
+  id: string;
+  label: string;
+  available: boolean;
+  reason?: string;
 }
 
 interface AgentChatProps {
@@ -66,6 +80,9 @@ interface AgentChatProps {
   agentStatus: string;
   wsConnected: boolean;
   modelInfo?: ModelInfo;
+  modelOptions?: ModelOption[];
+  selectedModel?: string;
+  onSelectModel?: (id: string) => void;
   onSendQuery: (query: string) => void;
   onClear: () => void;
   onSelectBlock?: (blockSummary: string) => void;
@@ -107,6 +124,9 @@ export const AgentChat: React.FC<AgentChatProps> = ({
   agentStatus,
   wsConnected,
   modelInfo,
+  modelOptions = [],
+  selectedModel,
+  onSelectModel,
   onSendQuery,
   onClear,
   onSelectBlock,
@@ -171,6 +191,22 @@ export const AgentChat: React.FC<AgentChatProps> = ({
         </div>
 
         <div className="header-actions">
+          {modelOptions.length > 0 && onSelectModel && (
+            <select
+              className="model-select"
+              aria-label="Model"
+              title="The model that answers your next question"
+              value={selectedModel}
+              disabled={busy}
+              onChange={(e) => onSelectModel(e.target.value)}
+            >
+              {modelOptions.map((o) => (
+                <option key={o.id} value={o.id} disabled={!o.available} title={o.available ? '' : o.reason}>
+                  {o.label}{o.available ? '' : ' (unavailable)'}
+                </option>
+              ))}
+            </select>
+          )}
           <span
             className={`status-dot ${wsConnected ? 'connected' : 'disconnected'}`}
             role="status"
@@ -215,7 +251,14 @@ export const AgentChat: React.FC<AgentChatProps> = ({
             ) : (
               <div className="agent-message-card">
                 {/* While no answer has arrived, a shimmering line names the current step */}
-                {msg.status === 'running' && !msg.structuredData ? (
+                {msg.status === 'running' && !msg.structuredData && msg.streamText ? (
+                  <div className="agent-card-body">
+                    <div className="agent-summary-text streaming">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.streamText}</ReactMarkdown>
+                      <span className="stream-caret" aria-hidden="true" />
+                    </div>
+                  </div>
+                ) : msg.status === 'running' && !msg.structuredData ? (
                   <div className="agent-running-banner" role="status">
                     <span className="thinking-orb" />
                     <span className="thinking-text">
@@ -229,9 +272,22 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                       remarkPlugins={[remarkGfm]}
                       components={{ a: (props) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}
                     >
-                      {msg.text}
+                      {msg.text.includes(DETAILS_SEP) ? msg.text.split(DETAILS_SEP)[0] : msg.text}
                     </ReactMarkdown>
                   </div>
+                  {msg.text.includes(DETAILS_SEP) && (
+                    <details className="answer-details">
+                      <summary>Details (checked figures)</summary>
+                      <div className="agent-summary-text">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={{ a: (props) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}
+                        >
+                          {msg.text.split(DETAILS_SEP).slice(1).join(DETAILS_SEP)}
+                        </ReactMarkdown>
+                      </div>
+                    </details>
+                  )}
 
                   {/* Option chips for an open follow-up question (latest answer only): a click sends the option's text */}
                   {msg.id === messages[messages.length - 1]?.id && (msg.structuredData?.clarification?.options?.length ?? 0) > 0 && (
@@ -282,7 +338,13 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                           // If distance not in block string, cross-reference response text for block stats
                           let priceInfo: string | null = null;
                           let leaseInfo: string | null = null;
-                          if (msg.text) {
+                          const card = msg.structuredData?.candidate_cards?.find(
+                            (c) => c.name.toUpperCase() === cleanName.toUpperCase());
+                          if (card) {   // the card's own figures (conversational style)
+                            if (!dist && card.distance != null) dist = `${card.distance}m`;
+                            if (card.price != null) priceInfo = `$${Math.round(card.price).toLocaleString('en-US')}`;
+                            if (card.lease != null) leaseInfo = `${Math.round(card.lease)} yrs`;
+                          } else if (msg.text) {
                             const blockLine = msg.text.split('\n').find((l) =>
                               l.toUpperCase().includes(cleanName.toUpperCase())
                             );
@@ -364,7 +426,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                 {msg.stepLogs && msg.stepLogs.length > 0 && (
                   <div className="trace-accordion">
                     <button className="trace-toggle-btn" onClick={() => toggleTrace(msg.id)} aria-expanded={!!expandedTraceIds[msg.id]}>
-                      <span>{msg.stepLogs.length} {msg.stepLogs.length === 1 ? 'step' : 'steps'}</span>
+                      <span>{modelInfo?.answer_style === 'conversational' ? 'How I worked this out · ' : ''}{msg.stepLogs.length} {msg.stepLogs.length === 1 ? 'step' : 'steps'}</span>
                       {expandedTraceIds[msg.id] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                     </button>
 

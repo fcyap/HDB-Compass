@@ -41,6 +41,7 @@ from agents import addons
 from agents import sanitizer, scope
 from agents import research_intents as ri
 from agents.research_schemas import STATS_DIMENSIONS
+from agents.session_settings import setting   # the app chat's model choice, else the environment
 from agents.schemas import (
     TOOL_OWNER,
     LLMExtractedConstraints,
@@ -2097,7 +2098,7 @@ def trust_model_reading() -> bool:
     the user wants their own money figures worked out (TrustedModelReading). Off by default: those checks were built
     because the cluster model misread often; the switch is for testing whether a stronger model (the claude profile,
     cluster/demo_start.sh --claude) does better without them. Experiment 1 runs with it off."""
-    return os.getenv("HDB_TRUST_MODEL_READING", "").strip().lower() in ("1", "true", "yes", "on")
+    return (setting("HDB_TRUST_MODEL_READING") or "").strip().lower() in ("1", "true", "yes", "on")
 
 
 # A block the app named in an answer: "- Blk 216 ANG MO KIO AVE 1 (ANG MO KIO) — median ...", "Near Blk 458 TAMPINES ST 42"
@@ -2140,7 +2141,7 @@ def reading_context_on() -> bool:
     (TrustedModelReading). Code's grounding checks on the reading still run unless HDB_TRUST_MODEL_READING is on: the
     full Claude run of 6 Nov found 69 of 91 worse QA turns came from switching those checks off, while the context and
     Claude's own judgement gave the turns it did better. cluster/demo_start.sh --claude turns this on."""
-    return trust_model_reading() or os.getenv("HDB_READING_CONTEXT", "").strip().lower() in ("1", "true", "yes", "on")
+    return trust_model_reading() or (setting("HDB_READING_CONTEXT") or "").strip().lower() in ("1", "true", "yes", "on")
 
 
 class TrustedModelReading(LLMExtractedConstraints):
@@ -3436,6 +3437,10 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         constraints.update(wants_market_snapshot=True, towns=list(prior.get("towns") or []),
                            flat_types=list(prior.get("flat_types") or []), snapshot_rank=rank,
                            clarifications=[], menu_options=None)
+    constraints["turn_focus"] = turn_focus(constraints, fresh_constraints, prior, pending, query) \
+        if answer_style() != "template" and with_history else None
+    if constraints["turn_focus"] == "other":
+        constraints["assumptions"] = [a for a in constraints.get("assumptions") or [] if a != UNCHANGED_NOTE]
     # a data question no specific intent recognised goes to the market agent's analysis tools instead of the menu
     constraints["analysis_mode"] = False
     if (with_history and not pending and inst is None and not constraints.get("clarifications") and not constraints.get("place_options")
@@ -4001,6 +4006,31 @@ def calculator_facts(c: Dict[str, Any]) -> bool:
                if k not in _WEAK_FINANCIAL_FACTS)
 
 
+_TURN_STATS_KEYS = ("wants_area_statistics", "wants_group_stats", "wants_market_snapshot", "wants_town_ranking",
+                    "wants_price_trend", "stats_group_by", "wants_data_catalog")
+
+
+def turn_focus(c: Dict[str, Any], fresh: Dict[str, Any], prior: Optional[Dict[str, Any]],
+               pending: Optional[Dict[str, Any]], query: str) -> str:
+    """"search" or "other" (HDB_ANSWER_STYLE focused or conversational): whether this message is about the flat search
+    or asks something else while the search is only context. "other" only when the message has its own non-search
+    question (money, a rule, named blocks to compare or check, statistics) and changed no search limit; anything unclear
+    is "search", today's behaviour. On "other" the carried search is not run or listed again: "Help me check the amount of
+    grant i will get" after a Woodlands search had re-listed 381 blocks above the grant questions (live on Claude, 6 Nov)."""
+    if not prior or (pending and pending.get("kind", "financial") != "financial"):
+        return "search"
+    if c.get("search_stated") or _NEW_SEARCH.match(query or "") or any(
+            c.get(k) for k in ("wants_area_affordability", "wants_flat_affordability", "listed_pick", "about_results")):
+        return "search"
+    if any((c.get(k) or None) != (prior.get(k) or None) for k in SEARCH_KEYS):
+        return "search"            # a refinement ("within 300m", "what about 5-room") changed the search
+    named = bool(fresh.get("addresses")) and any(c.get(k) for k in ("wants_option_comparison", "wants_block_history",
+                                                                        "wants_price_assessment"))
+    own = (c.get("money_intent") or (pending or {}).get("kind") == "financial" or fresh.get("policy_question") or named
+           or any(fresh.get(k) for k in _TURN_STATS_KEYS))
+    return "other" if own else "search"
+
+
 def decide_routing(c: Dict[str, Any], pending: Optional[Dict[str, Any]] = None) -> List[str]:
     """pending: the open follow-up question, if any. While the user is answering a financial question, the weak facts
     they give (citizenship, first-timer status) still go to the calculators, which ask for the rest."""
@@ -4011,12 +4041,16 @@ def decide_routing(c: Dict[str, Any], pending: Optional[Dict[str, Any]] = None) 
     if c.get("nearby_schools"):
         return ["spatial"]
     active: List[str] = []
-    if c.get("comparable_resale") or ((c.get("towns") or c.get("islandwide")) and (c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or c.get("flat_types")
-                           or c.get("wants_price_trend") or c.get("wants_bto_comparison"))):
+    other = c.get("turn_focus") == "other"   # the carried search is context only this turn (turn_focus)
+    if c.get("comparable_resale") or ((c.get("towns") or c.get("islandwide")) and (
+            (not other and (c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or c.get("flat_types")))
+            or c.get("wants_price_trend") or c.get("wants_bto_comparison"))):
         active.append("market_sql")
     # a commute check times the blocks of a search: two workplaces with no town or block would time the whole island
     # (QA sweep, 3 Nov: a long message mentioning where a couple works listed 1,832 blocks)
-    if c.get("amenity_radii_meters") or c.get("school_name") or (
+    if other:
+        pass                                 # the carried distance, school and commute limits belong to the search
+    elif c.get("amenity_radii_meters") or c.get("school_name") or (
             len(c.get("work_destinations") or []) >= 2 and not c.get("commute_unlimited") and (
                 c.get("towns") or c.get("addresses") or c.get("flat_types") or c.get("max_budget_sgd")
                 or c.get("min_remaining_lease_years") or not c.get("policy_question"))):
@@ -4035,7 +4069,7 @@ def decide_routing(c: Dict[str, Any], pending: Optional[Dict[str, Any]] = None) 
         active.append("policy_rag")
     if not active and (c.get("addresses") or c.get("map_pin")):
         pass  # a place with no recognised question: route_node asks instead of guessing a search or policy query
-    elif not active and c.get("towns"):
+    elif not active and c.get("towns") and not other:
         active.append("market_sql")
     elif not active and c.get("analysis_mode"):
         active.append("market_sql")
@@ -4368,7 +4402,7 @@ def needed_for_task(name: str, c: Dict[str, Any], query: str = "") -> bool:
     return asked_for(name, c, query) and TASK_TOOLS.get(name, lambda _: True)(c)
 
 
-CODE_ONLY_KEYS = ("requested_tools",)
+CODE_ONLY_KEYS = ("requested_tools", "turn_focus")
 
 
 def constraints_for_model(c: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -4466,7 +4500,8 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
     if agent == "market_sql":
         if c.get("comparable_resale") and asked_for("query_comparable_resale_transactions", c, query):
             plan.append(("query_comparable_resale_transactions", c["comparable_resale"]))
-        if (towns or c.get("islandwide")) and ri.is_block_search(c, query) and not area_statistics_only(c):
+        if (towns or c.get("islandwide")) and ri.is_block_search(c, query) and not area_statistics_only(c) \
+                and c.get("turn_focus") != "other":
             plan.append(("query_resale_blocks_by_criteria", dict(
                 towns=towns, flat_types=c.get("flat_types") or ["4 ROOM"],
                 max_price=c.get("max_budget_sgd") or NO_PRICE_LIMIT, min_lease_years=c.get("min_remaining_lease_years") or 0)))
@@ -4486,12 +4521,12 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
         if c.get("nearby_schools"):
             return addons.plan(agent, c, query)   # schools near an address: that lookup alone (schools pack)
         radii = {k: v for k, v in (c.get("amenity_radii_meters") or {}).items() if k != "school"}
-        if radii:
+        if radii and c.get("turn_focus") != "other":
             # the tool limits any rail kind to the named station ("within 300m of Sumang LRT" is read as "lrt")
             station = c.get("mrt_station") if set(radii) & {"mrt", "lrt", "mrt_only"} else None
             plan.append(("filter_blocks_by_amenity_proximity",
                          dict(towns=towns, amenity_constraints=radii, **({"mrt_station": station} if station else {}))))
-        if c.get("school_name"):
+        if c.get("school_name") and c.get("turn_focus") != "other":
             r = (c.get("amenity_radii_meters") or {}).get("school", 1000)
             bracket = "1-2km" if re.search(r"\b1\s*[-–]\s*2\s*km\b", query, re.I) else ("1km" if r <= 1000 else "2km")
             plan.append(("verify_primary_school_distance", dict(school_name=c["school_name"], bracket=bracket)))
@@ -6003,6 +6038,8 @@ def partly_checked(state: HDBCompassState) -> bool:
 
 
 def not_checked_lines(state: HDBCompassState) -> List[str]:
+    if (state.get("user_constraints") or {}).get("turn_focus") == "other" and _sql_blocks(state) is None:
+        return []   # the carried commute or school limits were not this turn's question (turn_focus)
     lines = [f"- {NOT_CHECKED[t]} could not be checked: that tool is unavailable right now." for t in unavailable_tools(state)]
     lines += [unchecked_commute_line(state)] if commute_unchecked(state) else []
     return lines + ([UNCHECKED_SCHOOL] if school_unchecked(state) else [])
@@ -6110,6 +6147,21 @@ def clarification_needed(state: HDBCompassState) -> Optional[Dict[str, Any]]:
     words = {**FACT_WORDS, **(BANK_FACT_WORDS if bank else {})}
     phrases = list(dict.fromkeys(words.get(n, n.replace("_", " ")) for n in needed))
     listed = phrases[0] if len(phrases) == 1 else ", ".join(phrases[:-1]) + " and " + phrases[-1]
+    if answer_style() != "template":
+        # a few facts at a time, the most important first (HDB_ANSWER_STYLE): the calculators' full list ran to 13
+        # questions at once. "needed" stays complete, so facts the user gives beyond these are still read
+        # (parse_clarification_answer); the page's form shows "asked" (backend chip_clarification)
+        budget = bool(c.get("budget_asked") or c.get("asked_price") or c.get("wants_area_affordability")
+                      or c.get("wants_flat_affordability"))
+        key = [n for n in KEY_GRANT_FACTS if n in needed]
+        grant_missing = [n for n in ((fin.get("calculate_cpf_housing_grants") or {}).get("missing_inputs") or []) if n in needed]
+        asked = list(dict.fromkeys(key + [n for n in grant_missing if n not in key]))[:3] or needed[:3]
+        if budget:
+            asked = list(dict.fromkeys(asked + [n for n in ("cpf_oa_balance", "cash_savings") if n in needed]))[:5]
+        short = list(dict.fromkeys(words.get(n, n.replace("_", " ")) for n in asked))
+        aim = "your grant and budget" if budget else "your grant"
+        return {"kind": "financial", "needed": needed, "asked": asked, "form": len(asked) >= 3,
+                "question": f"To work out {aim}, could you tell me {_join_words(short)}?"}
     return {"kind": "financial", "needed": needed, "question": f"To finish your grant and budget estimate, please tell me {listed}."}
 
 
@@ -6881,6 +6933,32 @@ OPENING_EXAMPLE = ('"Blk 101 is cheaper, while Blk 202 has more lease left and i
                    'is between price and convenience."')
 
 
+ANSWER_STYLES = ("template", "focused", "conversational")
+
+
+# Errors that mean a model step really failed (a crash or timeout), as opposed to code doing a step on purpose ("no
+# valid tool call from model; deterministic plan used" when there was nothing to calculate): the conversational app
+# shows its fallback footer only for these (backend/main.py)
+_REAL_FAILURE = re.compile(r"\bLLM failed\b|\bLLM loop failed\b|model extraction failed|composed reply not written|"
+                           r"\b(?:Timeout|APIConnectionError|APITimeoutError|RateLimitError|InternalServerError|APIStatusError)\b")
+
+
+def real_model_failure(errors: List[Any]) -> bool:
+    return any(_REAL_FAILURE.search(str(e)) for e in errors or [])
+
+
+def answer_style() -> str:
+    """HDB_ANSWER_STYLE: how the app answers (6 Nov plan: chat like a normal assistant, app on Claude only).
+    template (default): as measured in Experiment 1. focused: each turn answers what this message asks (turn_focus) and
+    asks a few household facts at a time. conversational: focused, and Claude writes the reply from code's checked facts
+    (agents/reply_composer.py). cluster/demo_start.sh --claude sets conversational; the evaluation refuses anything
+    but template. Any other value is refused rather than guessed, like HDB_CODE_WRITTEN_FACTS."""
+    style = (setting("HDB_ANSWER_STYLE") or "template").strip().lower()
+    if style not in ANSWER_STYLES:
+        raise ValueError(f"HDB_ANSWER_STYLE must be one of {', '.join(ANSWER_STYLES)}, not {style!r}")
+    return style
+
+
 def code_written_facts_on() -> bool:
     """The architecture.code_written_facts switch. HDB_CODE_WRITTEN_FACTS=0 or 1 overrides it for one run without
     editing the config (the live ablation), like HDB_EXTRACTION_REASONING. Any other value is refused rather than
@@ -7056,7 +7134,8 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     # a rule question that found no rule ("it may affect your eligibility...") and an instalment finished from a reply
     # to code's question ("There are no specific block options provided to compare...")
     fallback_only = (c.get("policy_fallback") and state.get("policy_no_match")) or c.get("instalment_from_reply")
-    llm = get_llm() if not only_asking and not c.get("about_results") and not fallback_only \
+    refused_composed = state.get("answer_style") == "composed" and verdict and not verdict.get("passed", True)
+    llm = get_llm() if not only_asking and not c.get("about_results") and not fallback_only and not refused_composed \
         and (c.get("extraction_source") != FAST_PATH_SOURCE or policy) else None
     # code's own opening (code_opening_parts). In a block-search answer its answer sentence always goes first and the
     # model's checked sentences follow; otherwise it is used when none of the model's survives, or there is no model.
@@ -7065,6 +7144,20 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     blocks_listed = blocks[:LISTED_BLOCKS]
     code_answers = bool(answer) and (bool(blocks) or _sql_blocks(state) is not None
                                      or state.get("spatial_block_candidates") is not None)
+    style = "template"
+    # HDB_ANSWER_STYLE=conversational (the app on Claude): the model writes the reply from the checked facts, checked
+    # line by line (agents/reply_composer.py), with the facts kept under it as Details. Not for a refusal or disclosure
+    # code must lead with, a turn that only asks, a fallback-only answer, or a composed reply the auditor refused (that
+    # turn shows today's answer, so a rejection never deletes the reply).
+    if facts and answer_style() == "conversational" and not only_asking and not c.get("about_results") \
+            and not fallback_only and not refused_composed and not forced_opening(state)[0]:
+        composer = get_llm()
+        if composer is not None:
+            from agents import reply_composer as rc
+            reply, notes = rc.compose(composer, state, facts, evidence, clar, policy, " ".join(answer))
+            errors += notes
+            if reply:
+                text, model_text, style, llm = reply + rc.DETAILS_SEP + facts, reply, "composed", None
     if llm is not None:
         try:
             if facts:
@@ -7188,10 +7281,17 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
             text += HFE_DISCLAIMER
     if clar and clar["question"] not in text:
         text = text.rstrip() + "\n\n" + clar["question"]
+    fallback = ""
+    if style == "composed":   # today's answer for this turn, in case the auditor refuses the composed one (audit_node)
+        fallback = (lead + "\n\n" + facts if lead else facts)
+        if (state.get("financial_breakdown") or state.get("rag_policy_passages")) and "HFE" not in fallback:
+            fallback += HFE_DISCLAIMER
+        if clar and clar["question"] not in fallback:
+            fallback = fallback.rstrip() + "\n\n" + clar["question"]
     return {"draft_response": text, "model_opening": model_text, "map_ui_payload": payload, "tool_call_log": log,
-            "errors": errors,
+            "errors": errors, "answer_style": style, "fallback_draft": fallback,
             # drill-down chips first, then radius chips (both are whole questions, not answers to a pending question)
-            "clarification": clar, "suggestions": [] if clar else _merge_chips(ri.drilldown_suggestions(state), ri.comparison_chips(state), ri.price_check_chips(state), ri.radius_chips(c))}
+            "clarification": clar, "suggestions": [] if clar else _merge_chips(ri.drilldown_suggestions(state), ri.comparison_chips(state), ri.price_check_chips(state), ri.radius_chips(c))[:2 if answer_style() == "conversational" else None]}
 
 
 # ---------------------------------------------------------------------------
@@ -7323,7 +7423,14 @@ def guardrail_gate(state: HDBCompassState) -> str:
 
 def audit_node(state: HDBCompassState) -> Dict[str, Any]:
     if _AUDITOR is not None:
-        return _AUDITOR(state)
+        out = _AUDITOR(state)
+        if state.get("answer_style") == "composed" and "draft_response" in out:
+            # the auditor took sentences out of a composed reply (its last rejection): today's answer for the turn
+            # instead, never a reply with its sentences cut out (HDB_ANSWER_STYLE=conversational)
+            out = {**out, "draft_response": state.get("fallback_draft") or out["draft_response"], "model_opening": "",
+                   "answer_style": "template",
+                   "errors": list(out.get("errors") or []) + ["synthesize: composed reply refused by the auditor; checked facts used"]}
+        return out
     prev = state.get("auditor_verdict") or {}
     critique = "auditor failed to load (pass-through)" if HOOK_LOAD_PROBLEMS else "auditor not installed (pass-through)"
     update: Dict[str, Any] = {"auditor_verdict": AuditorVerdict(passed=True, critique=critique,

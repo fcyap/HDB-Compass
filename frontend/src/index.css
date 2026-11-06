@@ -1495,3 +1495,24 @@ html, body, #root {
   color: #FFFFFF; font-family: inherit; font-weight: 600; cursor: pointer; box-shadow: 0 4px 12px -4px rgba(0, 104, 101, 0.45);
 }
 .hf-submit:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+
+
+/* Conversational style (HDB_ANSWER_STYLE=conversational): the streaming reply and the collapsed checked facts */
+.agent-summary-text.streaming { position: relative; }
+.stream-caret { display: inline-block; width: 7px; height: 1em; margin-left: 2px; vertical-align: text-bottom;
+  background: #2E6B66; border-radius: 1px; animation: stream-blink 1s steps(2, start) infinite; }
+@keyframes stream-blink { to { visibility: hidden; } }
+.answer-details { margin-top: 10px; border: 1px solid #DCE8E5; border-radius: 10px; background: #F7FBFA; }
+.answer-details > summary { cursor: pointer; padding: 8px 12px; font-size: 0.8rem; font-weight: 600; color: #2E6B66; }
+.answer-details > .agent-summary-text { padding: 0 12px 10px; font-size: 0.82rem; }
+
+
+/* The model dropdown in the chat header */
+.model-select { appearance: none; -webkit-appearance: none; height: 30px; max-width: 150px; padding: 0 26px 0 10px;
+  border: 1px solid #DCE8E5; border-radius: 15px; background: #F7FBFA url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%232E6B66' stroke-width='1.5' fill='none'/%3E%3C/svg%3E") no-repeat right 10px center;
+  color: #24524F; font-size: 0.78rem; font-weight: 600; cursor: pointer; text-overflow: ellipsis; }
+.model-select:disabled { opacity: 0.6; cursor: default; }
+.model-select:focus-visible { outline: 2px solid #2E6B66; outline-offset: 1px; }
+.header-bar .brand-title { white-space: nowrap; }
+.header-actions { gap: 8px; }
+@media (max-width: 420px) { .model-select { max-width: 120px; } }

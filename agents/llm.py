@@ -52,7 +52,8 @@ def all_profiles() -> Dict[str, Any]:
 
 
 def active_profile_name() -> str:
-    return (os.getenv("LLM_PROFILE") or load_config()["llm"]["active"]).strip()
+    from agents.session_settings import setting   # the chat's model choice in the app, else the environment
+    return (setting("LLM_PROFILE") or load_config()["llm"]["active"]).strip()
 
 
 def _configured_profile(name: str) -> Dict[str, Any]:
@@ -444,6 +445,7 @@ def _build_client(p: Dict[str, Any], common: Dict[str, Any], cfg: Dict[str, Any]
 
 def get_llm(**overrides: Any):
     """Construct the shared client; never switch providers mid-run."""
+    from agents.session_settings import setting
     p = active_profile()
     if p["name"] == "none":
         return None
@@ -454,8 +456,8 @@ def get_llm(**overrides: Any):
         model=p["model"],
         max_tokens=int(overrides.get("max_tokens") or p.get("max_tokens", 2048)),
         # LLM_TIMEOUT_S / LLM_MAX_RETRIES: the live demo lowers these so a stalled server fails over in seconds
-        timeout=float(os.getenv("LLM_TIMEOUT_S", p.get("timeout_s", 120))),
-        max_retries=int(os.getenv("LLM_MAX_RETRIES", 2)),
+        timeout=float(setting("LLM_TIMEOUT_S", p.get("timeout_s", 120))),
+        max_retries=int(setting("LLM_MAX_RETRIES", 2)),
     )
     overrides = dict(overrides)
     cbs = list(overrides.pop("callbacks", None) or [])

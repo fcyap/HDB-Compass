@@ -46,7 +46,13 @@ def chip_clarification(c: Dict[str, Any]) -> Dict[str, Any]:
     the text to send when clicked (menu options have both; location options only a label, which is also what to send)."""
     options = [{"label": str(o.get("label") or o.get("text") or ""), "text": str(o.get("text") or o.get("label") or "")}
                for o in c.get("options") or [] if isinstance(o, dict)]
-    return {"kind": c.get("kind"), "question": c.get("question"), "needed": list(c.get("needed") or []),
+    # HDB_ANSWER_STYLE focused/conversational asks a few facts at a time: the form shows those ("asked"), and only
+    # when there are three or more ("form"); today's answers carry neither key and show every needed fact
+    asked = c.get("asked")
+    needed = list(asked if asked is not None else (c.get("needed") or []))
+    if asked is not None and not c.get("form"):
+        needed = []
+    return {"kind": c.get("kind"), "question": c.get("question"), "needed": needed,
             "options": [o for o in options if o["label"]]}
 
 
@@ -58,7 +64,7 @@ def log_chat_turn(question: str, state: Dict[str, Any], seconds: float, turn: in
         CHAT_LOG_DIR.mkdir(parents=True, exist_ok=True)
         record = {
             "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "model_profile": os.getenv("LLM_PROFILE", ""),
+            "model_profile": session_settings.setting("LLM_PROFILE") or "",   # the chat's model choice
             "turn": turn,
             "question": question,
             "constraints": state.get("user_constraints"),
@@ -86,8 +92,9 @@ from mcp_server.spatial_onemap_tools import (
 from agents.spatial_agent import geo_agent, GeoAgentState
 from agents.arch_3_specialist_5agent import graph as specialist_5agent_graph, sv
 from agents.llm import model_status
+from agents import session_settings
 from agents.sanitizer import redact as sanitize_text
-from backend.output_schema import safe_error_message, send_clean
+from backend.output_schema import clean_text, safe_error_message, send_clean
 from agents.tracing import configure_tracing, run_config
 
 app = FastAPI(
@@ -189,9 +196,52 @@ def health_check():
     }
 
 
+def conversational() -> bool:
+    """HDB_ANSWER_STYLE=conversational (the app on Claude, cluster/demo_start.sh --claude): the reply streams, steps get
+    plain names, the cards carry their own figures and the footer speaks only of a real model failure. Every other
+    style sends exactly what it sent before (6 Nov plan; change note for Member 2 and jerheng)."""
+    try:
+        return sv.answer_style() == "conversational"
+    except ValueError:
+        return False
+
+
+# What the trace shows a user in the conversational style, instead of the team's internal node names
+FRIENDLY_STEPS = {
+    "input_guardrail": "Checking your message", "extract_constraints": "Understanding your question",
+    "route": "Planning what to look up", "market_sql_agent": "Searching resale data",
+    "spatial_agent": "Checking distances", "financial_agent": "Working out grants and budget",
+    "policy_rag_agent": "Looking up HDB rules", "intersect_candidates": "Matching blocks to your limits",
+    "relax_constraints": "Testing which limit to relax", "synthesize": "Writing the reply",
+    "runtime_auditor": "Checking the figures", "finalize": "Done",
+}
+
+
+def candidate_cards(blocks: List[Any]) -> List[Dict[str, Any]]:
+    """The block cards' own figures (conversational style), so the page no longer reads them back out of the answer."""
+    cards = []
+    for b in blocks[:6]:
+        if not isinstance(b, dict):
+            continue
+        dists = [v for v in (b.get("distances") or {}).values() if isinstance(v, (int, float))]
+        cards.append({"name": f"Blk {b.get('block', '')} {b.get('street', '')}".strip(),
+                      "price": b.get("median_resale_price"), "lease": b.get("median_remaining_lease_years"),
+                      "distance": round(min(dists)) if dists else None})
+    return cards
+
+
 @app.get("/api/model/status")
-def get_model_status(check: bool = False):
-    return model_status(check=check)
+def get_model_status(check: bool = False, model: Optional[str] = None):
+    # model: the dropdown's choice, so the footer names the model the next answer will use
+    opt = session_settings.MODEL_OPTIONS.get(model or "")
+    with session_settings.use(opt["settings"] if opt else {}):
+        return {**model_status(check=check), "answer_style": "conversational" if conversational() else "template"}
+
+
+@app.get("/api/models")
+def get_models():
+    """The model dropdown: each choice and whether it can answer now, and the one the app was started with."""
+    return {"options": session_settings.model_options(), "default": session_settings.started_with()}
 
 
 import re
@@ -400,6 +450,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
 
             req_id = message.get("request_id")
+            # the chat's model choice (the dropdown): its settings for this connection's turns, over the environment
+            chosen = session_settings.MODEL_OPTIONS.get(str(message.get("model") or ""))
+            session_settings.choose(chosen["settings"] if chosen else {})
 
             if message.get("reset"):
                 previous = None
@@ -440,7 +493,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 # 1. Full Multi-Agent Mode (Variant C Specialist Graph)
                 # -------------------------------------------------------------
                 if query_text:
-                    model_info = await asyncio.to_thread(model_status)
+                    model_info = {**(await asyncio.to_thread(model_status)),
+                                  "answer_style": "conversational" if conversational() else "template"}
                     await send_clean(websocket, {
                         "type": "MODEL_STATUS",
                         **({"request_id": req_id} if req_id else {}),
@@ -472,13 +526,25 @@ async def websocket_endpoint(websocket: WebSocket):
                     current_school_lookup = None
                     current_clarification = None   # kind, question, options of an open follow-up, for the answer chips
                     current_flat_type = "4 ROOM"   # the searched flat type, for the candidate cards' action buttons
+                    current_cards: Optional[List[Dict[str, Any]]] = None   # conversational style: the cards' own figures
                     active_agents: List[str] = []
+                    talk = conversational()
 
                     final_state: Optional[Dict[str, Any]] = None
                     async for mode, chunk in specialist_5agent_graph.astream(
-                            st, stream_mode=["updates", "values"], config=run_config("C", session_id=session_id)):
+                            st, stream_mode=["updates", "values", "custom"] if talk else ["updates", "values"],
+                            config=run_config("C", session_id=session_id)):
                         if mode == "values":
                             final_state = chunk  # the full state after each step; the last one is the answer's
+                            continue
+                        if mode == "custom":
+                            # the composed reply, a checked sentence at a time (agents/reply_composer.py); the final
+                            # summary from finalize still replaces it, and a reset clears what was streamed
+                            if isinstance(chunk, dict) and chunk.get("reply_reset"):
+                                await send_clean(websocket, {"type": "REPLY_RESET", **({"request_id": req_id} if req_id else {})})
+                            elif isinstance(chunk, dict) and chunk.get("reply_delta"):
+                                await send_clean(websocket, {"type": "REPLY_DELTA", **({"request_id": req_id} if req_id else {}),
+                                                             "text": clean_text(chunk["reply_delta"])})   # as the summary is
                             continue
                         for node_name, node_output in chunk.items():
                             if node_output is None and node_name in ("input_guardrail", "runtime_auditor"):
@@ -495,10 +561,10 @@ async def websocket_endpoint(websocket: WebSocket):
                                                                             "options": node_output["suggestions"]})
 
                             node_errors = node_output.get("errors") or []
-                            if any(
+                            if (sv.real_model_failure(node_errors) if talk else any(
                                 any(marker in str(error) for marker in ("LLM", "rule-based fallback used", "deterministic plan used"))
                                 for error in node_errors
-                            ):
+                            )):
                                 await send_clean(websocket, {
                                     "type": "MODEL_STATUS",
                                     **({"request_id": req_id} if req_id else {}),
@@ -510,6 +576,8 @@ async def websocket_endpoint(websocket: WebSocket):
                             step_title, step_desc = NODE_INFO.get(
                                 node_name, (node_name, f"Completed {node_name}")
                             )
+                            if talk:
+                                step_title = FRIENDLY_STEPS.get(node_name, step_title)
                             step_desc = honest_step(node_name, node_output, step_desc)
 
                             if node_name == "extract_constraints":
@@ -561,6 +629,8 @@ async def websocket_endpoint(websocket: WebSocket):
                                         return s if s.startswith("Blk ") else f"Blk {s}"
 
                                     current_qualifying = [_fmt_block_str(b) for b in inter]
+                                    if talk:
+                                        current_cards = candidate_cards(inter)
 
                             elif node_name == "synthesize":
                                 mp = node_output.get("map_ui_payload", {})
@@ -638,6 +708,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 "school_lookup": current_school_lookup,
                                 "clarification": current_clarification,
                                 "flat_type": current_flat_type,
+                                **({"candidate_cards": current_cards} if talk and current_cards else {}),
                             })
                             await asyncio.sleep(0.04)
                     if final_state is not None:

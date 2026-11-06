@@ -160,7 +160,7 @@ def test_demo_start_claude_needs_no_cluster_and_asks_for_the_key(tmp_path):
     (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=sk-ant-test-not-a-real-key\n")
     out = run(tmp_path, env, "demo_start.sh", "--dry-run", "--claude")
     assert out.returncode == 0 and "fix the problems" not in out.stdout, out.stdout + out.stderr
-    assert "LLM_PROFILE=claude LLM_TIMEOUT_S=60 LLM_MAX_RETRIES=1 HDB_TRUST_MODEL_READING=0 HDB_READING_CONTEXT=1" in out.stdout
+    assert "LLM_PROFILE=claude LLM_TIMEOUT_S=60 LLM_MAX_RETRIES=1 HDB_TRUST_MODEL_READING=0 HDB_READING_CONTEXT=1 HDB_ANSWER_STYLE=conversational" in out.stdout
     assert "CLUSTER_LOGIN" not in out.stdout and "GPU job" not in out.stdout and calls(tmp_path, "ssh") == []
     traced = subprocess.run(["bash", "-x", str(tmp_path / "cluster" / "demo_start.sh"), "--dry-run", "--claude"],
                             cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60)
@@ -372,3 +372,12 @@ def test_context_with_the_checks_on_the_default_for_claude(claude, monkeypatch):
     assert seen["schema"] is sv.TrustedModelReading and c["money_intent"]          # Claude's judgement counts
     assert c["towns"] == [] and any("not named in the message were dropped" in e for e in out["errors"])  # checks on
     assert any("replaced by code's" in e for e in out["errors"])                     # code's assumptions
+
+
+
+def test_the_evaluation_refuses_the_apps_answer_styles(claude, monkeypatch):
+    from evaluation import run_category_e_prelim as ev
+    claude.setenv("HDB_EVAL_ALLOW_HOSTED", "claude")
+    claude.setenv("HDB_ANSWER_STYLE", "focused")
+    with pytest.raises(SystemExit, match="HDB_ANSWER_STYLE"):
+        ev._main(ev.build_parser().parse_args(["--ids", "E1-01", "--variants", "C"]))
