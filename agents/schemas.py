@@ -548,7 +548,7 @@ class CalculateBsdAndUpfrontOutlayInput(FinancialInput):
     cash_savings: Optional[float] = Field(None, ge=0)
     legal_and_valuation_fees: Optional[float] = Field(None, ge=0, description="Quoted costs; conservatively cash-funded")
     additional_buyer_stamp_duty: Optional[float] = Field(None, ge=0, description="Separately assessed ABSD; explicit zero if none")
-    ltv_ratio: Optional[Literal[0.75, 0.55]] = None
+    ltv_ratio: Optional[float] = Field(None, description="LTV ratio, e.g. 0.75 or 0.55")
 
 
 class CalculateBsdAndUpfrontOutlayOutput(FinancialResult):
