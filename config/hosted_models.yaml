@@ -1,6 +1,6 @@
 # Hosted LLM profiles for the app (Member 1). Kept out of experiment_config.yaml, which names local models only so
 # the architecture study is reproducible on open weights (proposal §6.2, tests/test_demo_scripts.py).
-# Select with LLM_PROFILE=groq|openai|gemini|compatible, or LLM_PROFILE=auto (llm.auto_profiles in experiment_config.yaml).
+# Select with LLM_PROFILE=groq|openai|gemini|claude|compatible, or LLM_PROFILE=auto (llm.auto_profiles in experiment_config.yaml).
 # Keys come from .env (see .env.example); a profile here never overrides one of the same name in experiment_config.
 profiles:
     groq:
@@ -71,3 +71,21 @@ profiles:
         requests_per_minute: 10
         tokens_per_minute: 250000
         requests_per_day: 250
+    # Anthropic Claude through Anthropic's own SDK (langchain-anthropic). Paid API: a key from console.anthropic.com
+    # in .env as ANTHROPIC_API_KEY. Select with LLM_PROFILE=claude (the app only; Experiment 1 stays on open weights).
+    # Runs with thinking off (agents/llm.py), so the model must accept that: Claude Haiku 5.5 does; Opus 5.5,
+    # Sonnet 5.5 and Fable models are refused.
+    claude:
+      provider: anthropic
+      # Always sent (LLM_BASE_URL overrides): the SDK would otherwise read ANTHROPIC_BASE_URL from the environment,
+      # which Claude Code sets for itself. CLAUDE_MODEL (not ANTHROPIC_MODEL, Claude Code's own) picks the model.
+      base_url: "https://api.anthropic.com"
+      model: "claude-haiku-5-5"
+      model_env: "CLAUDE_MODEL"
+      api_key_env: "ANTHROPIC_API_KEY"
+      requires_api_key: true
+      supports_temperature: false    # current Claude models reject temperature 0 (a 400)
+      supports_seed: false           # no seed parameter on the Messages API
+      timeout_s: 60
+      max_tokens: 4096
+      # reasoning_effort: "low"      # output_config.effort; unset = the model's default (medium on Haiku 5.5)

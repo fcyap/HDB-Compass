@@ -59,7 +59,7 @@ def _configured_profile(name: str) -> Dict[str, Any]:
     profiles = all_profiles()
     if name not in profiles:
         raise ModelConfigurationError(
-            "Unknown LLM_PROFILE. Choose ollama, vllm, groq, openai, gemini, compatible, auto or none."
+            "Unknown LLM_PROFILE. Choose ollama, vllm, groq, openai, gemini, claude, compatible, auto or none."
         )
     p = dict(profiles[name])
     p["base_url"] = (
@@ -106,6 +106,11 @@ def _configured_profile(name: str) -> Dict[str, Any]:
         raise ModelConfigurationError(
             "Set LLM_MODEL to a model supporting tool calling."
         )
+    if (p.get("provider") or "").strip().lower() == "anthropic" and p["model"].startswith(_CLAUDE_THINKING_ALWAYS_ON):
+        # here, not only when the client is built, so --check and the backend's model status say so too
+        raise ModelConfigurationError(
+            f"{p['model']} cannot run with thinking off, which the claude profile needs; "
+            "use claude-haiku-5-5 (CLAUDE_MODEL in .env).")
     p["name"] = name
     p.setdefault("system_suffix", "")
     if "qwen3" not in p["model"].lower():
@@ -117,6 +122,8 @@ def _configured_profile(name: str) -> Dict[str, Any]:
 
 def _probe_profile(profile: Dict[str, Any]) -> tuple[bool, str]:
     """List models without inference or user conversation data."""
+    if (profile.get("provider") or "").strip().lower() == "anthropic":
+        return _probe_anthropic(profile)
     try:
         response = requests.get(
             profile["base_url"] + "/models",
@@ -149,6 +156,28 @@ def _probe_profile(profile: Dict[str, Any]) -> tuple[bool, str]:
             False,
             "Cannot discover models. Check the endpoint, network and provider service.",
         )
+
+
+def _probe_anthropic(profile: Dict[str, Any]) -> tuple[bool, str]:
+    """Anthropic's Models API (x-api-key auth, not the Bearer /models list above), without inference."""
+    try:
+        import anthropic
+    except ImportError:
+        return False, "Install langchain-anthropic (pip install -r requirements.txt) for the claude profile."
+    try:
+        info = anthropic.Anthropic(api_key=profile["api_key"], base_url=profile["base_url"], timeout=5.0,
+                                   max_retries=0).models.retrieve(profile["model"])
+        if getattr(info, "id", None) != profile["model"]:   # an HTML page or a proxy's reply, not the Models API
+            return False, "Provider returned an invalid model list."
+        return True, "Model is advertised by the provider. Run --test-tools to check inference and tool calling."
+    except anthropic.NotFoundError:
+        return False, "Configured model is not advertised by the provider; check the model name."
+    except (anthropic.AuthenticationError, anthropic.PermissionDeniedError):
+        return False, "Provider rejected credentials or model-list access."
+    except anthropic.APIStatusError as e:
+        return False, f"Model discovery returned HTTP {e.status_code}."
+    except (anthropic.APIConnectionError, anthropic.APIError, ValueError, TypeError):
+        return False, "Cannot discover models. Check the endpoint, network and provider service."
 
 
 @lru_cache(maxsize=1)
@@ -255,7 +284,7 @@ def _rate_limit_status(p: Dict[str, Any]) -> Dict[str, Any]:
 # a provider lists works the way the provider documents it; a compatibility layer (e.g. Gemini's OpenAI endpoint)
 # drops features such as Gemini 3's thought signatures, which broke multi-step tool calls. "openai" is also the
 # protocol vLLM, Ollama and the "compatible" profile serve, so those stay on ChatOpenAI.
-PROVIDERS = ("openai", "groq", "google")
+PROVIDERS = ("openai", "groq", "google", "anthropic")
 
 
 def provider_of(p: Dict[str, Any]) -> str:
@@ -312,6 +341,40 @@ def _google_chat_class():
     return _GOOGLE_CLASS
 
 
+# Claude models that cannot turn thinking off (a 400): their replies carry thinking blocks that must go back unchanged
+# with later tool turns, while the app reads message.content as text. The claude profile runs with thinking off, so
+# these are refused with a clear message instead of failing mid-conversation.
+_CLAUDE_THINKING_ALWAYS_ON = ("claude-fable-5", "claude-mythos-5", "claude-opus-5-5", "claude-sonnet-5-5")
+_ANTHROPIC_CLASS: Any = None
+
+
+def _anthropic_chat_class():
+    """ChatAnthropic whose replies carry plain-string content, like _google_chat_class: with thinking off a reply is
+    text and tool_use blocks only, and tool calls stay on tool_calls (ChatAnthropic rebuilds the tool_use blocks from
+    them when the message is sent back), so nothing the API needs is lost."""
+    global _ANTHROPIC_CLASS
+    if _ANTHROPIC_CLASS is None:
+        from langchain_anthropic import ChatAnthropic
+
+        class PlainTextChatAnthropic(ChatAnthropic):
+            def _generate(self, *args, **kwargs):
+                result = super()._generate(*args, **kwargs)
+                for g in result.generations:
+                    g.message.content = _plain_text(g.message.content)
+                    g.text = g.message.content if isinstance(g.message.content, str) else g.text
+                return result
+
+            async def _agenerate(self, *args, **kwargs):
+                result = await super()._agenerate(*args, **kwargs)
+                for g in result.generations:
+                    g.message.content = _plain_text(g.message.content)
+                    g.text = g.message.content if isinstance(g.message.content, str) else g.text
+                return result
+
+        _ANTHROPIC_CLASS = PlainTextChatAnthropic
+    return _ANTHROPIC_CLASS
+
+
 def _build_client(p: Dict[str, Any], common: Dict[str, Any], cfg: Dict[str, Any], overrides: Dict[str, Any]):
     """The provider's own chat client. `common`: model, max_tokens, timeout, max_retries, callbacks."""
     provider = provider_of(p)
@@ -345,6 +408,24 @@ def _build_client(p: Dict[str, Any], common: Dict[str, Any], cfg: Dict[str, Any]
         kwargs.update(_google_thinking(p.get("reasoning_effort"), common["model"]))
         kwargs.update(overrides)
         return _google_chat_class()(**kwargs)
+    if provider == "anthropic":
+        # Anthropic's own SDK through langchain-anthropic. No temperature or seed: current Claude models reject
+        # non-default sampling values (set supports_temperature/supports_seed false in the profile).
+        if common["model"].startswith(_CLAUDE_THINKING_ALWAYS_ON):
+            raise ModelConfigurationError(
+                f"{common['model']} cannot run with thinking off, which the claude profile needs; "
+                "use claude-haiku-5-5 (CLAUDE_MODEL in .env).")
+        # base_url always explicit: the SDK otherwise reads ANTHROPIC_BASE_URL / ANTHROPIC_API_URL from the
+        # environment, which tools such as Claude Code set for their own use, and the key would go there
+        kwargs = dict(model=common["model"], api_key=p["api_key"], base_url=explicit_base or p["base_url"],
+                      max_tokens=common["max_tokens"], timeout=common["timeout"], max_retries=common["max_retries"],
+                      callbacks=common.get("callbacks"), thinking={"type": "disabled"})
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if p.get("reasoning_effort") is not None:
+            kwargs["output_config"] = {"effort": str(p["reasoning_effort"]).lower()}
+        kwargs.update(overrides)
+        return _anthropic_chat_class()(**kwargs)
     from langchain_openai import ChatOpenAI
     kwargs = dict(model=common["model"], base_url=p["base_url"], api_key=p["api_key"], max_tokens=common["max_tokens"],
                   timeout=common["timeout"], max_retries=common["max_retries"], stream_usage=False,

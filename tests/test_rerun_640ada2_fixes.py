@@ -264,3 +264,98 @@ def test_a_listed_block_sentence_is_comparisons_holds_even_beside_a_cut_off_tabl
     facts = blocks["draft_response"] + "\n" + PART_TABLE
     kept, dropped = sv.check_model_opening("Blk 440 is the cheapest, while Blk 477 has the most lease left.", blocks, facts)
     assert dropped["part_table"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Live check of 402b30e (6 Nov): three gaps it showed
+# ---------------------------------------------------------------------------
+def test_first_timers_and_citizens_with_a_comma_or_and_are_a_citizen_couple():
+    for text in ("We're first-time buyers, Singaporean citizens. What grants can we get for a resale flat?",
+                 "We are first-timers, Singapore citizens.", "We are first-time buyers and Singapore citizens.",
+                 "We are first-timers, both Singaporean citizens."):
+        assert sv.citizenship_stated(text) == "SC_SC", text
+    assert sv.citizenship_stated("We are first-timers, one of us is a Singapore citizen.") is None
+    assert sv.citizenship_stated("We are first-timers, Singapore citizens buying with my friend.") is None
+    (t,) = conversation("We're first-time buyers, Singaporean citizens. What grants can we get for a resale flat?")
+    assert t["user_constraints"]["financial_inputs"]["grants"]["citizenship_pair"] == "SC_SC"
+    assert "citizenship_pair" not in (t["clarification"] or {}).get("needed", [])
+
+
+def test_a_mid_range_claim_over_a_table_cut_short_is_dropped():
+    state = {"messages": [{"role": "user", "content": "Group it by town instead."}], "user_constraints": {}}
+    kept, dropped = sv.check_model_opening(
+        "Towns like Queenstown and Bukit Merah offer mid-range prices. Prices differ a lot between towns.", state, PART_TABLE)
+    assert dropped["part_table"] == 1 and kept == ["Prices differ a lot between towns."]
+    assert not sv.ranks_part_table("Of the towns shown, Tampines is mid-range.", PART_TABLE)
+
+
+def test_block_choice_filler_outside_a_block_search_is_dropped():
+    filler = ("The choice between different blocks would depend on factors like price, remaining lease, and proximity "
+              "to amenities, but specific details on blocks are not yet available.")
+    assert sv.block_filler(filler, "**Financials:**\n- Housing grants: more information needed")
+    assert not sv.block_filler(filler, "- Blk 440 TAMPINES ST 43 (TAMPINES) — median $510,000")
+    assert not sv.block_filler("No blocks meet all your limits.", "**Financials:**")
+
+
+def test_the_comma_form_needs_the_sentence_to_end_at_citizens():
+    # the review (6 Nov): a trailing qualifier is not a citizen couple
+    for text in ("We are first-timers, citizens of Malaysia.", "We are first-timers, Singapore citizens, my friend and I.",
+                 "We are first-timers, Singapore citizens and my brother.", "We are first-timers, Singapore citizens except my wife.",
+                 "We are first-timers, Singapore citizens next year.", "We are first-timers, Singapore citizens, divorced.",
+                 "Can we get grants if we are first-timers, Singapore citizens?",
+                 "We are first-timers, Singapore citizens... or at least I am."):
+        assert sv.citizenship_stated(text) is None, text
+    assert sv.citizenship_stated("My wife and I are first-timers, Singapore citizens.") == "SC_SC"
+    assert sv.citizenship_stated("We are first-timer buyers, Singapore citizens.") == "SC_SC"
+
+
+def test_a_mid_range_claim_beside_the_headline_is_still_checked():
+    facts = PART_TABLE.replace("|---|---|---|\n", "|---|---|---|\n", 1).replace(
+        "**\n|", "**\nCentral Area has the highest median price ($885,000).\n|", 1)
+    assert sv.ranks_part_table("Central Area has the highest median price, while Tampines is mid-range.", facts)
+    assert not sv.ranks_part_table("Central Area has the highest median price.", facts)
+
+
+def test_a_rule_about_choosing_blocks_is_not_filler():
+    for sentence in ("When choosing among the available blocks, check whether the SPR quota is full.",
+                     "Deciding between blocks means checking each block's EIP quota."):
+        assert not sv.block_filler(sentence, "**Policy:**"), sentence
+
+
+
+# ---------------------------------------------------------------------------
+# Live on Claude (6 Nov): a grant question in other words after a search
+# ---------------------------------------------------------------------------
+def test_the_amount_of_grant_in_other_words_is_a_grant_question():
+    for text in ("Help me check the amount of grant i will get", "What is the amount of grants we can get?",
+                 "Check how much grant we get", "What's our grant amount?", "grants we would receive?"):
+        assert sv._MONEY_AMOUNT_ASK.search(text), text
+    for text in ("What grants can I get?", "Explain the grant rules", "Who qualifies for the Proximity Housing Grant?",
+                 "The grant amount depends on income, right?"):
+        assert not sv._MONEY_AMOUNT_ASK.search(text), text
+    _, t2 = conversation("help me find 4 room resale flat in woodlands", "Help me check the amount of grant i will get")
+    assert "financial" in t2["active_subagents"]
+    assert "citizenship_pair" in (t2["clarification"] or {}).get("needed", [])
+
+
+def test_a_trend_longer_than_30_years_does_not_stop_the_turn():
+    (t,) = conversation("How have 4-room prices in Tampines changed over the last 35 years?")
+    assert t["user_constraints"]["trend_years"] == 30 and t["draft_response"]
+
+
+def test_a_request_to_work_out_my_grant_is_a_grant_question():
+    for text in ("Help me calculate my grant based on my financials", "check our grants please",
+                 "Can you estimate the grant for us?", "How much grant i'll receive", "Show me my grants"):
+        assert sv._MONEY_AMOUNT_ASK.search(text), text
+    for text in ("Will my grant be clawed back if I sell?", "Does my grant affect my loan?",
+                 "Is the Family Grant for resale only?"):
+        assert not sv._MONEY_AMOUNT_ASK.search(text), text
+
+
+def test_a_block_number_and_town_is_the_only_such_block():
+    # live on Claude (6 Nov): "Blk 458 TAMPINES" was called ambiguous with one candidate, so the comparison asked again
+    assert sv.complete_block_address("458 Tampines") == "Blk 458 TAMPINES ST 42"
+    assert sv.complete_block_address("Blk 458 TAMPINES") == "Blk 458 TAMPINES ST 42"
+    assert sv.complete_block_address("216 Ang Mo Kio") == "Blk 216 ANG MO KIO AVE 1"
+    for unchanged in ("Blk 1 Tampines", "Tampines", "Woodlands South", "Blk 216 ANG MO KIO AVE 1"):
+        assert sv.complete_block_address(unchanged) == unchanged

@@ -29,7 +29,7 @@ from datetime import date as _date
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.types import Send
 
@@ -835,6 +835,12 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
         m = re.search(r"\bBTO (?:project|launch)\s+(?:called\s+|named\s+)?([A-Z][\w']*(?:\s+[A-Z][\w']*)*)", query)
         if m and m.group(1).upper() not in HDB_TOWNS:
             base["bto_project_name"] = m.group(1)
+    if isinstance(base.get("trend_years"), int) and base["trend_years"] > 30:
+        # "over the last 35 years" (the review, 6 Nov): the schema holds at most 30, and the reading failing here
+        # stopped the whole turn with a ValidationError; the trend tools cover far less than that anyway
+        base["trend_years"] = 30
+        base["assumptions"] = list(base.get("assumptions") or []) + [
+            "Trends go back at most 30 years here; the period was shortened to the last 30 years."]
     return ExtractedConstraints(**base)
 
 
@@ -1156,6 +1162,13 @@ _SC_COUPLE = re.compile(
     # the other order: "We are first-timer Singapore citizens." (live 5 Nov: the next turn still asked for citizenship)
     r"|\bwe(?:'re| are)\s+(?:both\s+)?(?:married\s+)?(?:first[- ]?timers?|first[- ]?time(?: buyers?)?)\s+(?:singapore(?:an)?\s+)?"
     r"(?:citizens|singaporeans|SCs)\b", re.I)
+# the same with a comma or "and" between, as a whole sentence of its own: "We're first-time buyers, Singaporean
+# citizens." (live 6 Nov). Read on the message itself (_citizen_view drops a trailing clause such as "my friend and I"),
+# and only when the sentence ends there: not "citizens of Malaysia", "except my wife", "next year", "divorced".
+_FIRST_TIMER_CITIZENS = re.compile(
+    rf"(?:^|[.!?;]\s+)\W*(?:we(?:'re| are)|(?:my\s+)?{_PARTNER}\s+and\s+i\s+are|i\s+and\s+my\s+{_PARTNER}\s+are|both of us are)\s+"
+    r"(?:both\s+)?(?:married\s+)?(?:first[- ]?timers?(?:\s+buyers)?|first[- ]?time\s+(?:home\s+)?buyers)"
+    r"(?:\s*,\s*(?:and\s+)?|\s+and\s+)(?:both\s+)?(?:singapore(?:an)?\s+)?(?:citizens|singaporeans|SCs)\s*(?:[.!;](?![.!;])|$)", re.I)
 # buying with someone who is not a spouse: not the couple schemes
 _NOT_A_COUPLE = re.compile(r"\bjoint singles?\b|\btwo singles\b|\bwith (?:my|a) (?:friend|sister|brother|sibling|cousin|colleague)\b"
                            r"|\b(?:me|i) and my (?:friend|sister|brother|sibling|cousin|colleague)\b", re.I)
@@ -1200,7 +1213,8 @@ def citizenship_stated(text: str) -> Optional[str]:
     if re.search(r"\bsingle\b", v, re.I) and citizen and \
             not re.search(rf"\b(?:{_PARTNER}|couple|engaged)\b|(?<!not )(?<!un)\bmarried\b", text or "", re.I):
         return "SC_Single"
-    if _SC_COUPLE.search(v) and not re.search(r"\bone\s+(?:singapore(?:an)?\s+)?(?:citizen|SC)\b", v, re.I):
+    if (_SC_COUPLE.search(v) or _FIRST_TIMER_CITIZENS.search(text or "")) \
+            and not re.search(r"\bone\s+(?:singapore(?:an)?\s+)?(?:citizen|SC)\b", v, re.I):
         return "SC_SC"
     return None
 
@@ -2054,34 +2068,137 @@ def capped(llm: Any, max_tokens: int) -> Any:
     return llm
 
 
-def read_constraints_with_model(llm: Any, messages: List[Any],
-                                used: Optional[List[str]] = None) -> Tuple[Optional[ExtractedConstraints], List[str]]:
+_BLOCK_IN_TOWN = re.compile(r"^\s*(?:blk\.?\s*|block\s+)?(\d{1,4}[A-Z]?)\s+(?:in\s+|at\s+)?([A-Za-z][A-Za-z/ ]+?)\s*$", re.I)
+
+
+def complete_block_address(address: str) -> str:
+    """A block number with a town and no street ("458 Tampines", "Blk 458 TAMPINES") as the full address of the only
+    block with that number in the town ("Blk 458 TAMPINES ST 42"). The place search calls such a match ambiguous, as a
+    town is not a street, even when it has just the one candidate, and a comparison of "458 tampines and 216 ang mo
+    kio" then asked which block was meant (live on Claude, 6 Nov). Anything else is returned unchanged."""
+    m = _BLOCK_IN_TOWN.match(address or "")
+    towns = named_towns(m.group(2), any_case_short=True) if m else []
+    if not m or len(towns) != 1 or m.group(2).strip().upper() not in (towns[0], *[a for a, t in TOWN_ALIASES.items() if t == towns[0]]):
+        return address
+    try:
+        from mcp_server.location_tools import resolve_place
+        found = resolve_place(address)
+    except Exception:  # noqa: BLE001 — no index: the address goes on as it was
+        return address
+    blocks = [c for c in found.get("candidates") or [] if c.get("kind") == "hdb_block"
+              and str(c.get("block", "")).upper() == m.group(1).upper() and str(c.get("town", "")).upper() == towns[0]]
+    return blocks[0]["name"] if len(blocks) == 1 and blocks[0].get("name") else address
+
+
+def trust_model_reading() -> bool:
+    """HDB_TRUST_MODEL_READING=1: the model's reading of a message stands as the model wrote it. Code still fills what
+    the model left empty, but does not replace the model's assumptions and questions or drop what it read through the
+    grounding checks (_finalize_constraints / _verify_extraction with from_model), and the model says itself whether
+    the user wants their own money figures worked out (TrustedModelReading). Off by default: those checks were built
+    because the cluster model misread often; the switch is for testing whether a stronger model (the claude profile,
+    cluster/demo_start.sh --claude) does better without them. Experiment 1 runs with it off."""
+    return os.getenv("HDB_TRUST_MODEL_READING", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+# A block the app named in an answer: "- Blk 216 ANG MO KIO AVE 1 (ANG MO KIO) — median ...", "Near Blk 458 TAMPINES ST 42"
+_ANSWER_BLOCK = re.compile(r"\bBlk\s+(\d{1,4}[A-Z]?)\s+([A-Z][A-Z0-9'/.\- ]*?[A-Z0-9])(?=\s*[(—:,|*]|\s*$)", re.M)
+READING_CONTEXT_TURNS = 6
+READING_CONTEXT_CHARS = 3000
+CONTEXT_RULE = (" The user's earlier turns are given before the latest message. Read the constraints of the LATEST message "
+                "only. Use the earlier turns only to resolve what the latest message refers to: 'the Ang Mo Kio one I "
+                "mentioned earlier' becomes that block's full address (block number and street) in addresses, and 'these "
+                "2 flats' or 'both of them' becomes both full addresses. Do not repeat earlier limits the latest message "
+                "does not mention.")
+
+
+def reading_context(state: HDBCompassState, max_turns: int = READING_CONTEXT_TURNS,
+                    max_chars: int = READING_CONTEXT_CHARS) -> Tuple[str, int]:
+    """The earlier turns of this conversation for the model's reading (HDB_TRUST_MODEL_READING): each user message as
+    written, and for each answer only the blocks it named (an answer can list 100). The last max_turns turns, at most
+    max_chars in all, the oldest cut first. Returns (text, turns given); ("", 0) when there is no earlier turn."""
+    msgs = [m for m in (state.get("messages") or []) if isinstance(m, dict)]
+    earlier = msgs[:-1] if msgs and msgs[-1].get("role") == "user" else msgs
+    turns: List[List[str]] = []
+    for m in earlier:
+        content = str(m.get("content") or "")
+        if m.get("role") == "user":
+            turns.append([f"User: {content[:500]}"])
+        elif turns:
+            names = list(dict.fromkeys(f"Blk {b} {st.strip()}" for b, st in _ANSWER_BLOCK.findall(content)))
+            if names:
+                more = f" (and {len(names) - 5} more)" if len(names) > 5 else ""
+                turns[-1].append(f"Assistant named: {', '.join(names[:5])}{more}")
+    turns = turns[-max_turns:]
+    while turns and len("\n".join(line for t in turns for line in t)) > max_chars:
+        turns.pop(0)
+    return "\n".join(line for t in turns for line in t), len(turns)
+
+
+def reading_context_on() -> bool:
+    """HDB_READING_CONTEXT=1 (and always under HDB_TRUST_MODEL_READING): the model reads the latest message with the
+    earlier turns (reading_context) and says itself whether the user wants their own money figures worked out
+    (TrustedModelReading). Code's grounding checks on the reading still run unless HDB_TRUST_MODEL_READING is on: the
+    full Claude run of 6 Nov found 69 of 91 worse QA turns came from switching those checks off, while the context and
+    Claude's own judgement gave the turns it did better. cluster/demo_start.sh --claude turns this on."""
+    return trust_model_reading() or os.getenv("HDB_READING_CONTEXT", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+class TrustedModelReading(LLMExtractedConstraints):
+    """The model's reading with one judgement code otherwise makes from the wording alone (_MONEY_AMOUNT_ASK)."""
+    wants_money_figures: bool = Field(False, description=(
+        "True when the user asks to have their OWN figures worked out: their grants, loan, maximum budget, what they "
+        "can afford, stamp duty or upfront cash, in any wording ('help me calculate my grant', 'how much grant will I "
+        "get'). False for a question about the rules in general ('who qualifies for the PHG?') or a flat search."))
+
+    def to_constraints(self) -> "ExtractedConstraints":
+        data = self.model_dump(exclude={"amenity_radii_meters", "wants_money_figures"})
+        data["amenity_radii_meters"] = {k: v for k, v in self.amenity_radii_meters.model_dump().items() if v}
+        return ExtractedConstraints(**data)
+
+
+def read_constraints_with_model(llm: Any, messages: List[Any], used: Optional[List[str]] = None,
+                                schema: Any = None, judged: Optional[Dict[str, Any]] = None
+                                ) -> Tuple[Optional[ExtractedConstraints], List[str]]:
     """Structured constraint reading that degrades gracefully: invalid fields are dropped one by one
     (lenient_constraints), and a reply that is not JSON at all gets one repair turn showing the model its own output
-    and the error. Returns (constraints or None, notes for the errors list)."""
+    and the error. Returns (constraints or None, notes for the errors list). schema: TrustedModelReading under
+    HDB_TRUST_MODEL_READING; its wants_money_figures goes into `judged`."""
     notes: List[str] = []
+    schema = schema or LLMExtractedConstraints
+    judged = judged if judged is not None else {}
     # LLMExtractedConstraints types amenity_radii_meters as fixed fields: strict JSON-schema providers (Groq, OpenAI)
     # reject the open-ended dict of ExtractedConstraints. function_calling is the last resort for providers without
     # JSON modes. json_mode needs the schema in the prompt itself.
-    for method in ("json_schema", "json_mode", "function_calling"):
+    # Claude (the claude profile): its structured outputs allow at most 16 union-type fields per schema and this one has
+    # about 70, so json_schema is refused as "Schema is too complex" (json_mode is json_schema in langchain-anthropic);
+    # a forced tool call has no such limit, so it goes first and alone
+    methods = ("function_calling",) if str(getattr(llm, "_llm_type", "")).startswith("anthropic") \
+        else ("json_schema", "json_mode", "function_calling")
+    for method in methods:
         call = messages
         if method == "json_mode" and messages:
             call = [sys_msg(f"{messages[0].content} Reply with one JSON object for this schema: "
-                            f"{json.dumps(LLMExtractedConstraints.model_json_schema())}")] + list(messages[1:])
+                            f"{json.dumps(schema.model_json_schema())}")] + list(messages[1:])
         try:
-            res = llm.with_structured_output(LLMExtractedConstraints, method=method, include_raw=True).invoke(call)
+            res = llm.with_structured_output(schema, method=method, include_raw=True).invoke(call)
         except Exception as e:  # noqa: BLE001
             notes.append(f"extract_constraints[{method}] failed: {type(e).__name__}: {str(e)[:120]}")
             continue
         parsed = res.get("parsed") if isinstance(res, dict) else None
         if parsed is not None:
+            if hasattr(parsed, "wants_money_figures"):
+                judged["wants_money_figures"] = bool(parsed.wants_money_figures)
             if used is not None:
                 used.append(method)   # recorded as extraction_source "llm:<method>"
             return (parsed.to_constraints() if hasattr(parsed, "to_constraints") else parsed), notes
         raw = res.get("raw")
         text = raw.content if isinstance(getattr(raw, "content", None), str) else str(raw or "")
+        tool_args = next((tc.get("args") for tc in (getattr(raw, "tool_calls", None) or [])
+                          if isinstance(tc, dict) and isinstance(tc.get("args"), dict)), None)
         try:
-            data = _json_object(text)
+            # a forced tool call carries its reading in the call's arguments, not the text (the claude profile's only
+            # method): one invalid field there is dropped below like any other, not the whole reading thrown away
+            data = tool_args if tool_args is not None else _json_object(text)
         except Exception as e:  # noqa: BLE001
             try:
                 fix = llm.invoke(messages + [AIMessage(content=text[:4000]), HumanMessage(content=(
@@ -2092,6 +2209,9 @@ def read_constraints_with_model(llm: Any, messages: List[Any],
             except Exception as e2:  # noqa: BLE001
                 notes.append(f"extract_constraints[{method}] failed after one repair: {type(e2).__name__}: {str(e2)[:120]}")
                 continue
+        data = dict(data)
+        if "wants_money_figures" in data:
+            judged["wants_money_figures"] = bool(data.pop("wants_money_figures"))
         if isinstance(data.get("amenity_radii_meters"), dict):   # the typed schema sends null for unstated radii
             data["amenity_radii_meters"] = {k: v for k, v in data["amenity_radii_meters"].items() if v}
         extracted, dropped = lenient_constraints(data)
@@ -2148,6 +2268,13 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
                    f"{json.dumps((prior or {}).get('financial_inputs') or {}, default=str)}. Leave everything else empty.")
     if llm is not None:
         messages = [sys_msg(system), HumanMessage(content=query)]
+        context, context_turns = reading_context(state) if reading_context_on() else ("", 0)
+        if context:
+            # HDB_TRUST_MODEL_READING: the model reads the latest message with the turns before it, so "the Ang Mo Kio
+            # one I mentioned earlier" can be resolved (live on Claude, 6 Nov: it asked which block, four turns on)
+            messages = [sys_msg(system + CONTEXT_RULE), HumanMessage(content=f"Earlier in this conversation:\n{context}"),
+                        HumanMessage(content=f"Latest message (read this one):\n{query}")]
+            errors.append(f"extract_constraints: earlier turns given to the model ({context_turns} turns)")
         # HDB_EXTRACTION_REASONING=1 switches it on for one run without editing the config (A/B testing)
         if os.getenv("HDB_EXTRACTION_REASONING") == "1" or load_config().get("architecture", {}).get("extraction_reasoning", False):
             # Guided JSON output leaves the model no room to think, so an optional first pass lists, in plain
@@ -2155,13 +2282,17 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
             try:
                 think = llm.invoke([sys_msg("List, as short bullet points, every housing-search constraint and every money "
                                             "or household fact this buyer states, quoting their words. Add nothing they did "
-                                            "not say."), HumanMessage(content=query)])
+                                            "not say."), *messages[1:]])   # with the earlier turns when given
                 notes_text = strip_think(think.content if isinstance(think.content, str) else str(think.content))
                 messages.append(HumanMessage(content=f"Facts the buyer stated (from a first read):\n{notes_text[:3000]}"))
             except Exception as e:  # noqa: BLE001
                 errors.append(f"extract_constraints[reasoning] failed: {type(e).__name__}")
         used: List[str] = []
-        extracted, notes = read_constraints_with_model(llm, messages, used)
+        trusted = trust_model_reading()
+        judged: Dict[str, Any] = {}
+        extracted, notes = read_constraints_with_model(llm, messages, used,
+                                                       schema=TrustedModelReading if reading_context_on() else None,
+                                                       judged=judged)
         errors += notes
         if extracted is not None:
             source = f"llm:{used[-1]}" if used else "llm"
@@ -2178,6 +2309,8 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
             # Assumptions and questions are printed as they stand in the facts section code writes, so they are
             # code's own (the research reading of this message), never the model's free text.
             for k in MODEL_FREE_TEXT_FIELDS:
+                if trusted:
+                    break                      # HDB_TRUST_MODEL_READING: the model's own (code's fill empty ones above)
                 if merged.get(k) != rb.get(k):
                     errors.append(f"extract_constraints: model-written {k} replaced by code's")
                 merged[k] = rb.get(k) or []
@@ -2189,8 +2322,14 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
     constraints = extracted.model_dump()
     if extracted.financial_inputs is not None:
         constraints["financial_inputs"] = extracted.financial_inputs.model_dump(exclude_unset=True)
-    constraints = _finalize_constraints(constraints, query, state, errors, from_model=source != "regex",
+    trusted = trust_model_reading() and source != "regex"
+    if trusted:
+        errors.append("extract_constraints: model reading trusted (HDB_TRUST_MODEL_READING=1): code's grounding checks skipped")
+    if reading_context_on() and source != "regex":
+        constraints["model_money_intent"] = bool(judged.get("wants_money_figures"))
+    constraints = _finalize_constraints(constraints, query, state, errors, from_model=source != "regex" and not trusted,
                                         model_policy=model_policy)
+    constraints.pop("model_money_intent", None)
     constraints["extraction_source"] = source
     return {"user_constraints": constraints, "errors": errors, "model_constraints": model_reading}
 
@@ -2208,7 +2347,19 @@ _MONEY_AMOUNT_ASK = re.compile(
     r"\bhow much\b.{0,30}\b(?:borrow|loan|grants?|afford|budget|stamp duty|bsd|cash|cpf|downpayment|down payment|"
     r"instalments?|installments?|monthly)\b|\bwhat(?:'s| is| are)?\s+(?:our|my)\s+(?:max(?:imum)?\s+)?(?:budget|loan|grants?)\b"
     r"|\b(?:max(?:imum)?|how big a?)\s+(?:hdb\s+|bank\s+|housing\s+)?(?:loan|budget)\b"
-    r"|\b(?:stamp duty|bsd)\b.{0,25}\b(?:on|for|of)\b.{0,15}\d|\bcan (?:we|i) afford\b|\bhow much can (?:we|i) (?:get|borrow)\b", re.I)
+    r"|\b(?:stamp duty|bsd)\b.{0,25}\b(?:on|for|of)\b.{0,15}\d|\bcan (?:we|i) afford\b|\bhow much can (?:we|i) (?:get|borrow)\b"
+    # the buyer's own grant amount in other words: "Help me check the amount of grant i will get" (live on Claude,
+    # 6 Nov: after a search it re-listed the blocks and asked for nothing). "What grants can I get?" stays the policy
+    # question it is routed as (tests/test_scope_routing.py): no amount word, and the verb comes before "I"
+    r"|\b(?:amount|value|size|total|sum)\s+of\s+(?:the\s+|my\s+|our\s+|any\s+)?(?:housing\s+|cpf\s+|hdb\s+)?grants?\b"
+    r"|\b(?:my|our)\s+(?:housing\s+|cpf\s+|hdb\s+)?grants?\s+(?:amount|figure|total|estimate|entitlement|sum)\b"
+    r"|\b(?:check|calculate|work out|estimate|compute|find out|tell (?:me|us))\s+(?:how much|what)\s+(?:housing\s+|cpf\s+|hdb\s+)?grants?\b"
+    r"|\bgrants?\s+(?:i|we)(?:'ll|'d|\s+(?:will|would|can|could|may|might|am going to|are going to|stand to))\s+(?:get|receive)\b"
+    # and the general shape, a request to work out the buyer's own grant: "Help me calculate my grant based on my
+    # financials" (live on Claude, 6 Nov: the same search again), "check our grants", "estimate the grant for us"
+    r"|\b(?:calculate|check|work out|estimate|compute|find out|figure out|determine|assess|know|see|show|tell)\b[^.?!]{0,30}?"
+    r"\b(?:my|our)\s+(?:own\s+)?(?:housing\s+|cpf\s+|hdb\s+)?grants?\b"
+    r"|\b(?:calculate|compute|estimate|work out|figure out)\s+(?:the\s+|any\s+)?(?:housing\s+|cpf\s+|hdb\s+)?grants?\b", re.I)
 
 
 _DUTY_WORDS = re.compile(r"\b(?:stamp )?dut(?:y|ies)\b|\bbsd\b", re.I)
@@ -2943,6 +3094,12 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
             errors.append(f"extract_constraints: places not in the conversation were dropped: "
                           f"{[a for a in constraints['addresses'] if a not in kept]}")
             constraints["addresses"] = kept
+    if constraints.get("addresses"):
+        done = [complete_block_address(a) for a in constraints["addresses"]]
+        if done != list(constraints["addresses"]):
+            errors.append("extract_constraints: block addresses completed (the only such block in the town): "
+                          + ", ".join(f"{a} -> {b}" for a, b in zip(constraints["addresses"], done) if a != b))
+            constraints["addresses"] = done
     for flag in ("wants_area_affordability", "wants_flat_affordability"):
         if from_model and constraints.get(flag) and not _AFFORD_WORDS.search(query) and not getattr(said_here, flag, False):
             # "4-room below 750k" is a price limit on the search, not "can we afford a flat there?": the live model's
@@ -3200,7 +3357,8 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         constraints["min_price_sgd"] = rng[0]
         constraints["assumptions"] = list(constraints.get("assumptions") or []) + [
             f"Showing blocks whose median price is between ${rng[0]:,.0f} and ${rng[1]:,.0f}."]
-    constraints["money_intent"] = bool(_MONEY_AMOUNT_ASK.search(query)) and inst is None   # an instalment is code's
+    constraints["money_intent"] = bool(_MONEY_AMOUNT_ASK.search(query) or fresh_constraints.get("model_money_intent")) \
+        and inst is None   # an instalment is code's; model_money_intent: the model's own judgement (HDB_TRUST_MODEL_READING)
     own = _OWN_GRANT_ASK.search(query)
     if own and own.group(0).lower().endswith(" we") and not calculator_facts(constraints) and inst is None:
         # "What grants can we get?" with no household facts: the calculators ask for them (CLARIFY-03: the policy
@@ -6408,7 +6566,10 @@ _RANK_HIGH = (r"highest|priciest|dearest|most expensive|most costly|top(?=\s+(?:
               r"(?:rose|risen|grew|increased|gained|climbed|went up)\s+(?:the\s+)?most")
 _RANK_LOW = (r"lowest|cheapest|least expensive|most affordable|least costly|at the bottom|"
              r"(?:fell|fallen|dropped|decreased|declined|went down)\s+(?:the\s+)?most|rose\s+(?:the\s+)?least")
-_RANKS_A_SET = re.compile(rf"\b(?:{_RANK_HIGH}|{_RANK_LOW}|biggest|smallest|largest|fastest|slowest)\b", re.I)
+# a place in the middle of the whole set is a ranking too: "Queenstown and Bukit Merah offer mid-range prices" of a
+# cut-off table where they were 2nd and 3rd of 26 (live 6 Nov, "Group it by town instead.")
+_RANK_MID = r"mid[- ]?range|mid[- ]?priced|middle of the (?:range|pack|market)|moderately priced"
+_RANKS_A_SET = re.compile(rf"\b(?:{_RANK_HIGH}|{_RANK_LOW}|{_RANK_MID}|biggest|smallest|largest|fastest|slowest)\b", re.I)
 _RANKS_HIGH = re.compile(rf"\b(?:{_RANK_HIGH})\b", re.I)
 _RANKS_LOW = re.compile(rf"\b(?:{_RANK_LOW})\b", re.I)
 _OF_THE_SHOWN = re.compile(
@@ -6430,7 +6591,7 @@ def ranks_part_table(sentence: str, facts: str) -> bool:
         same_way = _RANKS_HIGH if head.group(2) == "highest" else _RANKS_LOW
         other_way = _RANKS_LOW if head.group(2) == "highest" else _RANKS_HIGH
         rest = re.sub(re.escape(head.group(1).strip()), " ", sentence, flags=re.I)
-        if same_way.search(sentence) and not other_way.search(rest):
+        if same_way.search(sentence) and not other_way.search(rest) and not re.search(rf"\b(?:{_RANK_MID})\b", rest, re.I):
             return False   # the headline's group and direction, with no other group ranked in the same sentence
     return True
 
@@ -6627,11 +6788,18 @@ def unsupported_proximity(sentence: str, facts: str) -> bool:
 # (DEMO-12 t2), "The available options depend on the specific blocks and their details" above a budget (HOUSE-04 t2).
 _BLOCK_FILLER = re.compile(r"\bprice and convenience\b|\b(?:depends?|depending|based|rests?) on (?:the |your )?(?:specific |available |"
                            r"individual |particular |actual )*(?:blocks?|options?|flats?|listings?|units?)\b", re.I)
+# "The choice between different blocks would depend on ..., but specific details on blocks are not yet available." in a
+# grants answer (live 6 Nov). Not a rule about choosing blocks ("When choosing among blocks, check the SPR quota").
+_BLOCK_CHOICE_FILLER = re.compile(r"\b(?:choice|choosing|deciding|picking)\s+(?:between|among|from)\s+(?:the\s+)?(?:different\s+|"
+                                  r"specific\s+|available\s+|these\s+|those\s+)?blocks\b"
+                                  r"|\bdetails\s+(?:on|about|of|for)\s+(?:the\s+|specific\s+|any\s+)?blocks\s+(?:are|is)\s+not\b", re.I)
+_BLOCK_RULE = re.compile(r"\b(?:quotas?|eip|spr|ethnic\w*|integration|eligib\w*|rules?|polic\w*|allowed|permitted)\b", re.I)
 
 
 def block_filler(sentence: str, facts: str) -> bool:
     """A sentence about choosing among blocks when the facts list no block."""
-    return not re.search(r"\bBlk\s+\d", facts or "") and bool(_BLOCK_FILLER.search(sentence))
+    return not re.search(r"\bBlk\s+\d", facts or "") and bool(
+        _BLOCK_FILLER.search(sentence) or (_BLOCK_CHOICE_FILLER.search(sentence) and not _BLOCK_RULE.search(sentence)))
 
 
 def check_model_opening(text: str, state: HDBCompassState, facts: str,

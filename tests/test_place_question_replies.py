@@ -165,7 +165,8 @@ def test_the_live_models_reading_still_shows_the_blocks_past_sales():
     reading = dict(addresses=["Tampines Blk 884"], towns=["TAMPINES"], flat_types=["BLK 884"])
     out = app("Resale price for Tampines Blk 884?", **reading)
     c = out["user_constraints"]
-    assert c["addresses"] == ["Blk 884 Tampines"] and c["flat_types"] == []
+    # completed to the only Blk 884 in Tampines (complete_block_address, 6 Nov)
+    assert c["addresses"] == ["Blk 884 TAMPINES ST 83"] and c["flat_types"] == []
     assert any("not HDB flat types were dropped" in e for e in out["errors"])
     assert "Blk 884 TAMPINES ST 83" in out["draft_response"]
     assert sv.NO_DATA not in out["draft_response"]
