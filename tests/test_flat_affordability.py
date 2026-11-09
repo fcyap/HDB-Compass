@@ -117,8 +117,8 @@ def test_proximity_eligibility_confirmed():
     t = "Our proximity grant eligibility is confirmed."
     assert sv.stated_financial_inputs(t)["grants"]["proximity_eligibility_confirmed"] is True
     assert sv.fact_is_grounded("proximity_eligibility_confirmed", True, t)
-    assert "proximity_eligibility_confirmed" not in sv.stated_financial_inputs(
-        "Our proximity grant eligibility is not confirmed.").get("grants", {})
+    assert sv.stated_financial_inputs(
+        "Our proximity grant eligibility is not confirmed.")["grants"]["proximity_eligibility_confirmed"] is False
 
 
 # The exact sentences composeHouseholdMessage sends (couple, then single)

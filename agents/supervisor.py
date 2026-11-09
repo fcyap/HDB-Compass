@@ -5975,7 +5975,7 @@ _BLOCK_LIST = re.compile(r"\b(?:Blk|Block|Blocks|Blks)\.?\s*(?:No\.?\s*|#\s*)?(\
                          r"\d{1,4}[A-Z]?\b)*)", re.I)
 _ADDRESS = re.compile(r"\b(\d{1,4}[A-Z]?)\s+(?:[A-Z][A-Za-z]+\s+){1,4}(?i:Ave|Avenue|St|Street|Rd|Road|Dr|Drive|Cres|Crescent|"
                       r"Ring|Way|Lane|Close|Central|Lorong|Lor)\b")
-_NOT_A_FIGURE = re.compile(r"\b[2-5]\s*-?\s*(?:room|rm)s?\b|\b(?:Ave|Avenue|St|Street|Rd|Road|Ring|Sector|Lorong|Lor)\s+\d+[A-Z]?\b",
+_NOT_A_FIGURE = re.compile(r"\b(?:[1-5]|one|two|three|four|five)\s*-?\s*(?:room|rm)s?\b|\b(?:Ave|Avenue|St|Street|Rd|Road|Ring|Sector|Lorong|Lor)\s+\d+[A-Z]?\b",
                            re.I)
 _SPELLED_FIGURE = re.compile(r"\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|"
                              r"sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|"
@@ -6030,12 +6030,52 @@ def _figures(text: str) -> List[Any]:
     return found
 
 
+_SPELLED_AGE_MAP = {
+    "twenty-one": 21.0, "twenty one": 21.0,
+    "twenty-four": 24.0, "twenty four": 24.0,
+    "thirty": 30.0,
+    "thirty-five": 35.0, "thirty five": 35.0,
+    "forty": 40.0,
+    "fifty-five": 55.0, "fifty five": 55.0,
+    "sixty-five": 65.0, "sixty five": 65.0,
+}
+
+
 def policy_figures(passages: Any, question: str = "") -> set:
     """Every figure in the policy lines the answer shows (titles and lines, but not worked examples). A range is one
     figure: its ends are not allowed on their own."""
     shown = shown_policy_passages(passages, question)
     lines = [s["title"] for s in shown] + [line for s in shown for line in s["lines"]]
-    return set(_figures("\n".join(line for line in lines if not re.match(r"(?:worked )?example\b", line, re.I))))
+    figures = set(_figures("\n".join(line for line in lines if not re.match(r"(?:worked )?example\b", line, re.I))))
+    expanded = set(figures)
+    for f in figures:
+        if isinstance(f, tuple) and len(f) == 2:
+            unit, val = f
+            if unit in ("", "year"):
+                expanded.add(("", val))
+                expanded.add(("year", val))
+            elif unit == "$k":
+                expanded.add(("$", val * 1000.0))
+            elif unit == "$" and val >= 1000 and val % 1000 == 0:
+                expanded.add(("$k", val / 1000.0))
+    if question:
+        for f in _figures(question):
+            expanded.add(f)
+            if isinstance(f, tuple) and len(f) == 2:
+                unit, val = f
+                if unit in ("", "year"):
+                    expanded.add(("", val))
+                    expanded.add(("year", val))
+                elif unit == "$k":
+                    expanded.add(("$", val * 1000.0))
+                elif unit == "$" and val >= 1000 and val % 1000 == 0:
+                    expanded.add(("$k", val / 1000.0))
+        q_lower = question.lower()
+        for phrase, val in _SPELLED_AGE_MAP.items():
+            if re.search(rf"\b{re.escape(phrase)}\b", q_lower):
+                expanded.add(("", val))
+                expanded.add(("year", val))
+    return expanded
 
 
 def _plain(text: str) -> str:

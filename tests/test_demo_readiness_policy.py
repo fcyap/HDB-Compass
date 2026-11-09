@@ -234,7 +234,9 @@ def test_sentences_about_the_spr_quota_in_an_eip_answer_are_dropped():
 
 def test_spr_figures_presented_as_ethnic_quotas_are_dropped():
     q = "Can you check a block's live quota here?"
-    shown = sv.shown_policy_passages(search(sv.LIVE_QUOTA_POLICY_QUERY), q)
+    with patch("mcp_server.policy_rag_tools._get_embed_model", return_value=False), \
+         patch("mcp_server.policy_rag_tools._get_cross_encoder", return_value=False):
+        shown = sv.shown_policy_passages(search(sv.LIVE_QUOTA_POLICY_QUERY), q)
     assert sv.policy_scope_conflict(sv._split_opening(POLICY_07_LIVE)[1], q, shown)
 
 
@@ -277,6 +279,8 @@ def _all_scenario_messages():
 
 def test_the_app_limit_and_evasion_readings_match_only_the_testers_questions():
     messages = _all_scenario_messages()
+    if not messages:
+        pytest.skip("needs local QA scenario files (data/local/qa/scenarios_*.json)")
     assert len(messages) > 500
     hits = {m for m in messages if (sv._APP_ESTIMATE_ASK.search(m) or sv._LIVE_QUOTA_ASK.search(m)) and sv._ASKED.search(m)}
     assert hits == {"Is your calculator the same as HDB approval?", "Can you check a block's live quota here?"}
