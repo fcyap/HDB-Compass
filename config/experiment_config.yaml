@@ -93,15 +93,23 @@ addons:
 
 # Member 3: Advanced RAG & Regulatory Knowledge Base Settings
 policy_rag:
-  chunk_size_tokens: 512
-  chunk_overlap_tokens: 64
+  # SAGE-inspired ingestion uses sentence similarity (threshold 0.35, chosen on Category C by the Nov 2026 sweep) with a 380-word cap.
+  # The SAGE paper's trained segmentation classifier is not included; see data/ingest_hdb_policy_rag.py.
   sparse_retriever: "BM25Okapi"
   dense_retriever: "all-MiniLM-L6-v2"
   cross_encoder_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
   rrf_k: 60
   candidate_top_k: 20
   final_passages_top_k: 5
-  active_pipeline: "RAG-3"  # RAG-1 (dense) | RAG-2 (hybrid RRF) | RAG-3 (hybrid + rerank)
+  # Re-ranking of the hybrid candidates: ce_only = the cross-encoder alone; blend = 0.25 cross-encoder + 0.35 rank
+  # fusion + 0.40 query-term coverage. On the official-page corpus the blend let every chunk of a page whose title
+  # matches the question look relevant (short process steps outranked the rule); the ablation (Nov 2026) gave
+  # Category E recall 0.87 for ce_only vs 0.57 for blend, Category C equal.
+  rerank_mode: "ce_only"
+  # The pipeline the app's policy search uses (read by policy_rag_tools.configured_pipeline). RAG-2 was the most
+  # accurate on the 30 benchmark questions (recall 0.84 vs 0.81 for RAG-3) and about 5x faster (0.4 s vs 2.2 s, no
+  # model calls); RAG-3 stays available by name.
+  active_pipeline: "RAG-2"  # RAG-1 (dense) | RAG-2 (hybrid + rerank) | RAG-3 (query rewrite + HyDE + graph expansion)
 
 architecture:
   auditor_max_retries: 2            # proposal §5 risk 2

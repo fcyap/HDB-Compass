@@ -27,7 +27,10 @@ from agents import supervisor as sv  # noqa: E402
 from agents.tool_registry import resolve_callable  # noqa: E402
 
 QUERIES = {q["id"]: q["query"] for q in json.loads((ROOT / "evaluation" / "category_c_queries.json").read_text())}
-CHUNKS = json.loads((ROOT / "data" / "policy_chunks.json").read_text())
+# The formatting rules (line choice, sentence cuts, figure checks) are tested on a frozen copy of the legacy chunks
+# they were written against; the live corpus is now the captured official pages (data/policy_sources/), whose sections
+# are named differently. Tests that call search() still run on the live corpus.
+CHUNKS = json.loads((ROOT / "tests" / "fixtures" / "legacy_policy_chunks.json").read_text())
 URL = "https://www.hdb.gov.sg/residential/buying-a-flat/new-flats/flat-classification"
 
 
@@ -64,7 +67,10 @@ def test_real_passages_read_as_a_clean_section(qid):
     for start, end in zip(titles, titles[1:] + [len(lines)]):
         shown = lines[start + 1:end]
         assert shown[-1].startswith("  - Source: https://")
-        assert 2 <= len(shown) - 1 <= sv.POLICY_LINES_SHOWN, shown
+        # 2-4 lines when the section has them (POLICY_LINES_SHOWN); the official pages often state a rule in one
+        # paragraph ("You may rent out your whole flat after the MOP ... Owners of Plus and Prime flats are not
+        # allowed to rent out the whole flat."), which is then the section's one line
+        assert 1 <= len(shown) - 1 <= sv.POLICY_LINES_SHOWN, shown
     answer = sv.template_response({"messages": [{"role": "user", "content": QUERIES[qid]}], "rag_policy_passages": passages})
     assert answer.startswith("**Policy:**\n- **") and "HFE" in answer
 
@@ -121,16 +127,17 @@ def test_long_lines_keep_whole_sentences():
     assert cut.endswith("…") and len(cut) <= sv.POLICY_LINE_MAX + 1 and "longwor…" not in cut
 
 
+# Expected lines are HDB's own wording from the captured official pages (data/policy_sources/). The legacy corpus's
+# lines ("must wait 15 months ...", "the transaction is ALWAYS PERMITTED ...") are not what HDB's current pages say.
 @pytest.mark.parametrize("qid, kept", [
-    ("C3-01", "must wait 15 months from the legal date of disposal before they are eligible to purchase a "
-              "non-subsidised HDB resale flat."),
-    ("C3-02", "must wait 15 months from the legal date of disposal"),
-    ("C3-04", "the transaction is ALWAYS PERMITTED, even if the quota for that ethnic group is completely full at both "
-              "the block and neighbourhood levels."),
-    ("C2-01", "(if aged 21+, eligible for 2-room to 5-room Standard resale flats)."),
-    # a Plus question is shown the Plus clawback section, not the Prime one (whose "Subsequent resale buyers ... do not
-    # pay subsidy recovery" was shown before): SEM-07, sections about a class the question does not name are left out
-    ("C1-03", "subsidy recovery rate on the higher of the resale price or market valuation upon the first resale.")])
+    ("C3-01", "you must dispose of the interest in the private residential property"),
+    ("C3-02", "Must not have disposed of any private residential property at least 30 months before HFE letter "
+              "application"),
+    ("C3-04", "You and the flat seller are of the same ethnic group and household citizenship"),
+    ("C2-01", "At least 35 years old"),
+    # a Plus question is shown the Plus/Prime subsidy-recovery rule, including that open-market resale buyers do not pay it
+    ("C1-03", "If you buy a resale Plus or Prime flat on the open market, the subsidy recovery does not apply when you "
+              "sell the flat.")])
 def test_the_line_that_answers_keeps_its_figure_unit_and_condition(qid, kept):
     lines = sv.policy_fact_lines(search(qid), QUERIES[qid])
     assert any(kept in line for line in lines), lines
@@ -202,7 +209,7 @@ def test_an_opening_figure_not_in_the_policy_lines_is_dropped(sentence):
     "Plus flats carry a 3% clawback.",                  # one end of "3% to 6%" is not a figure on its own
     "Prime flats carry a 9% clawback."])
 def test_a_range_is_checked_as_a_range_however_it_is_written(sentence):
-    assert sv.keep_supported_sentences(sentence, "", QUERIES["C1-03"], search("C1-03")) == ("", 1)
+    assert sv.keep_supported_sentences(sentence, "", QUERIES["C1-03"], PLUS) == ("", 1)
 
 
 @pytest.mark.parametrize("sentence", [
@@ -210,7 +217,7 @@ def test_a_range_is_checked_as_a_range_however_it_is_written(sentence):
     # (no longer "..., and Prime from 6% to 9%": C1-03 asks about Plus flats, so the Prime section is not shown)
     "The Plus clawback ranges from 3% up to 6%."])
 def test_a_range_the_passages_give_may_be_written_another_way(sentence):
-    assert sv.keep_supported_sentences(sentence, "", QUERIES["C1-03"], search("C1-03")) == (sentence, 0)
+    assert sv.keep_supported_sentences(sentence, "", QUERIES["C1-03"], PLUS) == (sentence, 0)
 
 
 def test_without_policy_passages_every_figure_is_still_dropped():

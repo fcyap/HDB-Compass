@@ -1,0 +1,514 @@
+{
+  "cpf_considerations_using_cpf": {
+    "captured_at": "2026-11-09T07:55:16.752515+00:00",
+    "file": "cpf_considerations_using_cpf.html",
+    "final_url": "https://www.cpf.gov.sg/member/home-ownership/using-your-cpf-to-buy-a-home/considerations-when-using-cpf-to-buy-property",
+    "method": "auto",
+    "sha256": "9b73fc49a1405c40cbeba730c41bae1963627d168fe0fbc28f6a4b839b0982c7",
+    "status": 200,
+    "url": "https://www.cpf.gov.sg/member/home-ownership/using-your-cpf-to-buy-a-home/considerations-when-using-cpf-to-buy-property"
+  },
+  "cpf_ehg_phg_guide": {
+    "captured_at": "2026-11-09T07:55:13.553957+00:00",
+    "file": "cpf_ehg_phg_guide.html",
+    "final_url": "https://www.cpf.gov.sg/member/infohub/educational-resources/a-guide-to-enhanced-cpf-housing-and-proximity-grant",
+    "method": "auto",
+    "sha256": "d77e99a7bd441739496fa22ce1514f17f7c29dcceb50168383cd64169d958cdc",
+    "status": 200,
+    "url": "https://www.cpf.gov.sg/member/infohub/educational-resources/a-guide-to-enhanced-cpf-housing-and-proximity-grant"
+  },
+  "cpf_hfe_explainer": {
+    "captured_at": "2026-11-09T07:55:14.629183+00:00",
+    "file": "cpf_hfe_explainer.html",
+    "final_url": "https://www.cpf.gov.sg/member/infohub/educational-resources/hdb-flat-eligibility-letter-what-to-know",
+    "method": "auto",
+    "sha256": "739e02a49b9f5faa495a883fda696befc30398c02a085ede3dc7aa8a94e390b3",
+    "status": 200,
+    "url": "https://www.cpf.gov.sg/member/infohub/educational-resources/hdb-flat-eligibility-letter-what-to-know"
+  },
+  "cpf_home_buying_above_55": {
+    "captured_at": "2026-11-09T07:55:19.937551+00:00",
+    "file": "cpf_home_buying_above_55.html",
+    "final_url": "https://www.cpf.gov.sg/member/home-ownership/home-buying-guide-for-members-above-55",
+    "method": "auto",
+    "sha256": "1dfdac3333c3ef0ef3552ecf3c5021b214a73c76fa3568d9117a299b6a845778",
+    "status": 200,
+    "url": "https://www.cpf.gov.sg/member/home-ownership/home-buying-guide-for-members-above-55"
+  },
+  "cpf_home_buying_below_55": {
+    "captured_at": "2026-11-09T07:55:18.875350+00:00",
+    "file": "cpf_home_buying_below_55.html",
+    "final_url": "https://www.cpf.gov.sg/member/home-ownership/home-buying-guide-for-members-below-55",
+    "method": "auto",
+    "sha256": "384ec0dd17ceed6ae4066bf3fafef11051a99ed9580554319cffeb88c6919d2b",
+    "status": 200,
+    "url": "https://www.cpf.gov.sg/member/home-ownership/home-buying-guide-for-members-below-55"
+  },
+  "cpf_refund_on_sale": {
+    "captured_at": "2026-11-09T07:55:21.000185+00:00",
+    "file": "cpf_refund_on_sale.html",
+    "final_url": "https://www.cpf.gov.sg/member/home-ownership/using-your-cpf-to-buy-a-home/cpf-refund-when-selling-or-transferring-property",
+    "method": "auto",
+    "sha256": "d0956a2e4542d004257e3b2b0f36968e43a4893352ce9c91b55c4a686fcb9134",
+    "status": 200,
+    "url": "https://www.cpf.gov.sg/member/home-ownership/using-your-cpf-to-buy-a-home/cpf-refund-when-selling-or-transferring-property"
+  },
+  "cpf_retain_20000_oa": {
+    "captured_at": "2026-11-09T07:55:17.800216+00:00",
+    "file": "cpf_retain_20000_oa.html",
+    "final_url": "https://www.cpf.gov.sg/member/home-ownership/using-your-cpf-to-buy-a-home/retain-20000-in-your-oa-if-you-are-taking-a-housing-loan",
+    "method": "auto",
+    "sha256": "e5325ec6d91611e3849ba0f8839fe277629fa72a053fd076bd5b09b42e077cfd",
+    "status": 200,
+    "url": "https://www.cpf.gov.sg/member/home-ownership/using-your-cpf-to-buy-a-home/retain-20000-in-your-oa-if-you-are-taking-a-housing-loan"
+  },
+  "cpf_using_cpf_to_buy_a_home": {
+    "captured_at": "2026-11-09T07:55:15.698977+00:00",
+    "file": "cpf_using_cpf_to_buy_a_home.html",
+    "final_url": "https://www.cpf.gov.sg/member/home-ownership/using-your-cpf-to-buy-a-home",
+    "method": "auto",
+    "sha256": "ea6f1422cd1ccf86cbbe538185bf62481ead540eff9ff907d9d2c888e3f520dd",
+    "status": 200,
+    "url": "https://www.cpf.gov.sg/member/home-ownership/using-your-cpf-to-buy-a-home"
+  },
+  "hdb_ability_to_pay": {
+    "captured_at": "2026-11-09T10:43:10.336803+00:00",
+    "file": "Ability to Pay.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.479685+00:00",
+    "sha256": "69190fe22d0fe62a316454b597a677ba2b76b7fc6b1e010e1b29f1eb5f6178f2",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/financial-planning-for-a-flat-purchase/ability-to-pay",
+    "url_verified": true
+  },
+  "hdb_application_for_an_hdb_flat_eligibility_hfe_letter": {
+    "captured_at": "2026-11-09T10:43:10.347758+00:00",
+    "file": "Application for an HDB Flat Eligibility (HFE) Letter.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.481236+00:00",
+    "sha256": "d741c28a8dd1f5814fafa5a7ccc08e8feb99c23c11a7a8b3ea670fe0d93dbaa1",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/application-for-an-hdb-flat-eligibility-hfe-letter",
+    "url_verified": true
+  },
+  "hdb_application_process_for_a_resale_flat_purchase": {
+    "captured_at": "2026-11-09T10:43:10.339135+00:00",
+    "file": "Application Process for a Resale Flat Purchase.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.480125+00:00",
+    "sha256": "286992d2356d7e05f6981c4e51c82c2a86f81f6e731bca8b495b1444b02abcac",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/resale-flat-application/application-process",
+    "url_verified": true
+  },
+  "hdb_approval_of_resale_flat_application_for_buyers": {
+    "captured_at": "2026-11-09T10:43:10.350785+00:00",
+    "file": "Approval of Resale Flat Application for Buyers.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.481965+00:00",
+    "sha256": "abf6805aa595fa9f66b42af93d86ef6ec136c6400415d49c96fe0cba309834e4",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/resale-flat-application/approval-of-application",
+    "url_verified": true
+  },
+  "hdb_booking_of_flat": {
+    "captured_at": "2026-11-09T10:43:10.351999+00:00",
+    "file": "Booking of Flat.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.482437+00:00",
+    "sha256": "a390d432529142bc8f4de4eed34b1e0b21a04bba1cfaf5dcb71715165801783d",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/process-for-buying-a-new-flat/booking-of-flat",
+    "url_verified": true
+  },
+  "hdb_budget_for_a_flat": {
+    "captured_at": "2026-11-09T10:43:10.352936+00:00",
+    "file": "Budget for a Flat.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.482789+00:00",
+    "sha256": "0f96d7247ff4def2c0b6ce8209d7df283269714e171e653ee023896eac8e4006",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/financial-planning-for-a-flat-purchase/budget-for-a-flat",
+    "url_verified": true
+  },
+  "hdb_conditions_after_buying_a_new_flat": {
+    "captured_at": "2026-11-09T10:43:10.362890+00:00",
+    "file": "Conditions After Buying a New Flat.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.486351+00:00",
+    "sha256": "997becf45473ec92ee9a9128d96df1955bfb783439c33cae135bfcdefd749d4a",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/conditions-after-buying-a-new-flat",
+    "url_verified": true
+  },
+  "hdb_conditions_after_buying_a_resale_flat": {
+    "captured_at": "2026-11-09T10:43:10.363471+00:00",
+    "file": "Conditions After Buying a Resale Flat.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.486649+00:00",
+    "sha256": "52445152bfbe3c790db0d7565720d6508a172448a73311bdb4072c6af7e3463a",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/resale-flats/conditions-after-buying-a-resale-flat",
+    "url_verified": true
+  },
+  "hdb_couples_and_families": {
+    "captured_at": "2026-11-09T10:43:10.367850+00:00",
+    "file": "Couples and Families.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.489494+00:00",
+    "sha256": "9fe9e43914bc3a042b7b33800cbf1ead1cde3f9b0a17d63be627642beb82139a",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/couples-and-families",
+    "url_verified": true
+  },
+  "hdb_cpf_housing_grant_for_singles_buying_resale_flats": {
+    "captured_at": "2026-11-09T10:43:10.355526+00:00",
+    "file": "CPF Housing Grant for Singles Buying Resale Flats.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.484364+00:00",
+    "sha256": "b8f37a56dac342f4386b38d5e37faf669966c06fcb63c4169588dc16a8159538",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/singles/cpf-housing-grant",
+    "url_verified": true
+  },
+  "hdb_cpf_housing_grants_for_families_buying_resale_flats": {
+    "captured_at": "2026-11-09T10:43:10.360718+00:00",
+    "file": "CPF Housing Grants for Families Buying Resale Flats.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.486011+00:00",
+    "sha256": "f4826a30c093c6ee7161a7ef587bb972a1c958a388d834182b74cefbee48aed2",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/couples-and-families/cpf-housing-grants",
+    "url_verified": true
+  },
+  "hdb_credit_to_finance_a_flat_purchase": {
+    "captured_at": "2026-11-09T10:43:10.369267+00:00",
+    "file": "Credit to Finance a Flat Purchase.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.490526+00:00",
+    "sha256": "04e562fe1ec93221dcd84d761498ac2c54a32d7000b78f628165fbf0eabe572a",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/financial-planning-for-a-flat-purchase/credit-to-finance-a-flat-purchase",
+    "url_verified": true
+  },
+  "hdb_design_features_for_new_flats": {
+    "captured_at": "2026-11-09T10:43:10.371938+00:00",
+    "file": "Design Features for New Flats.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.491405+00:00",
+    "sha256": "36258d5df520877b9be7fe302c03bf84500760d90f07c8ea2b7af262caa0ec60",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/finding-a-new-flat/design-features",
+    "url_verified": true
+  },
+  "hdb_enhanced_cpf_housing_grant_for_families": {
+    "captured_at": "2026-11-09T10:43:10.376229+00:00",
+    "file": "Enhanced CPF Housing Grant for Families.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.492425+00:00",
+    "sha256": "8c4df083bb0bd18bd73eb9006cedd18e84cb57756a43f848cdaf4764a081be33",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/couples-and-families/enhanced-cpf-housing-grant",
+    "url_verified": true
+  },
+  "hdb_enhanced_cpf_housing_grant_for_singles": {
+    "captured_at": "2026-11-09T10:43:10.382645+00:00",
+    "file": "Enhanced CPF Housing Grant for Singles.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.494281+00:00",
+    "sha256": "2221a4cc62881743f5bbaeac7d72133eda574bbd57d0a12771bdd0dadd2f4972",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/singles/enhanced-cpf-housing-grant",
+    "url_verified": true
+  },
+  "hdb_ethnic_integration_policy_eip_and_singapore_permanent_resident_quota": {
+    "captured_at": "2026-11-09T10:43:10.383193+00:00",
+    "file": "Ethnic Integration Policy (EIP) and Singapore Permanent Resident Quota.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.494611+00:00",
+    "sha256": "fa8c361c5cb36449745858c2ab0adac63decc3de6a53ed5de3ecb304a74b19cb",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/resale-flat-planning/eip-and-spr-quota",
+    "url_verified": true
+  },
+  "hdb_finding_a_resale_flat": {
+    "captured_at": "2026-11-09T10:43:10.384816+00:00",
+    "file": "Finding a Resale Flat.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.494982+00:00",
+    "sha256": "f8d39f4e3aa01c7e4b740be9763fd0f2c9253eb46949b3b922feab95eb60d6a2",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/resale-flats/finding-a-resale-flat",
+    "url_verified": true
+  },
+  "hdb_frequently_asked_questions_on_sales_exercises": {
+    "captured_at": "2026-11-09T10:43:10.385116+00:00",
+    "file": "Frequently Asked Questions on Sales Exercises.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.495315+00:00",
+    "sha256": "47175d259d467305772f6598148f2a16154d14d8b1879f3cc61df582d9b1a2d7",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/process-for-buying-a-new-flat/application/frequently-asked-questions-on-sales-exercises",
+    "url_verified": true
+  },
+  "hdb_fresh_start_housing_scheme": {
+    "captured_at": "2026-11-09T10:43:10.385819+00:00",
+    "file": "Fresh Start Housing Scheme.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.496378+00:00",
+    "sha256": "03c5c543b2aee5f07a7327862bb856e6445727fc84a60b6ff708e2a12c0209bf",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/process-for-buying-a-new-flat/application/fresh-start-housing-scheme",
+    "url_verified": true
+  },
+  "hdb_housing_loan_from_financial_institutions": {
+    "captured_at": "2026-11-09T10:43:10.390916+00:00",
+    "file": "Housing Loan from Financial Institutions.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.499427+00:00",
+    "sha256": "98c2d95b88899755433390ae290895dd0a110f523605a5230b6e934cd014864b",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/housing-loan/housing-loan-from-financial-institutions",
+    "url_verified": true
+  },
+  "hdb_housing_loan_from_hdb": {
+    "captured_at": "2026-11-09T10:43:10.393893+00:00",
+    "file": "Housing Loan from HDB.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.502173+00:00",
+    "sha256": "f990070a6fecee2d6be589c51f49d1498f83a4bc6393831c63b411f3b1105ea0",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/housing-loan/housing-loan-from-hdb",
+    "url_verified": true
+  },
+  "hdb_income_guidelines_and_documents_for_hfe_letter_application": {
+    "captured_at": "2026-11-09T10:43:10.397656+00:00",
+    "file": "Income Guidelines and Documents for HFE Letter Application.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.504887+00:00",
+    "sha256": "9c95ac58fd74d14d86f5d4439db248abae13cc4abbdb650b3b610645513d34ad",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/application-for-an-hdb-flat-eligibility-hfe-letter/income-guidelines-and-documents",
+    "url_verified": true
+  },
+  "hdb_key_collection": {
+    "captured_at": "2026-11-09T10:43:10.398755+00:00",
+    "file": "Key Collection.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.506437+00:00",
+    "sha256": "7567222db7397d00e95fd701572615d7c6bf85e74a454a126172f9e7becaac2f",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/process-for-buying-a-new-flat/key-collection",
+    "url_verified": true
+  },
+  "hdb_managing_the_resale_flat_purchase": {
+    "captured_at": "2026-11-09T10:43:10.399457+00:00",
+    "file": "Managing the Resale Flat Purchase.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.506908+00:00",
+    "sha256": "3a3edc3086e87764bb1ba4b30bcf8b66b83b4b4410f50008f89dd8b47a4f0d51",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/resale-flat-planning/managing-the-flat-purchase",
+    "url_verified": true
+  },
+  "hdb_mode_of_financing_for_a_resale_flat": {
+    "captured_at": "2026-11-09T10:43:10.399827+00:00",
+    "file": "Mode of Financing for a Resale Flat.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.508115+00:00",
+    "sha256": "7442854d4c002fdef2f20784f9d88d51633d51750878580c4772567cba2ad005",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/resale-flat-planning/mode-of-financing",
+    "url_verified": true
+  },
+  "hdb_modes_of_sale": {
+    "captured_at": "2026-11-09T10:43:10.401058+00:00",
+    "file": "Modes of Sale.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.508572+00:00",
+    "sha256": "03de3a02956cea2569e26d89792269f35ef57660d86cd560369dd3aa394262e4",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/process-for-buying-a-new-flat/modes-of-sales",
+    "url_verified": true
+  },
+  "hdb_option_to_purchase_when_buying_a_resale_flat": {
+    "captured_at": "2026-11-09T10:43:10.402215+00:00",
+    "file": "Option to Purchase When Buying a Resale Flat.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.509703+00:00",
+    "sha256": "3f8d9f11d4b182a4a03f3af7932a04355438277273d921437760e3f0fa5db54f",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/option-to-purchase",
+    "url_verified": true
+  },
+  "hdb_overview_of_resale_flat_buying_process": {
+    "captured_at": "2026-11-09T10:43:10.403347+00:00",
+    "file": "Overview of Resale Flat Buying Process.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.510737+00:00",
+    "sha256": "19a7264c4010e7525a0505c13be9c6cab560f3ab7af9ec122a8d60d389222d1d",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/overview",
+    "url_verified": true
+  },
+  "hdb_overview_of_resale_flat_planning_for_buyers": {
+    "captured_at": "2026-11-09T10:43:10.403704+00:00",
+    "file": "Overview of Resale Flat Planning for Buyers.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.511951+00:00",
+    "sha256": "13187fd097c9f28c69238d072cb10cf637f213aec082956ee631af784112d800",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/resale-flat-planning/overview",
+    "url_verified": true
+  },
+  "hdb_press_eip_buyback_2022": {
+    "captured_at": "2026-11-09T13:33:13.123284+00:00",
+    "file": "More Support for Flat Owners Constrained by the Ethnic Integration Policy.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T13:35:14.099327+00:00",
+    "sha256": "7f74e3db0b4c801565597cc5bda264398c021877fff4363523950835c57d9c8b",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/hdb-pulse/news/2022/more-support-for-flat-owners-constrained-by-the-ethnic-inegration-policy",
+    "url_verified": true
+  },
+  "hdb_press_nov_2026_bto_launch": {
+    "captured_at": "2026-11-09T13:33:13.115688+00:00",
+    "file": "HDB Launches 7,964 Flats Across Seven Projects in November 2026 BTO Sales Exercise.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T13:35:14.098209+00:00",
+    "sha256": "da3e7d1f28adfa1572e82939e4933782be6d1e3a00113b1c219f5817835d69da",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/hdb-pulse/news/2026/hdb-launches-7964-flats-across-seven-projects-in-nov-2026-bto-sales-exercise",
+    "url_verified": true
+  },
+  "hdb_priority_schemes": {
+    "captured_at": "2026-11-09T10:43:10.404790+00:00",
+    "file": "Priority Schemes.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.512318+00:00",
+    "sha256": "da61c25899e4e2d028ec640ed999a764961d933d1625c80a49c8d1e9c03836ad",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/process-for-buying-a-new-flat/application/priority-schemes",
+    "url_verified": true
+  },
+  "hdb_proximity_housing_grant_for_families_buying_resale_flats": {
+    "captured_at": "2026-11-09T10:43:10.407902+00:00",
+    "file": "Proximity Housing Grant for Families Buying Resale Flats.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.515885+00:00",
+    "sha256": "1fb1129742417182405e0d6a52b13ace89f98e53bfd322405c2cb8b78a5492dc",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/couples-and-families/proximity-housing-grant",
+    "url_verified": true
+  },
+  "hdb_proximity_housing_grant_for_singles_buying_resale_flats": {
+    "captured_at": "2026-11-09T10:43:10.410300+00:00",
+    "file": "Proximity Housing Grant for Singles Buying Resale Flats.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.517662+00:00",
+    "sha256": "2721c955c0495c3e2d017afbfed20e9941e6997096a0d2d658a78d2ef18147da",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/singles/proximity-housing-grant",
+    "url_verified": true
+  },
+  "hdb_request_for_enhanced_contra_facility": {
+    "captured_at": "2026-11-09T10:43:10.410777+00:00",
+    "file": "Request for Enhanced Contra Facility.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.517999+00:00",
+    "sha256": "e20d904f2f910631a2f6b18b42a7b9cab65e0c61c4aa64022313d85be9d4d946",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/resale-flat-application/request-for-enhanced-contra-facility",
+    "url_verified": true
+  },
+  "hdb_request_for_value_for_a_resale_flat": {
+    "captured_at": "2026-11-09T10:43:10.411020+00:00",
+    "file": "Request for Value for a Resale Flat.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.518292+00:00",
+    "sha256": "43d9edec6b8ab747a064d3f40919ef049efd62e85a2f1f38b5a5206e9c7d7c99",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/option-to-purchase/request-for-value",
+    "url_verified": true
+  },
+  "hdb_resale_flat_completion_for_buyers": {
+    "captured_at": "2026-11-09T10:43:10.413862+00:00",
+    "file": "Resale Flat Completion for Buyers.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.519012+00:00",
+    "sha256": "0718e72dc41c18d46e4ea5f93dd027dbb8fd10c126c8ed0d871506dc8ace44b9",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/resale-flat-completion",
+    "url_verified": true
+  },
+  "hdb_seniors": {
+    "captured_at": "2026-11-09T10:43:10.417380+00:00",
+    "file": "Seniors.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.521235+00:00",
+    "sha256": "fba6d18a9505567557d81df993943d6a6f902df9736e3b0734164815acd19f2d",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/seniors",
+    "url_verified": true
+  },
+  "hdb_sign_agreement_for_lease": {
+    "captured_at": "2026-11-09T10:43:10.418411+00:00",
+    "file": "Sign Agreement for Lease.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.521962+00:00",
+    "sha256": "c17390b17517e7c95b80ca5c3624ca2eef55c5b257e12830cba036cb69a5b621",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/process-for-buying-a-new-flat/sign-agreement-for-lease",
+    "url_verified": true
+  },
+  "hdb_singles": {
+    "captured_at": "2026-11-09T10:43:10.420646+00:00",
+    "file": "Singles.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.524455+00:00",
+    "sha256": "8e3cdf52845a00c4cdf1f32e4e86022737cac35c27dfbdab963cbb92ee473de1",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/singles",
+    "url_verified": true
+  },
+  "hdb_standard_plus_and_prime_housing_framework": {
+    "captured_at": "2026-11-09T10:43:10.421064+00:00",
+    "file": "Standard, Plus, and Prime Housing Framework.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.524763+00:00",
+    "sha256": "e68e80f105a998ca4c28b15b1170b7cc5f98e47b38419bb2ee0d1e3a305b5571",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/finding-a-new-flat/standard-plus-and-prime-housing-framework",
+    "url_verified": true
+  },
+  "hdb_step_up_cpf_housing_grant_for_families": {
+    "captured_at": "2026-11-09T10:43:10.425184+00:00",
+    "file": "Step-Up CPF Housing Grant for Families.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.525698+00:00",
+    "sha256": "cd4d1780ec3d2754a7ea468c152c14091b7ed460b08a9b215948ca64885929f3",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/couples-and-families/stepup-cpf-housing-grant",
+    "url_verified": true
+  },
+  "hdb_types_of_flats": {
+    "captured_at": "2026-11-09T10:43:10.425563+00:00",
+    "file": "Types of Flats.html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T10:47:42.526193+00:00",
+    "sha256": "4d01b4bd5676c0289ccced81f9c2c00671e8e6ba97e2a3c03a03585dbd804575",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/finding-a-new-flat/types-of-flats",
+    "url_verified": true
+  },
+  "iras_buyers_stamp_duty": {
+    "captured_at": "2026-11-09T13:33:13.109652+00:00",
+    "file": "IRAS _ Buyer's Stamp Duty (BSD).html",
+    "method": "manual",
+    "recorded_at": "2026-11-09T13:35:14.096582+00:00",
+    "sha256": "aca003e558b00a3b7b9ef7fabbee1b6acd7ef9f60df1b163689ce665c0bc30ef",
+    "status": null,
+    "url": "https://www.iras.gov.sg/taxes/stamp-duty/for-property/buying-or-acquiring-property/buyer's-stamp-duty-(bsd)",
+    "url_verified": true
+  }
+}

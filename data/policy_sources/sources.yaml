@@ -1,0 +1,408 @@
+# Source inventory for the HDB policy corpus (Member 3). One entry per official web page; every chunk the RAG
+# retrieves cites the page it came from. Text is kept verbatim (data/policy_sources/extract_sources.py): no rewriting.
+#
+# capture: auto    fetched by data/policy_sources/fetch_sources.py (robots.txt checked, 1 request/second)
+#          manual  the site refuses scripts (HDB, MAS: HTTP 403 / "service unavailable"); open the URL in a browser,
+#                  check it is the right page, and save it as raw/<id>.html (Save Page As -> "Webpage, HTML Only")
+#                  or raw/<id>.pdf (Print -> Save as PDF). Then run: fetch_sources.py --record-manual
+# verified: false  the URL is the best-known address but has not been opened yet (HDB pages cannot be checked by
+#                  script). Correct the URL if HDB moved the page, and set verified: true once saved.
+# policy_category: classification | eligibility | grants | financing | eip | bto_priority | resale_process
+# file:      the saved file's name in raw/ when it is not <id>.html / <id>.pdf (e.g. a browser's page-title name)
+# exclude:   true keeps the capture but leaves the page out of the corpus (navigation hubs: links only, no policy)
+# optional:  true lets the corpus be installed while this page is still missing
+#
+# Coverage checklist (the topics of the legacy corpus, data/policy_documents_legacy/ once installed):
+#   flat classification, eligibility schemes, wait-out, HFE letter, HDB loan / LTV, MSR / TDSR, BSD, CPF grants
+#   (EHG, Family Grant, PHG, singles), CPF usage and the 95-year lease rule, EIP and SPR quota, EIP buyback,
+#   BTO application / priority schemes, MOP and resale, renting out.
+
+sources:
+  # --- HDB (manual: the site returns 403 to scripts). Saved in a browser on 9 Nov 2026; each url is the page's
+  # own address read from the saved file (Next.js route), so verified: true. `file` is the saved file's name.
+  - id: hdb_ability_to_pay
+    url: https://www.hdb.gov.sg/buying-a-flat/financial-planning-for-a-flat-purchase/ability-to-pay
+    publisher: HDB
+    policy_category: financing
+    capture: manual
+    verified: true
+    file: "Ability to Pay.html"
+  - id: hdb_application_process_for_a_resale_flat_purchase
+    url: https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/resale-flat-application/application-process
+    publisher: HDB
+    policy_category: resale_process
+    capture: manual
+    verified: true
+    file: "Application Process for a Resale Flat Purchase.html"
+  - id: hdb_application_for_an_hdb_flat_eligibility_hfe_letter
+    url: https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/application-for-an-hdb-flat-eligibility-hfe-letter
+    publisher: HDB
+    policy_category: financing
+    capture: manual
+    verified: true
+    file: "Application for an HDB Flat Eligibility (HFE) Letter.html"
+  - id: hdb_approval_of_resale_flat_application_for_buyers
+    url: https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/resale-flat-application/approval-of-application
+    publisher: HDB
+    policy_category: resale_process
+    capture: manual
+    verified: true
+    file: "Approval of Resale Flat Application for Buyers.html"
+  - id: hdb_booking_of_flat
+    url: https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/process-for-buying-a-new-flat/booking-of-flat
+    publisher: HDB
+    policy_category: bto_priority
+    capture: manual
+    verified: true
+    file: "Booking of Flat.html"
+  - id: hdb_budget_for_a_flat
+    url: https://www.hdb.gov.sg/buying-a-flat/financial-planning-for-a-flat-purchase/budget-for-a-flat
+    publisher: HDB
+    policy_category: financing
+    capture: manual
+    verified: true
+    file: "Budget for a Flat.html"
+  - id: hdb_cpf_housing_grant_for_singles_buying_resale_flats
+    url: https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/singles/cpf-housing-grant
+    publisher: HDB
+    policy_category: grants
+    capture: manual
+    verified: true
+    file: "CPF Housing Grant for Singles Buying Resale Flats.html"
+  - id: hdb_cpf_housing_grants_for_families_buying_resale_flats
+    url: https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/couples-and-families/cpf-housing-grants
+    publisher: HDB
+    policy_category: grants
+    capture: manual
+    verified: true
+    file: "CPF Housing Grants for Families Buying Resale Flats.html"
+  - id: hdb_conditions_after_buying_a_new_flat
+    url: https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/conditions-after-buying-a-new-flat
+    publisher: HDB
+    policy_category: classification
+    capture: manual
+    verified: true
+    file: "Conditions After Buying a New Flat.html"
+  - id: hdb_conditions_after_buying_a_resale_flat
+    url: https://www.hdb.gov.sg/buying-a-flat/resale-flats/conditions-after-buying-a-resale-flat
+    publisher: HDB
+    policy_category: classification
+    capture: manual
+    verified: true
+    file: "Conditions After Buying a Resale Flat.html"
+  - id: hdb_couples_and_families
+    url: https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/couples-and-families
+    publisher: HDB
+    policy_category: eligibility
+    capture: manual
+    verified: true
+    file: "Couples and Families.html"
+  - id: hdb_credit_to_finance_a_flat_purchase
+    url: https://www.hdb.gov.sg/buying-a-flat/financial-planning-for-a-flat-purchase/credit-to-finance-a-flat-purchase
+    publisher: HDB
+    policy_category: financing
+    capture: manual
+    verified: true
+    file: "Credit to Finance a Flat Purchase.html"
+  - id: hdb_design_features_for_new_flats
+    url: https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/finding-a-new-flat/design-features
+    publisher: HDB
+    policy_category: classification
+    capture: manual
+    verified: true
+    file: "Design Features for New Flats.html"
+  - id: hdb_enhanced_cpf_housing_grant_for_families
+    url: https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/couples-and-families/enhanced-cpf-housing-grant
+    publisher: HDB
+    policy_category: grants
+    capture: manual
+    verified: true
+    file: "Enhanced CPF Housing Grant for Families.html"
+  - id: hdb_enhanced_cpf_housing_grant_for_singles
+    url: https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/singles/enhanced-cpf-housing-grant
+    publisher: HDB
+    policy_category: grants
+    capture: manual
+    verified: true
+    file: "Enhanced CPF Housing Grant for Singles.html"
+  - id: hdb_ethnic_integration_policy_eip_and_singapore_permanent_resident_quota
+    url: https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/resale-flat-planning/eip-and-spr-quota
+    publisher: HDB
+    policy_category: eip
+    capture: manual
+    verified: true
+    file: "Ethnic Integration Policy (EIP) and Singapore Permanent Resident Quota.html"
+  - id: hdb_finding_a_resale_flat
+    url: https://www.hdb.gov.sg/buying-a-flat/resale-flats/finding-a-resale-flat
+    publisher: HDB
+    policy_category: resale_process
+    capture: manual
+    verified: true
+    file: "Finding a Resale Flat.html"
+  - id: hdb_frequently_asked_questions_on_sales_exercises
+    url: https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/process-for-buying-a-new-flat/application/frequently-asked-questions-on-sales-exercises
+    publisher: HDB
+    policy_category: bto_priority
+    capture: manual
+    verified: true
+    file: "Frequently Asked Questions on Sales Exercises.html"
+  - id: hdb_fresh_start_housing_scheme
+    url: https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/process-for-buying-a-new-flat/application/fresh-start-housing-scheme
+    publisher: HDB
+    policy_category: bto_priority
+    capture: manual
+    verified: true
+    file: "Fresh Start Housing Scheme.html"
+  - id: hdb_housing_loan_from_financial_institutions
+    url: https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/housing-loan/housing-loan-from-financial-institutions
+    publisher: HDB
+    policy_category: financing
+    capture: manual
+    verified: true
+    file: "Housing Loan from Financial Institutions.html"
+  - id: hdb_housing_loan_from_hdb
+    url: https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/housing-loan/housing-loan-from-hdb
+    publisher: HDB
+    policy_category: financing
+    capture: manual
+    verified: true
+    file: "Housing Loan from HDB.html"
+  - id: hdb_income_guidelines_and_documents_for_hfe_letter_application
+    url: https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/application-for-an-hdb-flat-eligibility-hfe-letter/income-guidelines-and-documents
+    publisher: HDB
+    policy_category: financing
+    capture: manual
+    verified: true
+    file: "Income Guidelines and Documents for HFE Letter Application.html"
+  - id: hdb_key_collection
+    url: https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/process-for-buying-a-new-flat/key-collection
+    publisher: HDB
+    policy_category: bto_priority
+    capture: manual
+    verified: true
+    file: "Key Collection.html"
+  - id: hdb_managing_the_resale_flat_purchase
+    url: https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/resale-flat-planning/managing-the-flat-purchase
+    publisher: HDB
+    policy_category: resale_process
+    capture: manual
+    verified: true
+    file: "Managing the Resale Flat Purchase.html"
+  - id: hdb_mode_of_financing_for_a_resale_flat
+    url: https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/resale-flat-planning/mode-of-financing
+    publisher: HDB
+    policy_category: financing
+    capture: manual
+    verified: true
+    file: "Mode of Financing for a Resale Flat.html"
+  - id: hdb_modes_of_sale
+    url: https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/process-for-buying-a-new-flat/modes-of-sales
+    publisher: HDB
+    policy_category: bto_priority
+    capture: manual
+    verified: true
+    file: "Modes of Sale.html"
+  - id: hdb_option_to_purchase_when_buying_a_resale_flat
+    url: https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/option-to-purchase
+    publisher: HDB
+    policy_category: resale_process
+    capture: manual
+    verified: true
+    file: "Option to Purchase When Buying a Resale Flat.html"
+  - id: hdb_overview_of_resale_flat_buying_process
+    url: https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/overview
+    publisher: HDB
+    policy_category: resale_process
+    capture: manual
+    verified: true
+    file: "Overview of Resale Flat Buying Process.html"
+  - id: hdb_overview_of_resale_flat_planning_for_buyers
+    url: https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/resale-flat-planning/overview
+    publisher: HDB
+    policy_category: resale_process
+    capture: manual
+    verified: true
+    file: "Overview of Resale Flat Planning for Buyers.html"
+  - id: hdb_priority_schemes
+    url: https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/process-for-buying-a-new-flat/application/priority-schemes
+    publisher: HDB
+    policy_category: bto_priority
+    capture: manual
+    verified: true
+    file: "Priority Schemes.html"
+  - id: hdb_proximity_housing_grant_for_families_buying_resale_flats
+    url: https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/couples-and-families/proximity-housing-grant
+    publisher: HDB
+    policy_category: grants
+    capture: manual
+    verified: true
+    file: "Proximity Housing Grant for Families Buying Resale Flats.html"
+  - id: hdb_proximity_housing_grant_for_singles_buying_resale_flats
+    url: https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/singles/proximity-housing-grant
+    publisher: HDB
+    policy_category: grants
+    capture: manual
+    verified: true
+    file: "Proximity Housing Grant for Singles Buying Resale Flats.html"
+  - id: hdb_request_for_enhanced_contra_facility
+    url: https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/resale-flat-application/request-for-enhanced-contra-facility
+    publisher: HDB
+    policy_category: financing
+    capture: manual
+    verified: true
+    file: "Request for Enhanced Contra Facility.html"
+  - id: hdb_request_for_value_for_a_resale_flat
+    url: https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/option-to-purchase/request-for-value
+    publisher: HDB
+    policy_category: financing
+    capture: manual
+    verified: true
+    file: "Request for Value for a Resale Flat.html"
+  - id: hdb_resale_flat_completion_for_buyers
+    url: https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/resale-flat-completion
+    publisher: HDB
+    policy_category: resale_process
+    capture: manual
+    verified: true
+    file: "Resale Flat Completion for Buyers.html"
+  - id: hdb_seniors
+    url: https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/seniors
+    publisher: HDB
+    policy_category: eligibility
+    capture: manual
+    verified: true
+    file: "Seniors.html"
+  - id: hdb_sign_agreement_for_lease
+    url: https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/process-for-buying-a-new-flat/sign-agreement-for-lease
+    publisher: HDB
+    policy_category: bto_priority
+    capture: manual
+    verified: true
+    file: "Sign Agreement for Lease.html"
+  - id: hdb_singles
+    url: https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/singles
+    publisher: HDB
+    policy_category: eligibility
+    capture: manual
+    verified: true
+    file: "Singles.html"
+  - id: hdb_standard_plus_and_prime_housing_framework
+    url: https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/finding-a-new-flat/standard-plus-and-prime-housing-framework
+    publisher: HDB
+    policy_category: classification
+    capture: manual
+    verified: true
+    file: "Standard, Plus, and Prime Housing Framework.html"
+  - id: hdb_step_up_cpf_housing_grant_for_families
+    url: https://www.hdb.gov.sg/buying-a-flat/flat-grant-and-loan-eligibility/couples-and-families/stepup-cpf-housing-grant
+    publisher: HDB
+    policy_category: grants
+    capture: manual
+    verified: true
+    file: "Step-Up CPF Housing Grant for Families.html"
+  - id: hdb_types_of_flats
+    url: https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/finding-a-new-flat/types-of-flats
+    publisher: HDB
+    policy_category: classification
+    capture: manual
+    verified: true
+    file: "Types of Flats.html"
+
+  # --- MAS / IRAS (manual, optional: not captured yet; the HDB loan pages state the MSR and LTV limits) -------
+  - id: mas_housing_loan_limits
+    url: https://www.mas.gov.sg/regulation/explainers/new-housing-loan-limits
+    publisher: MAS
+    policy_category: financing
+    capture: manual
+    verified: false
+    optional: true
+    notes: TDSR, MSR and LTV limits for housing loans.
+  - id: iras_buyers_stamp_duty
+    url: https://www.iras.gov.sg/taxes/stamp-duty/for-property/buying-or-acquiring-property/buyer's-stamp-duty-(bsd)
+    publisher: IRAS
+    policy_category: financing
+    capture: manual
+    verified: true
+    file: "IRAS _ Buyer's Stamp Duty (BSD).html"
+    notes: Buyer's Stamp Duty rates and how BSD is computed.
+
+  # --- HDB press releases (manual): rule changes and their dates ---------------------------------------------------
+  - id: hdb_press_nov_2026_bto_launch
+    url: https://www.hdb.gov.sg/hdb-pulse/news/2026/hdb-launches-7964-flats-across-seven-projects-in-nov-2026-bto-sales-exercise
+    publisher: HDB
+    policy_category: bto_priority
+    capture: manual
+    verified: true
+    file: "HDB Launches 7,964 Flats Across Seven Projects in November 2026 BTO Sales Exercise.html"
+    notes: November 2026 BTO exercise; first since income ceilings were raised to $16,000 (families) and $8,000 (singles).
+  - id: hdb_press_eip_buyback_2022
+    url: https://www.hdb.gov.sg/hdb-pulse/news/2022/more-support-for-flat-owners-constrained-by-the-ethnic-inegration-policy
+    publisher: HDB
+    policy_category: eip
+    capture: manual
+    verified: true
+    file: "More Support for Flat Owners Constrained by the Ethnic Integration Policy.html"
+    notes: Announcement of the EIP buyback for EIP-constrained flat owners (2022), with its conditions.
+
+  # --- CPF Board (auto: server-rendered, robots.txt allows /member/) -------------------------------------------------
+  - id: cpf_ehg_phg_guide
+    url: https://www.cpf.gov.sg/member/infohub/educational-resources/a-guide-to-enhanced-cpf-housing-and-proximity-grant
+    publisher: CPF
+    policy_category: grants
+    capture: auto
+    verified: true
+    notes: EHG and PHG amounts, income ceilings, eligibility (dated 9 May 2025 on the page).
+  - id: cpf_hfe_explainer
+    url: https://www.cpf.gov.sg/member/infohub/educational-resources/hdb-flat-eligibility-letter-what-to-know
+    publisher: CPF
+    policy_category: financing
+    capture: auto
+    verified: true
+    notes: What the HFE letter covers.
+  - id: cpf_using_cpf_to_buy_a_home
+    url: https://www.cpf.gov.sg/member/home-ownership/using-your-cpf-to-buy-a-home
+    publisher: CPF
+    policy_category: financing
+    capture: auto
+    verified: true
+    notes: Using CPF OA for a home, limits, the 95-year lease coverage rule.
+  - id: cpf_considerations_using_cpf
+    url: https://www.cpf.gov.sg/member/home-ownership/using-your-cpf-to-buy-a-home/considerations-when-using-cpf-to-buy-property
+    publisher: CPF
+    policy_category: financing
+    capture: auto
+    verified: true
+    notes: Remaining lease and CPF usage (pro-rating), valuation limit.
+  - id: cpf_retain_20000_oa
+    url: https://www.cpf.gov.sg/member/home-ownership/using-your-cpf-to-buy-a-home/retain-20000-in-your-oa-if-you-are-taking-a-housing-loan
+    publisher: CPF
+    policy_category: financing
+    capture: auto
+    verified: true
+    notes: Retaining $20,000 in OA with an HDB loan.
+  - id: cpf_home_buying_below_55
+    url: https://www.cpf.gov.sg/member/home-ownership/home-buying-guide-for-members-below-55
+    publisher: CPF
+    policy_category: financing
+    capture: auto
+    verified: true
+    notes: Home-buying guide for members below 55.
+  - id: cpf_home_buying_above_55
+    url: https://www.cpf.gov.sg/member/home-ownership/home-buying-guide-for-members-above-55
+    publisher: CPF
+    policy_category: eligibility
+    capture: auto
+    verified: true
+    notes: Home-buying guide for members 55 and above (right-sizing, CPF use).
+  - id: cpf_refund_on_sale
+    url: https://www.cpf.gov.sg/member/home-ownership/using-your-cpf-to-buy-a-home/cpf-refund-when-selling-or-transferring-property
+    publisher: CPF
+    policy_category: financing
+    capture: auto
+    verified: true
+    notes: CPF refund (principal plus accrued interest) when selling.
+
+  # --- Press releases (optional): MND's newsroom is rendered by JavaScript, so releases cannot be listed by script.
+  # Add a release by URL when it states a rule or its effective date (e.g. the October 2024 flat classification
+  # announcement, grant revisions, the August 2024 LTV change). MND release pages: capture auto; HDB press releases:
+  # capture manual.

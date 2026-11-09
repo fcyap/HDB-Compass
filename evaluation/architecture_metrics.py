@@ -256,22 +256,13 @@ def clause_in_answer(clause: Any, answer: str) -> bool:
     return bool(words) and sum(1 for w in words if w in text) / len(words) >= 0.75
 
 
-# Key clauses in Member 3's ground truth that are known to be wrong or out of date. The file is Member 3's and is
-# not edited here; a pass that needed one of these clauses means the answer repeated the knowledge base, not that it
-# stated current HDB policy, so the analysis lists them beside the Category C results. Keyed by question id and the
-# clause exactly as the file writes it (a list becomes a tuple).
-KNOWN_WRONG_CLAUSES: Dict[str, Dict[Any, str]] = {
-    "C1-01": {
-        ("clawback", "6%", "9%"): "Prime subsidy recovery given as 6% to 9%; the project brief gives the current Prime "
-                                  "rate as 9% (the 6% to 9% range comes from earlier Prime launches).",
-        ("clawback", "3%", "6%"): "Plus subsidy recovery given as 3% to 6%; the current HDB range for Plus flats is "
-                                  "6% to 8%.",
-    },
-    "C1-03": {
-        "3% to 6% subsidy recovery": "Plus subsidy recovery given as 3% to 6%; the current HDB range for Plus flats "
-                                     "is 6% to 8%.",
-    },
-}
+# Key clauses in Member 3's ground truth that are known to be wrong or out of date. A pass that needed one of these
+# clauses means the answer repeated the knowledge base, not that it stated current HDB policy, so the analysis lists
+# them beside the Category C results. Keyed by question id and the clause exactly as the file writes it (a list becomes
+# a tuple). Empty since Nov 2026: Category C's truth now comes from the captured official pages
+# (evaluation/policy_fact_sheet.yaml). The entries it held (Plus 3% to 6%, Prime 6% to 9%) were clauses of the legacy
+# truth, which is kept under "legacy_ground_truth"; HDB's own page gives no fixed rate (set per project at launch).
+KNOWN_WRONG_CLAUSES: Dict[str, Dict[Any, str]] = {}
 
 
 # Expected blocks in a teammate's question file that evaluation/check_truth_independent.py found wrong. The file is
@@ -1057,6 +1048,25 @@ def model_reading_accuracy(item: Dict[str, Any], state: Dict[str, Any]) -> Optio
             "facts_total": facts_total, "facts_wrong": wrong, "facts_invented": invented}
 
 
+POLICY_TOOL = "retrieve_hdb_policy_knowledge"
+
+
+def policy_retrieval_trajectory(tool_call_log: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Topic 8 agentic-RAG trajectory metrics for the policy search: how many searches ran, how many the model chose
+    (the rest are the supervisor's coverage backstop or code's plan), how many distinct queries, and how many repeated
+    an earlier query word for word (searching again without progress, the characteristic agentic-RAG loop)."""
+    calls = [r for r in tool_call_log if r.get("tool") == POLICY_TOOL]
+    queries = [str((r.get("arguments") or {}).get("query") or "").strip().lower() for r in calls]
+    return {
+        "searches": len(calls),
+        "model_searches": sum(1 for r in calls if r.get("source") == "model" and r.get("agent") != "supervisor"),
+        "backstop_searches": sum(1 for r in calls if r.get("agent") == "supervisor"),
+        "failed_searches": sum(1 for r in calls if not r.get("ok", True)),
+        "distinct_queries": len(set(queries)),
+        "repeated_queries": len(queries) - len(set(queries)),
+    }
+
+
 def score_item(item: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     """One row of the Experiment 1 results table."""
     variant = state.get("variant", "?")
@@ -1075,6 +1085,7 @@ def score_item(item: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
         "tool_calls_by_source": {src: sum(1 for r in state.get("tool_call_log", []) if (r.get("source") or "unknown") == src)
                                  for src in ("model", "code", "unknown")},
         "parameter_em": parameter_exact_match(item.get("expected_mcp_calls", []), state.get("tool_call_log", [])),
+        "policy_retrieval": policy_retrieval_trajectory(state.get("tool_call_log", [])),
         "csr": csr,
         "fabricated_blocks": fabricated,
         "map_fabricated": sum(1 for b in map_blocks(state) if b.get("_fabricated")),

@@ -4,10 +4,10 @@ Proposal Section 3.3 (Page 5) & File Structure (Page 14).
 Owned by Member 3: Advanced RAG & Regulatory Knowledge Base (Category C).
 
 Features:
-1. Hierarchical Markdown Header Chunking:
-   - Preserves section hierarchy (e.g. "# Title > ## Section > ### Subsection")
-   - Respects Markdown tables without splitting rows across chunk boundaries
-   - Targets ~512 token chunks with 64 token overlap
+1. Hierarchical, SAGE-inspired semantic segmentation:
+   - Preserves section hierarchy and Markdown tables
+   - Groups adjacent sentences by embedding similarity into focused chunks
+   - Uses a similarity fallback when the sentence embedding model is unavailable
 2. Rich Metadata Tagging:
    - policy_category (classification, eligibility, grants, financing, eip)
    - flat_classification (Standard, Plus, Prime, or None)
@@ -36,6 +36,8 @@ DATA_DIR = PROJECT_ROOT / "data"
 DOCS_DIR = DATA_DIR / "policy_documents"
 STORE_PKL = DATA_DIR / "policy_store.pkl"
 CHUNKS_JSON = DATA_DIR / "policy_chunks.json"
+_SEGMENTATION_MODEL: Any = None
+SAGE_SIMILARITY_THRESHOLD = 0.35   # chosen on Category C by the Nov 2026 sweep (run_rag_ablation 2C) over the official-page corpus
 
 # Acronyms and domain keywords to explicitly index
 DOMAIN_KEYWORDS = [
@@ -158,9 +160,96 @@ def split_markdown_into_hierarchical_sections(markdown_text: str) -> List[Dict[s
     return sections
 
 
-def chunk_section(section: Dict[str, Any], max_words: int = 400, overlap_words: int = 50) -> List[str]:
+def _sentence_units(text: str) -> List[str]:
+    """Split prose/list text into sentence-sized units without breaking Markdown list items."""
+    units: List[str] = []
+    in_list_after_lead = False   # the last unit is a lead-in ending ":" (with any list items already joined to it)
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if re.match(r"^(?:[-*+]\s+|\d+[.)]\s+)", line):
+            if in_list_after_lead and units:
+                # a list completes the lead-in above it ("... eligible to:" + its items): one unit, never split
+                units[-1] += "\n" + line
+                continue
+            units.append(line)
+        else:
+            units.extend(part.strip() for part in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])", line) if part.strip())
+        in_list_after_lead = bool(units) and units[-1].rstrip().endswith(":")
+    return units
+
+
+def _adjacent_similarity(units: List[str]) -> List[float]:
+    """Similarity for adjacent sentences, using MiniLM or a deterministic token-overlap fallback."""
+    global _SEGMENTATION_MODEL
+    if len(units) < 2:
+        return []
+    if _SEGMENTATION_MODEL is None:
+        try:
+            from sentence_transformers import SentenceTransformer
+            try:
+                _SEGMENTATION_MODEL = SentenceTransformer("all-MiniLM-L6-v2", local_files_only=True)
+            except Exception:
+                _SEGMENTATION_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+        except Exception as exc:
+            print(f"[Warning] SAGE semantic segmenter unavailable ({exc}); using token-overlap boundaries.")
+            _SEGMENTATION_MODEL = False
+    if _SEGMENTATION_MODEL:
+        vectors = _SEGMENTATION_MODEL.encode(units, convert_to_numpy=True, normalize_embeddings=True)
+        return [float(np.dot(vectors[i], vectors[i + 1])) for i in range(len(units) - 1)]
+    tokens = [set(tokenize_words(unit)) for unit in units]
+    return [
+        len(tokens[i] & tokens[i + 1]) / max(1, len(tokens[i] | tokens[i + 1]))
+        for i in range(len(units) - 1)
+    ]
+
+
+_LIST_ITEM = re.compile(r"^(?:[-*+]\s+|\d+[.)]\s+)")
+
+
+def _join_units(units: List[str]) -> str:
+    """Units of one chunk as text: sentences of a paragraph joined by a space, but a list item (or a lead-in carrying
+    its items) on a line of its own, so an item never runs into the sentence after it ("... overseas The MOP starts")."""
+    text = ""
+    for unit in units:
+        if text:
+            last_line = text.splitlines()[-1].strip()
+            separate = "\n" in unit or _LIST_ITEM.match(unit) or _LIST_ITEM.match(last_line)
+            text += "\n" if separate else " "
+        text += unit
+    return text
+
+
+def _semantic_chunks(text: str, max_words: int, threshold: float = SAGE_SIMILARITY_THRESHOLD) -> List[str]:
+    """Coarsely bound prose, then cut at low-similarity adjacent sentence boundaries."""
+    units = _sentence_units(text)
+    if not units:
+        return []
+    similarities = _adjacent_similarity(units)
+    result: List[str] = []
+    current: List[str] = []
+    current_words = 0
+    for i, unit in enumerate(units):
+        count = len(unit.split())
+        # never cut right after a lead-in ("... you will know upfront if you are eligible to:"): the list that follows
+        # completes it, and a lead-in and its items read as dissimilar sentences (Topic 8 / SAGE failure A: a chunk
+        # boundary splitting the answer)
+        after_lead_in = bool(current) and current[-1].rstrip().endswith(":")
+        if current and (current_words + count > max_words or (similarities[i - 1] < threshold and not after_lead_in)):
+            result.append(_join_units(current))
+            current = []
+            current_words = 0
+        current.append(unit)
+        current_words += count
+    if current:
+        result.append(_join_units(current))
+    return result
+
+
+def chunk_section(section: Dict[str, Any], max_words: int = 380, threshold: Optional[float] = None) -> List[str]:
     """
-    Sub-chunks section text if it exceeds max_words, keeping markdown tables intact.
+    SAGE-inspired segmentation: preserve section breadcrumbs and tables, split prose at low-similarity sentence boundaries.
     """
     text = section["text"]
     breadcrumb = section["breadcrumb"]
@@ -190,27 +279,22 @@ def chunk_section(section: Dict[str, Any], max_words: int = 400, overlap_words: 
 
     chunks: List[str] = []
     for part in parts:
-        part = part.strip()
+        part = re.sub(r"(?m)^\s*---+\s*$", "", part).strip()
         if not part:
             continue
-        words = part.split()
-        if len(words) <= max_words:
-            chunks.append(f"[{breadcrumb}]\n{part}")
+        if "|" in part:
+            # Tables remain atomic so a retrieved cell is never separated from its headers/row labels.
+            subparts = [part]
         else:
-            # Sliding window over non-table text
-            start = 0
-            while start < len(words):
-                end = min(start + max_words, len(words))
-                sub_text = " ".join(words[start:end])
-                chunks.append(f"[{breadcrumb}]\n{sub_text}")
-                if end == len(words):
-                    break
-                start += max_words - overlap_words
+            subparts = _semantic_chunks(part, max_words=max_words,
+                                        threshold=SAGE_SIMILARITY_THRESHOLD if threshold is None else threshold)
+        for sub_text in subparts:
+            chunks.append(f"[{breadcrumb}]\n{sub_text}")
 
     return chunks
 
 
-def build_policy_corpus(docs_dir: Path) -> List[Dict[str, Any]]:
+def build_policy_corpus(docs_dir: Path, threshold: Optional[float] = None, max_words: int = 380) -> List[Dict[str, Any]]:
     """Parse all markdown files in docs_dir into typed, metadata-enriched chunks."""
     all_chunks: List[Dict[str, Any]] = []
     md_files = sorted(docs_dir.glob("*.md"))
@@ -225,11 +309,15 @@ def build_policy_corpus(docs_dir: Path) -> List[Dict[str, Any]]:
         sections = split_markdown_into_hierarchical_sections(body)
 
         for sec in sections:
-            sub_chunks = chunk_section(sec, max_words=380, overlap_words=45)
+            sub_chunks = chunk_section(sec, max_words=max_words, threshold=threshold)
             for chk_text in sub_chunks:
                 cat = meta.get("policy_category", "general")
                 url = meta.get("source_url", "https://www.hdb.gov.sg")
-                eff_date = meta.get("effective_date", "2024-10-01")
+                # the date the page states; the rebuilt corpus writes it as "Page Date" ("not stated on the page"
+                # when it has none), the legacy documents as "Effective Date". Never a made-up default.
+                eff_date = meta.get("effective_date") or meta.get("page_date")
+                if eff_date and not re.match(r"\d{4}-\d{2}-\d{2}$", eff_date):
+                    eff_date = None
                 flat_cls = detect_classification(chk_text)
                 kws = detect_keywords(chk_text)
 
@@ -243,6 +331,11 @@ def build_policy_corpus(docs_dir: Path) -> List[Dict[str, Any]]:
                     "source_url": url,
                     "keywords": kws,
                     "doc_filename": md_file.name,
+                    # provenance from the page header written by data/policy_sources/extract_sources.py (absent in
+                    # the legacy hand-written documents)
+                    "publisher": meta.get("publisher"),
+                    "retrieved": meta.get("retrieved"),
+                    "chunking_method": "sage_semantic_similarity",
                 }
                 all_chunks.append(record)
                 chunk_idx += 1
@@ -288,7 +381,7 @@ def ingest_policy_knowledge():
     print(f"Reading policy documents from: {DOCS_DIR}")
 
     chunks = build_policy_corpus(DOCS_DIR)
-    print(f"Extracted {len(chunks)} hierarchical policy chunks.")
+    print(f"Extracted {len(chunks)} SAGE-inspired semantic policy chunks.")
 
     # 1. Build BM25 Index
     from rank_bm25 import BM25Okapi
@@ -318,35 +411,10 @@ def ingest_policy_knowledge():
         json.dump(chunks, f, indent=2, ensure_ascii=False)
     print(f"Saved human-readable chunks to: {CHUNKS_JSON}")
 
-    # 4. Save to Chroma Vector Store (Proposal Section 3.3, Page 5)
-    try:
-        import chromadb
-        chroma_dir = DATA_DIR / "chroma_db"
-        chroma_client = chromadb.PersistentClient(path=str(chroma_dir))
-        try:
-            chroma_client.delete_collection("hdb_policy_rules")
-        except Exception:
-            pass
-        collection = chroma_client.create_collection(
-            name="hdb_policy_rules",
-            metadata={"hnsw:space": "cosine"}
-        )
-        collection.add(
-            ids=[c["chunk_id"] for c in chunks],
-            documents=[c["text"] for c in chunks],
-            embeddings=dense_embeddings.tolist(),
-            metadatas=[{
-                "section": c.get("section", ""),
-                "policy_category": c.get("policy_category", ""),
-                "flat_classification": c.get("flat_classification") or "",
-                "effective_date": c.get("effective_date") or "",
-                "source_url": c.get("source_url") or "",
-                "doc_filename": c.get("doc_filename") or "",
-            } for c in chunks]
-        )
-        print(f"Persisted {len(chunks)} embeddings into Chroma vector store at: {chroma_dir}")
-    except Exception as e:
-        print(f"[Notice] Chroma vector store persistence: {e}")
+    # Vector store: the normalised embedding matrix above, searched by brute-force cosine (one matrix-vector product,
+    # about 0.05 ms over ~1,100 chunks). A Chroma copy was written here earlier but no code read it; an ANN index only
+    # pays off at hundreds of thousands of chunks (Topic 8, "storing & searching the vectors").
+
 
     print("Ingestion completed successfully.")
 

@@ -1,0 +1,346 @@
+# Policy fact sheet (Member 3): the ground truth for policy answers, taken from the captured official pages
+# (data/policy_sources/), never from the RAG corpus's own wording or from memory.
+#
+# status: verified         `quote` is copied exactly from the captured page of `source`; tests/test_policy_corpus.py
+#                          checks it is there. A person has read the page and confirmed the fact.
+#         pending_capture  the page is not captured yet (HDB/MAS/IRAS pages are saved by hand). `claim_to_check` is
+#                          what the old corpus or the team's notes say; it is NOT ground truth until checked against
+#                          the saved page. When the page is in: copy the exact sentence into `quote`, correct `fact`
+#                          if the page differs, set status: verified.
+# key_clause: the words an answer must contain for this fact (the evaluation's clause format: every item must appear).
+#
+# The legacy corpus's known-wrong figures (evaluation/architecture_metrics.KNOWN_WRONG_CLAUSES) are the first thing to
+# settle: plus_subsidy_recovery and prime_subsidy_recovery below.
+
+facts:
+  # --- CPF housing grants (CPF Board guide, dated 9 May 2025 on the page) ---------------------------------------------
+  - id: ehg_family_max
+    source: cpf_ehg_phg_guide
+    policy_category: grants
+    status: verified
+    fact: Families can receive up to $120,000 in EHG, depending on household income.
+    quote: "Eligible for up to $120,000 in EHG, depending on household income"
+    key_clause: ["$120,000", "EHG"]
+  - id: ehg_family_income_ceiling
+    source: cpf_ehg_phg_guide
+    policy_category: grants
+    status: verified
+    fact: The EHG monthly household income ceiling for families is $9,000.
+    quote: "Monthly household income ceiling: $9,000"
+    key_clause: ["$9,000", "income ceiling"]
+  - id: ehg_first_and_second_timer
+    source: cpf_ehg_phg_guide
+    policy_category: grants
+    status: verified
+    fact: For a first-timer applying with a second-timer, the EHG income ceiling is halved to $4,500.
+    quote: "If applying as a first-timer with a second-timer, the income ceiling is halved"
+    key_clause: ["halved", "$4,500"]
+  - id: ehg_singles_max
+    source: cpf_ehg_phg_guide
+    policy_category: grants
+    status: verified
+    fact: A single first-timer can receive up to $60,000 in EHG (Singles).
+    quote: "Eligible for up to $60,000 in EHG, depending on household income."
+    key_clause: ["$60,000", "EHG"]
+  - id: ehg_singles_income_ceiling
+    source: cpf_ehg_phg_guide
+    policy_category: grants
+    status: verified
+    fact: The EHG (Singles) income ceiling is $4,500, or $9,000 when buying with other singles or a resale flat with parents.
+    quote: "Monthly income ceiling: $4,500, or $9,000 if buying with other singles or purchasing a resale flat with your parents."
+    key_clause: ["$4,500"]
+  - id: ehg_employment
+    source: cpf_ehg_phg_guide
+    policy_category: grants
+    status: verified
+    fact: EHG requires continuous employment for 12 months before the flat application.
+    quote: "must be employed continuously for 12 months before flat application"
+    key_clause: ["12 months", "employed"]
+  - id: ehg_lease_to_95
+    source: cpf_ehg_phg_guide
+    policy_category: grants
+    status: verified
+    fact: The full EHG needs a remaining lease covering the youngest buyer to age 95; otherwise it is pro-rated.
+    quote: "the flat you purchase must have a remaining lease that covers the youngest buyer up to age 95. Otherwise, you will receive a pro-rated EHG amount."
+    key_clause: ["95", "pro-rated"]
+  - id: phg_families
+    source: cpf_ehg_phg_guide
+    policy_category: grants
+    status: verified
+    fact: PHG for married couples and families is $30,000 to live with parents or child, $20,000 to live within 4km.
+    quote: "Married couples/ families $30,000 $20,000"
+    key_clause: ["$30,000", "$20,000"]
+  - id: phg_singles
+    source: cpf_ehg_phg_guide
+    policy_category: grants
+    status: verified
+    fact: PHG for single citizens is $15,000 to live with parents or child, $10,000 to live within 4km.
+    quote: "Single citizens $15,000 $10,000"
+    key_clause: ["$15,000", "$10,000"]
+  - id: phg_within_4km
+    source: cpf_ehg_phg_guide
+    policy_category: grants
+    status: verified
+    fact: The "live near" PHG applies when the parents or child live within 4km of the resale flat.
+    quote: "within 4km of the resale flat you plan to buy"
+    key_clause: ["4km"]
+
+  # --- HFE letter (CPF Board explainer) -------------------------------------------------------------------------------
+  - id: hfe_three_assessments
+    source: cpf_hfe_explainer
+    policy_category: financing
+    status: verified
+    fact: The HFE letter says upfront whether you can buy a flat, receive CPF housing grants, and get an HDB housing loan.
+    quote: "you will know upfront if you are eligible to buy a new or resale flat, receive CPF housing grants, and get an HDB housing loan."
+    key_clause: ["grants", "HDB housing loan"]
+  - id: hfe_validity
+    source: cpf_hfe_explainer
+    policy_category: financing
+    status: verified
+    fact: An HFE letter is valid for nine months.
+    quote: "it is only valid for nine months"
+    key_clause: ["nine months"]
+
+  # --- Using CPF for housing (CPF Board) -------------------------------------------------------------------------------
+  - id: cpf_retain_20000
+    source: cpf_retain_20000_oa
+    policy_category: financing
+    status: verified
+    fact: Buyers taking an HDB loan can choose to retain up to $20,000 in their Ordinary Account.
+    quote: "can choose to retain up to $20,000 in their Ordinary Account (OA)"
+    key_clause: ["$20,000", "Ordinary Account"]
+  - id: flexi_seniors_55
+    source: cpf_home_buying_above_55
+    policy_category: eligibility
+    status: verified
+    fact: Buyers aged 55 and above can buy a short-lease 2-room Flexi flat.
+    quote: "If you are 55 years old and above, you can buy a short-lease 2-room Flexi flat offered by HDB."
+    key_clause: ["55", "2-room Flexi"]
+  - id: flexi_lease_range
+    source: cpf_home_buying_above_55
+    policy_category: eligibility
+    status: verified
+    fact: Short-lease 2-room Flexi leases run 15 to 45 years in 5-year steps, covering the youngest owner to at least 95.
+    quote: "a lease of between 15 and 45 years in 5-year increments"
+    key_clause: ["15", "45 years"]
+  - id: short_lease_no_loan
+    source: cpf_home_buying_above_55
+    policy_category: financing
+    status: verified
+    fact: Buyers of short-lease flats (2-room Flexi, Community Care Apartment) cannot take a housing loan.
+    quote: "if you are buying a short-lease flat, such as a 2-room Flexi flat or a Community Care Apartment, you are not eligible for housing loans."
+    key_clause: ["short-lease", "not eligible for housing loans"]
+  - id: sell_within_6_months
+    source: cpf_home_buying_below_55
+    policy_category: eligibility
+    status: verified
+    fact: Owners generally have up to 6 months after collecting the keys to the next home to sell the current flat.
+    quote: "You generally have up to 6 months after collecting the keys to your next home to sell your current flat."
+    key_clause: ["6 months", "sell"]
+
+  # --- HDB pages (saved by hand on 9 Nov 2026) -----------------------------------------------------------------------
+  # Corrections to the legacy corpus found here: Plus/Prime subsidy recovery has NO fixed rate on HDB's page (it is set
+  # per project at launch; legacy said 3-6% / 6-9%, a team note 6-8% / 9%); the singles 2-room Flexi income ceiling is
+  # $8,000 (legacy: $7,000); the private-property rule for subsidised purchases is 30 months (legacy: a 15-month
+  # wait-out, which no captured HDB page states).
+  - id: plus_prime_subsidy_recovery_rate
+    source: hdb_standard_plus_and_prime_housing_framework
+    policy_category: classification
+    status: verified
+    fact: Plus and Prime flats bought from HDB return a percentage of the resale price on sale; the percentage is set per project and announced at launch (no fixed rate on HDB's page).
+    quote: "The amount will be made known when Plus or Prime projects are launched for sale."
+    key_clause: ["subsidy recovery", "launched"]
+  - id: plus_less_than_prime
+    source: hdb_standard_plus_and_prime_housing_framework
+    policy_category: classification
+    status: verified
+    fact: Standard flats have no subsidy recovery; Plus flats have subsidy recovery, less than Prime.
+    quote: "Subsidy recovery upon resale of flat No Yes (less than Prime) Yes"
+    key_clause: ["less than Prime"]
+  - id: subsidy_recovery_not_on_open_market_resale
+    source: hdb_standard_plus_and_prime_housing_framework
+    policy_category: classification
+    status: verified
+    fact: Buyers of a resale Plus or Prime flat on the open market do not pay subsidy recovery when they sell, but the 10-year MOP and rental limits still apply.
+    quote: "If you buy a resale Plus or Prime flat on the open market, the subsidy recovery does not apply when you sell the flat."
+    key_clause: ["open market", "does not apply"]
+  - id: mop_by_classification
+    source: hdb_standard_plus_and_prime_housing_framework
+    policy_category: classification
+    status: verified
+    fact: The MOP is 5 years for Standard flats and 10 years for Plus and Prime flats.
+    quote: "Minimum occupation period (MOP) 5 years 10 years 10 years"
+    key_clause: ["5 years", "10 years"]
+  - id: no_whole_flat_rental_plus_prime
+    source: hdb_standard_plus_and_prime_housing_framework
+    policy_category: classification
+    status: verified
+    fact: Standard flats can be rented out whole after the MOP; Plus and Prime flats cannot be rented out whole.
+    quote: "Allowed after MOP Not allowed Not allowed"
+    key_clause: ["Not allowed"]
+  - id: whole_flat_rental_after_mop
+    source: hdb_conditions_after_buying_a_new_flat
+    policy_category: classification
+    status: verified
+    fact: A whole flat may be rented out only after the MOP and with HDB's approval.
+    quote: "You may rent out your whole flat after the minimum occupation period (MOP) and after you have obtained an approval from HDB."
+    key_clause: ["MOP", "approval"]
+  - id: singles_age_35
+    source: hdb_singles
+    policy_category: eligibility
+    status: verified
+    fact: Singles buying a flat on their own must be at least 35 (unmarried or divorced); widowed or orphaned singles may buy resale from 21.
+    quote: "aged 35 and above, and are buying a flat on your own."
+    key_clause: ["35"]
+  - id: singles_new_flat_type
+    source: hdb_singles
+    policy_category: eligibility
+    status: verified
+    fact: Singles may buy a 2-room Flexi new flat, or a resale flat of any type (excluding 3Gen) in any location.
+    quote: "2-room Flexi flat All flat types (excluding 3Gen flats) in any location"
+    key_clause: ["2-room Flexi", "any location"]
+  - id: singles_flexi_income_ceiling
+    source: hdb_singles
+    policy_category: eligibility
+    status: verified
+    fact: The income ceiling for singles buying a 2-room Flexi flat (99-year lease) or a 2-room resale Prime flat is $8,000.
+    quote: "2-room Flexi flat (99-year lease) and 2-room resale Prime flats: $8,000"
+    key_clause: ["$8,000"]
+  - id: private_property_30_months
+    source: hdb_couples_and_families
+    policy_category: eligibility
+    status: verified
+    fact: To buy from HDB, buy a resale Plus/Prime flat, use CPF housing grants or take an HDB loan, the household must not own private property nor have disposed of one within 30 months before the HFE letter application.
+    quote: "Must not have disposed of any private residential property at least 30 months before HFE letter application"
+    key_clause: ["30 months"]
+  - id: family_grant_resale
+    source: hdb_cpf_housing_grants_for_families_buying_resale_flats
+    policy_category: grants
+    status: verified
+    fact: "First-timer SC/SC households get a CPF Housing Grant of $80,000 for a 2- to 4-room resale flat and $50,000 for 5-room or bigger (SC/SPR: $70,000 / $40,000)."
+    quote: "Buying a 2- to 4-room resale flat: SC/ SC: $80,000 SC/ SPR: $70,000 Buying a 5-room or bigger resale flat: SC/ SC: $50,000 SC/ SPR: $40,000"
+    key_clause: ["$80,000", "$50,000"]
+  - id: singles_grant_resale
+    source: hdb_cpf_housing_grant_for_singles_buying_resale_flats
+    policy_category: grants
+    status: verified
+    fact: A first-timer single SC buying a resale flat alone may get a Singles Grant of $40,000 (2- to 4-room) or $25,000 (5-room).
+    quote: "you may qualify for a Singles Grant of $40,000 for the purchase of a 2- to 4- room resale flat or $25,000 for a 5-room resale flat."
+    key_clause: ["$40,000", "$25,000"]
+  - id: hdb_loan_ltv
+    source: hdb_housing_loan_from_hdb
+    policy_category: financing
+    status: verified
+    fact: An HDB loan covers up to 75% of the price (resale - of the lower of price or value) when the lease covers the youngest applicant to 95; otherwise the limit is pro-rated.
+    quote: "New flat: Up to 75% of the purchase price. Resale flat: Up to 75% of the lower of the resale price or value of the flat."
+    key_clause: ["75%"]
+  - id: msr_tdsr
+    source: hdb_credit_to_finance_a_flat_purchase
+    policy_category: financing
+    status: verified
+    fact: MSR caps housing instalments at 30% of monthly income for both HDB and bank loans; TDSR (bank loans only) caps all debt at 55%.
+    quote: "MSR: Up to 30% of your monthly income TDSR: Not more than 55% of your monthly income"
+    key_clause: ["30%", "55%"]
+  - id: hfe_validity_hdb
+    source: hdb_application_for_an_hdb_flat_eligibility_hfe_letter
+    policy_category: financing
+    status: verified
+    fact: The HFE letter is valid for 9 months from the date of issue.
+    quote: "The HFE letter is valid for 9 months from the date of issue."
+    key_clause: ["9 months"]
+  - id: eip_same_ethnicity
+    source: hdb_ethnic_integration_policy_eip_and_singapore_permanent_resident_quota
+    policy_category: eip
+    status: verified
+    fact: A resale purchase is allowed when buyer and seller are of the same ethnic group and household citizenship, or when the buyer's group stays within the block and neighbourhood limits.
+    quote: "You and the flat seller are of the same ethnic group and household citizenship"
+    key_clause: ["same ethnic group"]
+  - id: tps_quota
+    source: hdb_priority_schemes
+    policy_category: bto_priority
+    status: verified
+    fact: Up to 10% of 2-room Flexi and 3-room BTO/SBF flats are set aside for Tenants' Priority Scheme applicants.
+    quote: "Up to 10% of 2-room Flexi and 3-room BTO/ SBF flats are set aside for TPS applicants."
+    key_clause: ["10%", "TPS"]
+
+  - id: fiance_solemnise_new_flat
+    source: hdb_key_collection
+    policy_category: eligibility
+    status: verified
+    fact: Fiancé/fiancée couples buying a new flat must solemnise their marriage within 3 months of collecting the keys.
+    quote: "You need to solemnise your marriage within 3 months of collecting the keys to your flat."
+    key_clause: ["solemnise", "3 months"]
+  - id: fiance_solemnise_resale
+    source: hdb_couples_and_families
+    policy_category: eligibility
+    status: verified
+    fact: Fiancé/fiancée couples buying a resale flat must solemnise their marriage within 3 months from completion of the purchase.
+    quote: "You need to solemnise your marriage within 3 months from the completion of the flat purchase."
+    key_clause: ["solemnise", "3 months"]
+  - id: two_singles_together
+    source: hdb_singles
+    policy_category: eligibility
+    status: verified
+    fact: Two or more singles form a core nucleus together and may apply for a 2-room Flexi flat from HDB or buy a resale flat.
+    quote: "You will form a core nucleus together with the other single(s) as core applicants, and may apply for a 2-room Flexi flat from HDB or buy a resale flat on the open market."
+    key_clause: ["other single", "2-room Flexi"]
+  - id: non_resident_spouse_flats
+    source: hdb_couples_and_families
+    policy_category: eligibility
+    status: verified
+    fact: "A citizen with a non-resident spouse may buy a 2-room Flexi flat from HDB, a 2-room resale Prime flat, or a resale unclassified/Standard/Plus flat (excluding 3Gen) on the open market."
+    quote: "You may apply to buy a 2-room Flexi flat from HDB, a 2-room resale Prime flat, or any resale unclassified/ Standard/ Plus flat (excluding 3Gen flats) on the open market with your non-resident spouse who is not an SC or Singapore Permanent Resident (SPR)."
+    key_clause: ["non-resident spouse", "2-room Flexi"]
+  - id: non_resident_spouse_grant_age
+    source: hdb_cpf_housing_grant_for_singles_buying_resale_flats
+    policy_category: grants
+    status: verified
+    fact: First-timer applicants aged 21 or above buying with a non-resident spouse can get the CPF Housing Grant for singles.
+    quote: "First-timer applicants aged 21 or above who are buying a flat with their non-resident spouse"
+    key_clause: ["21", "non-resident spouse"]
+  - id: private_property_dispose_6_months
+    source: hdb_couples_and_families
+    policy_category: eligibility
+    status: verified
+    fact: A private-property owner buying a non-subsidised resale unclassified/Standard flat must dispose of the private property within 6 months of completing the flat purchase.
+    quote: "you must dispose of the interest in the private residential property, based on the legal completion of the disposal, within 6 months of completing your flat purchase"
+    key_clause: ["dispose", "6 months"]
+
+  # --- Saved later (press releases and IRAS) -------------------------------------------------------------------------
+  - id: eip_buyback_criteria
+    source: hdb_press_eip_buyback_2022
+    policy_category: eip
+    status: verified
+    fact: HDB may buy back a flat from an EIP-constrained owner who has fulfilled the MOP, owned the flat for at least 10 years, and made regular genuine attempts to sell it at a reasonable price. (Announced in 2022; check HDB's current EIP Buyback page for changes.)
+    quote: "Fulfilled the Minimum Occupation Period and owned the flat for at least 10 years"
+    key_clause: ["10 years", "Minimum Occupation Period"]
+  - id: eip_buyback_marketing_period
+    source: hdb_press_eip_buyback_2022
+    policy_category: eip
+    status: verified
+    fact: HDB treats about six months of marketing as presently sufficient when it assesses a buyback request.
+    quote: "six months is presently sufficient for most flat owners to do so"
+    key_clause: ["six months"]
+  - id: bsd_top_rate
+    source: iras_buyers_stamp_duty
+    policy_category: financing
+    status: verified
+    fact: "From 15 Feb 2023 the top marginal BSD rate for residential property is 6%. Residential rates: 1% on the first $180,000, 2% on the next $180,000, 3% on the next $640,000, 4% on the next $500,000, 5% on the next $1,500,000, 6% on the rest."
+    quote: "From 15 Feb 2023, the top marginal rate for residential properties is 6%"
+    key_clause: ["6%", "15 Feb 2023"]
+  - id: bsd_first_tiers
+    source: iras_buyers_stamp_duty
+    policy_category: financing
+    status: verified
+    fact: BSD is 1% on the first $180,000 and 2% on the next $180,000.
+    quote: "First $180,000 1% 1% Next $180,000 2% 2%"
+    key_clause: ["$180,000", "1%", "2%"]
+  - id: income_ceilings_raised
+    source: hdb_press_nov_2026_bto_launch
+    policy_category: eligibility
+    status: verified
+    fact: The November 2026 BTO exercise was the first since monthly household income ceilings were raised to $16,000 for families and $8,000 for singles.
+    quote: "household income ceilings were raised to $16,000 for families and $8,000 for singles"
+    key_clause: ["$16,000", "$8,000"]
+  # Dropped: "HDB holds three BTO launches a year" (legacy corpus). No captured official page states it; the November
+  # 2026 release names the next exercise (February 2027) but not a yearly count.

@@ -12,7 +12,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 
 import requests
@@ -361,11 +361,17 @@ def _build_client(p: Dict[str, Any], common: Dict[str, Any], cfg: Dict[str, Any]
     return ChatOpenAI(**kwargs)
 
 
-def get_llm(**overrides: Any):
-    """Construct the shared client; never switch providers mid-run."""
-    p = active_profile()
+def get_llm(profile: Optional[str] = None, model: Optional[str] = None, **overrides: Any):
+    """Construct the shared client; never switch providers mid-run.
+    profile: build this named profile instead of the active one (e.g. an evaluation judge from another model family,
+    so the judge does not grade its own model's answers). model: use this model of that profile instead of its
+    configured one. Each profile:model pair keeps its own rate limiter and its own free-tier limits."""
+    p = _configured_profile(profile) if profile else active_profile()
     if p["name"] == "none":
         return None
+    if model:
+        p = dict(p, model=model, limiter_key=f"{p['name']}:{model}",
+                 rate_limits=(p.get("model_rate_limits") or {}).get(model) or p.get("rate_limits"))
     from agents import rate_limit as rl
 
     cfg = load_config()

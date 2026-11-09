@@ -93,8 +93,12 @@ def test_other_questions_are_not_corrected():
     assert M.expected_block_keys(item) == item["ground_truth_facts"]["matching_block_keys"]
 
 
-def test_policy_answers_also_get_a_score_on_current_clauses():
+def test_policy_answers_also_get_a_score_on_current_clauses(monkeypatch):
+    # the mechanism, on the legacy truth it was built for: the live truth (official pages) has no known-wrong clauses
     item = _items("category_c_queries.json")["C1-03"]
+    item = {**item, "ground_truth_facts": item["legacy_ground_truth"]}
+    monkeypatch.setattr(M, "KNOWN_WRONG_CLAUSES", {"C1-03": {"3% to 6% subsidy recovery": "Plus subsidy recovery given "
+                                                             "as 3% to 6%; the current HDB range is 6% to 8%."}})
     wrong = {M._clause_key(w["clause"]) for w in M.known_wrong_clauses(item)}
     assert wrong
     clauses = item["ground_truth_facts"]["key_clauses"]

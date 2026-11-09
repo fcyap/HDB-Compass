@@ -5,12 +5,13 @@ Owned by Member 3: Advanced RAG & Regulatory Knowledge Base (Category C).
 
 Responsibilities:
 1. Answers qualitative regulatory, quota, and classification queries using the
-   advanced 3-stage hybrid RAG pipeline (BM25 + dense vector + cross-encoder reranker).
+   selected retrieval pipeline (RAG-2 hybrid + reranking or RAG-3 advanced retrieval).
 2. Enforces strict grounding on retrieved context:
    - Prohibits temporal drift (e.g. legacy mature vs non-mature rules)
    - Accurately cites official HDB InfoWEB & CPF Board source URLs
-   - Explicitly cites MOP years, clawback percentages (6-9% Prime vs 3-6% Plus),
-     income ceilings, and age exemption rules (senior 55+ right-sizing).
+   - Takes every figure (MOP years, clawback rates, income ceilings, age exemptions) from the retrieved
+     passages only; the system prompt deliberately holds no policy figures, so the model cannot answer
+     from memory (Topic 8: the "LLM ignores the grounding rule" failure).
 """
 from __future__ import annotations
 
@@ -26,7 +27,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from langchain_core.messages import HumanMessage, SystemMessage
 from agents.llm import get_llm
 from agents.tool_registry import ToolRunner
-from mcp_server.policy_rag_tools import retrieve_hdb_policy_knowledge
+from mcp_server.policy_rag_tools import configured_pipeline, retrieve_decomposed, retrieve_hdb_policy_knowledge
 
 # @mcp.tool() wraps the function in a FunctionTool, which is not callable; call the plain function underneath
 _retrieve = getattr(retrieve_hdb_policy_knowledge, "fn", retrieve_hdb_policy_knowledge)
@@ -34,10 +35,10 @@ _retrieve = getattr(retrieve_hdb_policy_knowledge, "fn", retrieve_hdb_policy_kno
 POLICY_AGENT_SYSTEM = """You are the Regulatory Policy RAG Agent for HDB-Compass, specializing in Singapore public housing policies, eligibility schemes, CPF housing grants, and financing regulations.
 
 CRITICAL POLICY GROUNDING RULES:
-1. Flat Classification: Under the October 2024 framework, flats are Standard (5-year MOP, 0% clawback, whole flat rental allowed), Plus (10-year MOP, 3-6% clawback, no whole flat rental), and Prime (10-year MOP, 6-9% clawback, no whole flat rental). NEVER confuse this with legacy Mature vs Non-Mature estate rules.
-2. Singles Scheme: Unmarried Singapore Citizens aged 35 and above can buy 2-room Flexi BTO flats in ANY estate across all tiers (Standard, Plus, Prime), or resale flats of any size (up to Executive) on the open market.
-3. Private Property Wait-Out: 15-month wait-out applies to private property owners buying non-subsidised resale flats, but seniors aged 55 and above right-sizing to 4-room or smaller resale flats are STRICTLY EXEMPT.
-4. Grants: EHG provides up to $120,000 for families (income ceiling $9,000) and up to $60,000 for singles (income ceiling $4,500). First-timer resale buyers can stack EHG + Family Grant + PHG up to $230,000.
+1. Evidence only: Every figure, age, percentage, period and eligibility condition in your answer must come from the retrieved passages. Do not use rules you remember from training, even if you believe them correct: they may be out of date. (The policy figures that used to be written here were removed for that reason; the knowledge base is the single source of truth.)
+2. Current framework: Flats are classified as Standard, Plus or Prime. Do not describe them with the legacy Mature vs Non-Mature estate rules unless a passage does.
+3. Missing facts: If the passages do not state something the user asked, say plainly that it is not in the retrieved HDB documents and suggest checking hdb.gov.sg or an HFE letter. Never fill the gap with a guess.
+4. Conflicts: If two passages disagree, quote both with their sources and their effective dates instead of choosing one silently.
 5. Citations: Every regulatory statement MUST cite the official source URL provided in the retrieved passages.
 6. Answer-first writing: Begin with one short sentence that directly answers the user's exact question. If the question names several policy topics, cover those topics in the opening sentence without introducing an unasked topic. For yes/no questions, start with "Yes" or "No" and state the key condition. Then give only the supporting policy details the user needs, with citations. Do not begin with a heading, a summary of the passages, or a generic policy introduction.
 """
@@ -46,8 +47,10 @@ CRITICAL POLICY GROUNDING RULES:
 class PolicyRagAgent:
     """Specialist Policy RAG agent that executes retrieval and synthesizes answers."""
 
-    def __init__(self, pipeline: str = "RAG-3"):
-        self.pipeline = pipeline
+    def __init__(self, pipeline: Optional[str] = None, decompose: bool = True):
+        self.pipeline = pipeline or configured_pipeline()   # config policy_rag.active_pipeline
+        # decompose: a question spanning several policy documents gets one extra search per document (Topic 8)
+        self.decompose = decompose
         self.tool_runner = ToolRunner("retrieve_hdb_policy_knowledge")
 
     @staticmethod
@@ -100,38 +103,56 @@ class PolicyRagAgent:
         opening = PolicyRagAgent._fallback_opening(query, passages)
         return (opening + "\n\n" if opening else "") + "### Official HDB & CPF Regulatory Analysis\n\n" + "\n\n".join(sections_out) + disclaimer
 
+    @staticmethod
+    def generate_llm_answer(query: str, passages: List[Dict[str, Any]], context_override: Optional[str] = None) -> str:
+        """The grounded LLM answer the user sees ("" when no model is configured or the call fails).
+        context_override replaces the numbered passages with other context (the ablation's long-context baseline,
+        which sends every policy document instead of retrieved chunks)."""
+        llm = get_llm()
+        if llm is None:
+            return ""
+        try:
+            context_str = context_override if context_override is not None else "\n\n".join([
+                f"Passage [{i+1}] (Source: {p['source_url']}) (Section: {p['section']})"
+                + (f" (Page retrieved: {p['retrieved']})" if p.get("retrieved") else "") + f":\n{p['text']}"
+                for i, p in enumerate(passages)
+            ])
+            prompt = (
+                f"User Question: {query}\n\n"
+                f"Retrieved Official Policy Context:\n{context_str}\n\n"
+                "Answer the user's exact question directly in the first sentence, before any explanation. "
+                "If the question names several policy topics, cover those topics in that first sentence and omit unasked topics. "
+                "For a yes/no question, begin with Yes or No and include the key condition in that sentence. "
+                "Then provide only the relevant supporting policy details in a concise response. "
+                "Do not start with a heading or a generic introduction about the policies or retrieved passages. "
+                "Use only the retrieved context, and include inline citations with exact URLs for each factual claim. "
+                "If the context does not state something the user asked, say it is not in the retrieved HDB documents."
+            )
+            response = llm.invoke([SystemMessage(content=POLICY_AGENT_SYSTEM), HumanMessage(content=prompt)])
+            content = response.content
+            if isinstance(content, list):
+                content = " ".join(str(x.get("text", "")) for x in content if isinstance(x, dict))
+            return str(content or "")
+        except Exception:
+            return ""
+
     def run(self, query: str, policy_domain: Optional[str] = None, use_llm: bool = True) -> Dict[str, Any]:
         """
         Executes policy retrieval and synthesizes a grounded answer with citations.
         """
-        # Step 1: Execute RAG retrieval tool
-        retrieval_output = _retrieve(query, policy_domain=policy_domain, pipeline=self.pipeline)
+        # Step 1: Execute RAG retrieval tool (decomposed into per-domain searches for a multi-topic question,
+        # unless the caller pinned one domain)
+        trajectory: List[Dict[str, Any]] = []
+        if self.decompose and not policy_domain:
+            retrieval_output, trajectory = retrieve_decomposed(query, pipeline=self.pipeline)
+        else:
+            retrieval_output = _retrieve(query, policy_domain=policy_domain, pipeline=self.pipeline)
+            trajectory = [{"query": query[:120], "policy_domain": policy_domain, "returned": len(retrieval_output.get("passages", [])),
+                           "new_passages": len(retrieval_output.get("passages", []))}]
         passages = retrieval_output.get("passages", [])
 
         # Step 2: Synthesize grounded response using LLM (if active) or deterministic grounded synthesizer
-        answer = ""
-        if use_llm:
-            llm = get_llm()
-            if llm is not None:
-                try:
-                    context_str = "\n\n".join([
-                        f"Passage [{i+1}] (Source: {p['source_url']}) (Section: {p['section']}):\n{p['text']}"
-                        for i, p in enumerate(passages)
-                    ])
-                    prompt = (
-                        f"User Question: {query}\n\n"
-                        f"Retrieved Official Policy Context:\n{context_str}\n\n"
-                        "Answer the user's exact question directly in the first sentence, before any explanation. "
-                        "If the question names several policy topics, cover those topics in that first sentence and omit unasked topics. "
-                        "For a yes/no question, begin with Yes or No and include the key condition in that sentence. "
-                        "Then provide only the relevant supporting policy details in a concise response. "
-                        "Do not start with a heading or a generic introduction about the policies or retrieved passages. "
-                        "Use only the retrieved context, and include inline citations with exact URLs for each factual claim."
-                    )
-                    response = llm.invoke([SystemMessage(content=POLICY_AGENT_SYSTEM), HumanMessage(content=prompt)])
-                    answer = response.content
-                except Exception:
-                    answer = ""
+        answer = self.generate_llm_answer(query, passages) if use_llm else ""
 
         if not answer:
             answer = self.synthesize_grounded_answer(query, passages)
@@ -141,11 +162,12 @@ class PolicyRagAgent:
             "pipeline": retrieval_output.get("pipeline", self.pipeline),
             "passages": passages,
             "answer": answer,
+            "retrieval_trajectory": trajectory,
         }
 
 
 # Global default instance
-policy_agent = PolicyRagAgent(pipeline="RAG-3")
+policy_agent = PolicyRagAgent()
 
 
 if __name__ == "__main__":

@@ -211,17 +211,27 @@ def test_first_timer_status_alone_does_not_run_the_calculators():
 # policy relevance floor
 # ---------------------------------------------------------------------------
 def test_policy_floor_sits_below_every_category_c_question():
+    # the gate is the cross-encoder's best score (raw BM25 grows with question length: a short policy question
+    # scored below off-topic ones on the official-page corpus)
     from mcp_server import policy_rag_tools as rag
     store = rag._load_store()
-    best = {i["id"]: rag.retrieve_bm25(i["query"], store, top_k=1)[0][1] for i in _queries("category_c_queries.json")}
-    assert min(best.values()) > sv.POLICY_SCORE_FLOOR + 5, best
-    assert rag.retrieve_bm25("Which schemes exist for my pet dog?", store, top_k=1)[0][1] < sv.POLICY_SCORE_FLOOR
+    if rag.best_relevance("What is the MOP for a Prime flat?", store) is None:
+        pytest.skip("cross-encoder unavailable")
+    best = {i["id"]: rag.best_relevance(i["query"], store) for i in _queries("category_c_queries.json")}
+    assert min(best.values()) > sv.POLICY_RELEVANCE_FLOOR + 1, best
+    for short in ("How does the HFE letter work?", "Can PRs take an HDB loan?", "What grants can we get?",
+                  "How do I hide my income to get a bigger housing grant?"):
+        assert rag.best_relevance(short, store) > sv.POLICY_RELEVANCE_FLOOR, short
+    for off_topic in ("Which schemes exist for my pet dog?", "How do I buy a condo?", "best durian in Singapore",
+                      "How do I renew my passport?"):
+        assert rag.best_relevance(off_topic, store) < sv.POLICY_RELEVANCE_FLOOR, off_topic
 
 
 def test_policy_search_reports_its_raw_keyword_score():
     from mcp_server.policy_rag_tools import execute_rag_pipeline
     out = execute_rag_pipeline("What is the MOP for a Prime flat?")
     assert out.best_keyword_score and out.best_keyword_score > sv.POLICY_SCORE_FLOOR
+    assert out.best_relevance_score is None or out.best_relevance_score > sv.POLICY_RELEVANCE_FLOOR
 
 
 def test_policy_question_with_no_matching_rule_says_so_and_shows_no_passages():
