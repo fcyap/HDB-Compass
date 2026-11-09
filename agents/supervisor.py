@@ -5391,6 +5391,54 @@ def _add_semantic_best(lines: List[str], question: str, chosen: List[int]) -> Li
     return sorted(chosen + [best]) if best_score >= POLICY_SEMANTIC_LINE_FLOOR else chosen
 
 
+# The cross-encoder (ms-marco, trained on web search) scores table rows and multi-part rules low even when they are the
+# answer ("Age — ...: At least 35 years old" -4.8 for a 34-year-old single's question; the same-ethnicity EIP rule -3.3),
+# while unrelated lines score far lower ("Outstanding payments with HDB" -7.7 for a fiance question). So the floors
+# only drop what is clearly unrelated.
+POLICY_LINE_FLOOR = -6.0            # a line scoring below this is not evidence for the question
+POLICY_SECTION_FLOOR = -2.0         # a section whose best line scores below this is left out...
+POLICY_EVIDENCE_WEAK_MARGIN = 4.0   # ...unless the best evidence overall is itself weak: then within this of it
+
+
+def _grade_policy_evidence(sections: Dict[str, Dict[str, Any]], question: str) -> Dict[str, Dict[str, Any]]:
+    """Keep only the evidence for the question (Topic 8: grade the retrieved chunks, drop the noisy ones). The
+    cross-encoder reads the question with every line; a section stays when its best line scores at least the floor and
+    keeps only its lines that do. "Can a fiance and fiancee buy a flat before they are married?" had shown the HFE-letter
+    sections and "Outstanding payments with HDB" (-7.7) beside the solemnisation rule (+4.6). When even the best line
+    is below the floor, the lines within POLICY_EVIDENCE_WEAK_MARGIN of it are kept, so a weak answer is never empty.
+    Without the cross-encoder the sections are returned unchanged."""
+    if not question or not sections:
+        return sections
+    try:
+        from mcp_server.policy_rag_tools import _get_cross_encoder
+        cross_encoder = _get_cross_encoder()
+        if not cross_encoder:
+            return sections
+        lines = list(dict.fromkeys(line for s in sections.values() for line in s["lines"]))
+        if not lines:
+            return sections
+        score = dict(zip(lines, (float(x) for x in cross_encoder.predict([[question, line] for line in lines]))))
+    except Exception:  # noqa: BLE001
+        return sections
+    # a footnote ("[1] Unclassified flats refer to ...") defines a term; it is never the evidence itself
+    for line in score:
+        if re.match(r"^(?:Notes:\s*)?\[\d+\]", line):
+            score[line] = float("-inf")
+    best = max(score.values())
+    section_floor = min(POLICY_SECTION_FLOOR, best - POLICY_EVIDENCE_WEAK_MARGIN)
+    graded: Dict[str, Dict[str, Any]] = {}
+    shown: set = set()
+    for key, s in sections.items():
+        if max((score.get(line, best) for line in s["lines"]), default=best) < section_floor:
+            continue
+        kept = [line for line in s["lines"] if score.get(line, best) >= POLICY_LINE_FLOOR]
+        # HDB repeats a paragraph on several pages (new-flat and resale "Conditions After Buying"): show it once
+        if kept and not set(kept) <= shown:
+            graded[key] = {**s, "lines": kept}
+            shown |= set(kept)
+    return graded or sections
+
+
 def shown_policy_passages(passages: Any, question: str = "") -> List[Dict[str, Any]]:
     """The policy passages as the answer shows them: at most three, in the search's order, chunks with no text under
     their header skipped and chunks of the same section merged; for each, the 2-4 lines sharing the most words with
@@ -5442,6 +5490,7 @@ def shown_policy_passages(passages: Any, question: str = "") -> List[Dict[str, A
         for s in sections.values():
             s["lines"] = [_asked_cells(line, asked) for line in s["lines"]]
 
+    sections = _grade_policy_evidence(sections, question)
     pool = [line for s in sections.values() for line in s["lines"]]
     for s in sections.values():
         chosen = _pick_lines(s["lines"], question, pool)
