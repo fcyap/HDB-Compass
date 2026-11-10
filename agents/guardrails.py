@@ -182,6 +182,37 @@ def evidence_text(state: Dict[str, Any]) -> str:
     return json.dumps({k: state.get(k) for k in EVIDENCE_KEYS if state.get(k) is not None}, default=str)
 
 
+# Earlier turns: what initial_state(previous=...) carries in. prior_block_facts come from the last turn's tool results
+# and prior_constraints from what the user said, so both are grounded. Earlier *assistant* replies are deliberately not
+# evidence: a figure the auditor let through once must not become the proof for the next turn.
+HISTORY_KEYS = ("prior_block_facts", "prior_constraints")
+
+
+def history_enabled() -> bool:
+    """HDB_AUDITOR_HISTORY=off makes the auditor judge each turn alone, as before (ablation switch)."""
+    return os.getenv("HDB_AUDITOR_HISTORY", "on").strip().lower() not in ("off", "0", "false", "no")
+
+
+def history_evidence(state: Dict[str, Any]) -> str:
+    """Earlier turns' grounded facts as JSON, or "" when there are none or the history switch is off."""
+    if not history_enabled():
+        return ""
+    found = {k: state.get(k) for k in HISTORY_KEYS if state.get(k)}
+    return json.dumps(found, default=str) if found else ""
+
+
+def user_text(state: Dict[str, Any]) -> str:
+    """What the user wrote that the reply may repeat back: every user message in the conversation (oldest first), or
+    only the latest when the history switch is off."""
+    latest = sv.last_user_query(state)
+    if not history_enabled():
+        return latest
+    said = [m.get("content") or "" for m in state.get("messages", [])
+            if isinstance(m, dict) and m.get("role") in ("user", "human")]
+    earlier = [s for s in said[:-1] if s]
+    return "\n".join([f"(earlier) {s}" for s in earlier] + [latest]) if earlier else latest
+
+
 def _evidence_numbers(text: str) -> Set[float]:
     return {_to_float(m) for m in re.findall(_NUM, text)}
 
@@ -333,6 +364,9 @@ def _judge_data(state: Dict[str, Any]) -> str:
     facts = sv.template_response(state) if sv.writes_facts_in_code(state) else ""
     data = facts or evidence_text(state)
     ranks = ranking_facts(state)
+    earlier = history_evidence(state)
+    if earlier:   # short (at most the listed blocks), so it goes before the long data and survives the 6,000-character cut
+        data = f"EARLIER RESULTS (tool results from earlier turns of this conversation):\n{earlier}\n\n{data}"
     return f"{ranks}\n\n{data}" if ranks else data   # first: the judge reads at most 6,000 characters of it
 
 
@@ -364,7 +398,7 @@ def runtime_auditor_node(state: Dict[str, Any]) -> Dict[str, Any]:
         opening = _model_text(state)
         if not opening:   # the model wrote nothing (it failed or was off)
             return {"auditor_verdict": AuditorVerdict(passed=True, critique="", retry_count=retries).model_dump()}
-        evidence, user = evidence_text(state), sv.last_user_query(state)
+        evidence, user = f"{evidence_text(state)} {history_evidence(state)}", user_text(state)
         verdict = audit_text(opening, evidence, user)
         errors: List[str] = []
         if verdict["passed"]:
