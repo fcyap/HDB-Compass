@@ -39,6 +39,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from agents.llm import active_profile, get_llm, load_config
 from agents import addons
 from agents import sanitizer, scope
+from mcp_server.policy_rag_tools import decompose_query, merge_policy_results
 from agents import research_intents as ri
 from agents.research_schemas import STATS_DIMENSIONS
 from agents.schemas import (
@@ -4196,6 +4197,10 @@ def dispatch(state: HDBCompassState) -> List[Send]:
 # ---------------------------------------------------------------------------
 # Specialist runner: ReAct loop over one agent's tools, or a deterministic plan
 # ---------------------------------------------------------------------------
+# Cap on the policy agent's searches per question (Topic 8: cap the agentic loop): one for the whole question plus
+# up to four topic-scoped ones (Category E questions touch grants, financing, eligibility and flat type at once).
+POLICY_MAX_CALLS = 5
+
 AGENT_SYSTEM = {
     "market_sql": "You are the Market & Valuation SQL agent for Singapore HDB resale flats. Use your tools to fetch "
                   "block-level prices, trends and BTO comparisons that satisfy the user's constraints. Call tools with "
@@ -4216,7 +4221,12 @@ AGENT_SYSTEM = {
                  "costs. Unknown funds/debts/grants are not zero. Report missing inputs and unsupported scenarios, "
                  "including cost exclusions and cash shortfalls. Reply with a short summary when done.",
     "policy_rag": "You are the Regulatory Policy RAG agent. Call retrieve_hdb_policy_knowledge with the user's regulatory "
-                  "question, then answer ONLY from the returned passages with inline [source] citations.",
+                  "question. If the question covers several topics (e.g. grants AND loan limits AND the MOP), also "
+                  "call it once per topic with a short query about only that topic (leave policy_domain empty: a "
+                  "rule often sits in another document than its topic's). Read what comes back: if no passage states "
+                  "the fact asked, rephrase and search once more. At most " + str(POLICY_MAX_CALLS) + " searches. "
+                  "Then answer ONLY from the returned passages with inline [source] citations, and say plainly when "
+                  "a fact is not in them.",
 }
 CORE_AGENT_SYSTEM = dict(AGENT_SYSTEM)
 # each add-on tool's "when to use" line goes into its owner's prompt (agents/addons), so a model offered it knows it
@@ -4514,7 +4524,12 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
         if (price or income) and asked_for("calculate_bsd_and_upfront_outlay", c, query):
             plan.append(("calculate_bsd_and_upfront_outlay", dict(purchase_price=price or 0.0, loan_type="hdb", total_grants=0.0)))
     elif agent == "policy_rag":
-        plan.append(("retrieve_hdb_policy_knowledge", dict(query=c.get("policy_question") or query, policy_domain=None)))
+        question = c.get("policy_question") or query
+        plan.append((POLICY_TOOL, dict(query=question, policy_domain=None)))
+        # a question spanning several policy documents (grants + loan limits + lease) also gets one search per
+        # sub-question (Topic 8 decomposition; see decompose_query for the measured effect on Category E)
+        plan.extend((POLICY_TOOL, dict(query=part, policy_domain=None))
+                    for part in decompose_query(question, max_parts=POLICY_MAX_CALLS - 1))
     if c.get("stats_min_sales"):
         # "Only groups with at least 20 sales." (_carry_analysis); research_intents.stats_call_args has no such field
         plan = [(n, {**a, "min_sales": int(c["stats_min_sales"])}) if n == "query_resale_statistics" else (n, a)
@@ -4523,6 +4538,7 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
 
 
 REPEATABLE_TOOLS = ("get_block_transaction_history", "get_nearby_amenities")
+POLICY_TOOL = "retrieve_hdb_policy_knowledge"
 SPATIAL_BLOCK_TOOLS = ("filter_blocks_by_amenity_proximity", "verify_primary_school_distance", "compute_dual_transit_commute")
 
 
@@ -4551,6 +4567,9 @@ def _store(outputs: Dict[str, Any], name: str, result: Any) -> None:
     """Repeatable research tools keep every call (one per address); others keep the latest."""
     if name == "get_nearby_amenities":
         result = _dedupe_stations(result)
+    if name == POLICY_TOOL and name in outputs:
+        outputs[name] = merge_policy_results(outputs[name], result)
+        return
     if name in REPEATABLE_TOOLS and name in outputs:
         previous = outputs[name] if isinstance(outputs[name], list) else [outputs[name]]
         outputs[name] = previous + [result]
@@ -4617,7 +4636,11 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
     llm = get_llm() if use_model else None
     used_llm_tools = False
     extra_log: List[Dict[str, Any]] = []
-    planned = {name for agent in (plan_agents or [label]) for name, _ in deterministic_plan(agent, c, query)}
+    plan_steps = [step for agent in (plan_agents or [label]) for step in deterministic_plan(agent, c, query)]
+    planned = {name for name, _ in plan_steps}
+    # how many policy searches the plan makes (whole question + its sub-questions) and the queries the model searched
+    planned_policy = [a for n, a in plan_steps if n == POLICY_TOOL]
+    policy_queries: List[str] = []
 
     if llm is not None:
         try:
@@ -4692,8 +4715,10 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
                     # a call the tool refused or that failed is not evidence: if every call fails, code's plan runs
                     used_llm_tools = used_llm_tools or bool(runners[name].log and runners[name].log[-1].ok)
                     _store(outputs, name, result)
+                    if name == POLICY_TOOL:
+                        policy_queries.append(str(guarded.get("query") or ""))
                     msgs.append(ToolMessage(content=ri.compact_tool_result(result), tool_call_id=tc["id"]))
-                if stop_when_covered and planned and planned <= set(outputs):
+                if stop_when_covered and planned and planned <= set(outputs) and len(policy_queries) >= len(planned_policy):
                     break  # the evidence is in; the writer, not this agent, phrases the answer
         except Exception as e:  # noqa: BLE001
             errors.append(f"{label}: LLM loop failed: {type(e).__name__}: {str(e)[:160]}")
@@ -4714,6 +4739,20 @@ def run_react(label: str, tool_names: List[str], system_prompt: str, query: str,
                         args = {**args, "candidate_blocks": _commute_candidates(outputs)}
                     _store(outputs, name, runners[name](**args))
     else:
+        # Policy backstop: a multi-topic policy question the model searched fewer times than it has parts gets the
+        # plan's sub-question searches it did not make (logged as the supervisor, like the coverage backstop below).
+        if POLICY_TOOL in runners and POLICY_TOOL in outputs and len(policy_queries) < len(planned_policy):
+            for args in planned_policy[1:]:
+                if len(policy_queries) >= len(planned_policy):
+                    break
+                if args["query"] in policy_queries:
+                    continue
+                backstop = ToolRunner(POLICY_TOOL)
+                backstop.agent = "supervisor"
+                _store(outputs, POLICY_TOOL, backstop(**args))
+                extra_log.extend(rec.model_dump() for rec in backstop.log)
+                policy_queries.append(args["query"])
+                errors.append(f"{label}: added a policy search for part of the question (coverage check)")
         # Coverage backstop: research evidence the question needs but the model did not fetch.
         # Logged as the supervisor so Tool Selection F1 still measures only the model's own calls.
         for agent in (plan_agents or [label]):
@@ -4835,10 +4874,12 @@ def _normalise_school_blocks(items: List[str], towns: List[str]) -> List[Dict[st
     return out
 
 
-# Lowest raw BM25 score at which the best policy passage is shown. Every Category C question scores 15.99 or more
-# (tests/test_scope_routing.py checks it); questions with no policy in them score 0 to 4.8 ("How do I buy a condo?"
-# 4.6, "best durian in Singapore" 4.8), so 5.0 sits between the two.
-POLICY_SCORE_FLOOR = 5.0
+# Fallback only (used when the cross-encoder could not load; see POLICY_RELEVANCE_FLOOR): the lowest raw BM25 score at
+# which policy passages are shown. Raw BM25 grows with question length and corpus size, so it cannot separate short
+# policy questions from off-topic ones on the official-page corpus ("How does the HFE letter work?" 11.5, "How do I
+# renew my passport?" 14.0). 9 blocks the clearly off-topic ones ("best durian in Singapore" 8.8, "What is the weather
+# tomorrow?" 8.3) and lets a short policy question through ("Can PRs take an HDB loan?" 10.3).
+POLICY_SCORE_FLOOR = 9.0
 NO_POLICY_ANSWER = ("I couldn't find an HDB rule in my knowledge base that answers this. Please check hdb.gov.sg or ask "
                     "HDB for an HFE letter.")
 NO_RULE_FOUND = ("I couldn't find an HDB rule in my knowledge base that answers this, so I won't guess. Please check "
@@ -4846,8 +4887,22 @@ NO_RULE_FOUND = ("I couldn't find an HDB rule in my knowledge base that answers 
                  "Prime and Plus flats, and the ethnic quota.")
 
 
+# Lowest cross-encoder score (best_relevance_score) at which policy passages are shown. Every Category C and short
+# policy question scores -1.0 or more; an evasion request about a real rule ("How do I hide my income to get a bigger
+# housing grant?", whose rules are shown after the refusal) -2.9; off-topic questions -3.7 or less ("How do I buy a
+# condo?" -3.7, "How do I renew my passport?" -6.9). -3.2 sits between; the margin at the edge is narrow (0.5), so
+# re-check it with tests/test_scope_routing.py when the corpus or the cross-encoder changes. POLICY_SCORE_FLOOR (raw
+# BM25) is only the fallback when the cross-encoder could not load.
+POLICY_RELEVANCE_FLOOR = -3.2
+
+
 def policy_below_floor(out: Any) -> bool:
-    score = out.get("best_keyword_score") if isinstance(out, dict) else None
+    if not isinstance(out, dict):
+        return False
+    relevance = out.get("best_relevance_score")
+    if relevance is not None:
+        return relevance < POLICY_RELEVANCE_FLOOR
+    score = out.get("best_keyword_score")
     return score is not None and score < POLICY_SCORE_FLOOR
 
 
@@ -5208,7 +5263,8 @@ POLICY_PASSAGES_SHOWN = 4  # of the search's 5: with 3, the passage that answere
                            # 2 Nov: C1-02, C2-01); A and B's models read all 5, so C's facts should not show far fewer
 POLICY_LINES_SHOWN = 4      # at most; at least 2 when the passage has them
 POLICY_LINE_CHARS = 240     # a longer line keeps its whole sentences that fit; a sentence is never cut…
-POLICY_LINE_MAX = 400       # …unless it alone is longer than this (no real passage line is)
+POLICY_LINE_MAX = 450       # …unless it alone is longer than this (the longest real line, the 2026 wait-out page's
+                            # 30-month rule, is 417 characters)
 _STOP_WORDS = frozenset((
     "a about after all also am an and any are as at be been before but by can could did do does for from get got had has "
     "have how i if in into is it its me more must my no not now of on or our out so than that the their them then there "
@@ -5349,8 +5405,19 @@ def _policy_lines(text: str) -> List[str]:
     out: List[str] = []
     header: Optional[List[str]] = None
     lead: Optional[Tuple[int, str]] = None   # (indent, words) of the bare lead-in the next lines sit under
+    list_head: Optional[int] = None          # index in out of a sentence ending ":" whose short list items join it
     for i, row in enumerate(rows):
         cells = cells_of[i]
+        is_item = cells is None and bool(_LIST_MARKER.match(row))
+        if list_head is not None and is_item:
+            item = _LIST_MARKER.sub("", row.replace("**", "")).strip()
+            if item and len(item.split()) <= 15 and ":" not in item:   # plain items only; "Label: rule" stays a line
+                # "... you will know upfront if you are eligible to: Buy a new or resale HDB flat; Receive CPF housing
+                # grants ...; Get an HDB housing loan ..." stays one line, so the lead-in is never shown without its list
+                out[list_head] += (" " if out[list_head].endswith(":") else "; ") + item
+                continue
+        if not (row == "" and list_head is not None):
+            list_head = None
         if cells is not None:
             if is_rule[i]:
                 continue
@@ -5370,8 +5437,19 @@ def _policy_lines(text: str) -> List[str]:
                 continue
             if lead:
                 line = f"{lead[1]} — {line}"
+            elif len(line) > POLICY_LINE_CHARS:
+                # the official pages state a rule as one paragraph of several sentences (the legacy corpus wrote
+                # short bullets); each sentence is a line, so a section can show the 2-4 that answer and none is cut
+                for sentence in _split_opening(line):
+                    if sentence not in out:
+                        out.append(sentence)
+                if out and out[-1].endswith(":") and len(out[-1].split()) > 8:
+                    list_head = len(out) - 1
+                continue
         if line not in out:
             out.append(line)
+            if cells is None and line.endswith(":") and len(line.split()) > 8:
+                list_head = len(out) - 1
     return out
 
 
@@ -5387,6 +5465,11 @@ def _trim_line(line: str, question: str = "", limit: int = POLICY_LINE_CHARS) ->
         return line
     parts = _split_opening(line)
     if len(parts[0]) > POLICY_LINE_MAX:
+        # a table row whose label is long ("Buying a flat from HDB Buying a resale Plus or Prime flat ...: <rule>"):
+        # shorten the label, not the rule, so the condition and its figure stay whole
+        head, sep, body = parts[0].partition(": ")
+        if sep and len(body) <= POLICY_LINE_MAX - 40 and len(head) > 40:
+            return _cut_sentence(head, POLICY_LINE_MAX - len(body) - 2).rstrip("…") + "…: " + body
         return _cut_sentence(parts[0])
     keep = [0]
     while len(keep) < len(parts) and len(_join_kept(parts, keep + [len(keep)])) <= limit:
@@ -5443,6 +5526,78 @@ def _asked_cells(line: str, asked: set) -> str:
     return f"{head} — {'; '.join(keep)}" if keep and len(keep) < len(parts) else line
 
 
+POLICY_SEMANTIC_LINE_FLOOR = 3.0   # cross-encoder score a line needs to be added beside the word-overlap pick
+
+
+def _add_semantic_best(lines: List[str], question: str, chosen: List[int]) -> List[int]:
+    """The word-overlap pick, plus the section line the cross-encoder (the policy search's re-ranker, which reads the
+    question and the line together) scores highest, when it scores at least POLICY_SEMANTIC_LINE_FLOOR and is not
+    already shown, while there is room. "What does the HFE letter actually assess?" shares no word with HDB's answer
+    ("a consolidated assessment of their housing and financing options"), so word overlap alone missed it. The pick is
+    only added to, never reordered; without the cross-encoder it is unchanged."""
+    if not question or len(chosen) >= POLICY_LINES_SHOWN or len(lines) <= len(chosen):
+        return chosen
+    try:
+        from mcp_server.policy_rag_tools import _get_cross_encoder
+        cross_encoder = _get_cross_encoder()
+        if not cross_encoder:
+            return chosen
+        rest = [i for i in range(len(lines)) if i not in chosen]
+        scores = cross_encoder.predict([[question, lines[i]] for i in rest])
+    except Exception:  # noqa: BLE001
+        return chosen
+    best_score, best = max(zip((float(x) for x in scores), rest))
+    return sorted(chosen + [best]) if best_score >= POLICY_SEMANTIC_LINE_FLOOR else chosen
+
+
+# The cross-encoder (ms-marco, trained on web search) scores table rows and multi-part rules low even when they are the
+# answer ("Age — ...: At least 35 years old" -4.8 for a 34-year-old single's question; the same-ethnicity EIP rule -3.3),
+# while unrelated lines score far lower ("Outstanding payments with HDB" -7.7 for a fiance question). So the floors
+# only drop what is clearly unrelated.
+POLICY_LINE_FLOOR = -6.0            # a line scoring below this is not evidence for the question
+POLICY_SECTION_FLOOR = -2.0         # a section whose best line scores below this is left out...
+POLICY_EVIDENCE_WEAK_MARGIN = 4.0   # ...unless the best evidence overall is itself weak: then within this of it
+
+
+def _grade_policy_evidence(sections: Dict[str, Dict[str, Any]], question: str) -> Dict[str, Dict[str, Any]]:
+    """Keep only the evidence for the question (Topic 8: grade the retrieved chunks, drop the noisy ones). The
+    cross-encoder reads the question with every line; a section stays when its best line scores at least the floor and
+    keeps only its lines that do. "Can a fiance and fiancee buy a flat before they are married?" had shown the HFE-letter
+    sections and "Outstanding payments with HDB" (-7.7) beside the solemnisation rule (+4.6). When even the best line
+    is below the floor, the lines within POLICY_EVIDENCE_WEAK_MARGIN of it are kept, so a weak answer is never empty.
+    Without the cross-encoder the sections are returned unchanged."""
+    if not question or not sections:
+        return sections
+    try:
+        from mcp_server.policy_rag_tools import _get_cross_encoder
+        cross_encoder = _get_cross_encoder()
+        if not cross_encoder:
+            return sections
+        lines = list(dict.fromkeys(line for s in sections.values() for line in s["lines"]))
+        if not lines:
+            return sections
+        score = dict(zip(lines, (float(x) for x in cross_encoder.predict([[question, line] for line in lines]))))
+    except Exception:  # noqa: BLE001
+        return sections
+    # a footnote ("[1] Unclassified flats refer to ...") defines a term; it is never the evidence itself
+    for line in score:
+        if re.match(r"^(?:Notes:\s*)?\[\d+\]", line):
+            score[line] = float("-inf")
+    best = max(score.values())
+    section_floor = min(POLICY_SECTION_FLOOR, best - POLICY_EVIDENCE_WEAK_MARGIN)
+    graded: Dict[str, Dict[str, Any]] = {}
+    shown: set = set()
+    for key, s in sections.items():
+        if max((score.get(line, best) for line in s["lines"]), default=best) < section_floor:
+            continue
+        kept = [line for line in s["lines"] if score.get(line, best) >= POLICY_LINE_FLOOR]
+        # HDB repeats a paragraph on several pages (new-flat and resale "Conditions After Buying"): show it once
+        if kept and not set(kept) <= shown:
+            graded[key] = {**s, "lines": kept}
+            shown |= set(kept)
+    return graded or sections
+
+
 def shown_policy_passages(passages: Any, question: str = "") -> List[Dict[str, Any]]:
     """The policy passages as the answer shows them: at most three, in the search's order, chunks with no text under
     their header skipped and chunks of the same section merged; for each, the 2-4 lines sharing the most words with
@@ -5494,9 +5649,12 @@ def shown_policy_passages(passages: Any, question: str = "") -> List[Dict[str, A
         for s in sections.values():
             s["lines"] = [_asked_cells(line, asked) for line in s["lines"]]
 
+    sections = _grade_policy_evidence(sections, question)
     pool = [line for s in sections.values() for line in s["lines"]]
     for s in sections.values():
-        picked = [_trim_line(s["lines"][i], question) for i in _pick_lines(s["lines"], question, pool)]
+        chosen = _pick_lines(s["lines"], question, pool)
+        chosen = _add_semantic_best(s["lines"], question, chosen)
+        picked = [_trim_line(s["lines"][i], question) for i in chosen]
         if len(required_topics) >= 2:
             def relevant_line(line: str) -> bool:
                 groups = _line_topic_groups(line)
@@ -6133,7 +6291,7 @@ _BLOCK_LIST = re.compile(r"\b(?:Blk|Block|Blocks|Blks)\.?\s*(?:No\.?\s*|#\s*)?(\
                          r"\d{1,4}[A-Z]?\b)*)", re.I)
 _ADDRESS = re.compile(r"\b(\d{1,4}[A-Z]?)\s+(?:[A-Z][A-Za-z]+\s+){1,4}(?i:Ave|Avenue|St|Street|Rd|Road|Dr|Drive|Cres|Crescent|"
                       r"Ring|Way|Lane|Close|Central|Lorong|Lor)\b")
-_NOT_A_FIGURE = re.compile(r"\b[2-5]\s*-?\s*(?:room|rm)s?\b|\b(?:Ave|Avenue|St|Street|Rd|Road|Ring|Sector|Lorong|Lor)\s+\d+[A-Z]?\b",
+_NOT_A_FIGURE = re.compile(r"\b(?:[1-5]|one|two|three|four|five)\s*-?\s*(?:room|rm)s?\b|\b(?:Ave|Avenue|St|Street|Rd|Road|Ring|Sector|Lorong|Lor)\s+\d+[A-Z]?\b",
                            re.I)
 _SPELLED_FIGURE = re.compile(r"\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|"
                              r"sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|"
@@ -6188,12 +6346,52 @@ def _figures(text: str) -> List[Any]:
     return found
 
 
+_SPELLED_AGE_MAP = {
+    "twenty-one": 21.0, "twenty one": 21.0,
+    "twenty-four": 24.0, "twenty four": 24.0,
+    "thirty": 30.0,
+    "thirty-five": 35.0, "thirty five": 35.0,
+    "forty": 40.0,
+    "fifty-five": 55.0, "fifty five": 55.0,
+    "sixty-five": 65.0, "sixty five": 65.0,
+}
+
+
 def policy_figures(passages: Any, question: str = "") -> set:
     """Every figure in the policy lines the answer shows (titles and lines, but not worked examples). A range is one
     figure: its ends are not allowed on their own."""
     shown = shown_policy_passages(passages, question)
     lines = [s["title"] for s in shown] + [line for s in shown for line in s["lines"]]
-    return set(_figures("\n".join(line for line in lines if not re.match(r"(?:worked )?example\b", line, re.I))))
+    figures = set(_figures("\n".join(line for line in lines if not re.match(r"(?:worked )?example\b", line, re.I))))
+    expanded = set(figures)
+    for f in figures:
+        if isinstance(f, tuple) and len(f) == 2:
+            unit, val = f
+            if unit in ("", "year"):
+                expanded.add(("", val))
+                expanded.add(("year", val))
+            elif unit == "$k":
+                expanded.add(("$", val * 1000.0))
+            elif unit == "$" and val >= 1000 and val % 1000 == 0:
+                expanded.add(("$k", val / 1000.0))
+    if question:
+        for f in _figures(question):
+            expanded.add(f)
+            if isinstance(f, tuple) and len(f) == 2:
+                unit, val = f
+                if unit in ("", "year"):
+                    expanded.add(("", val))
+                    expanded.add(("year", val))
+                elif unit == "$k":
+                    expanded.add(("$", val * 1000.0))
+                elif unit == "$" and val >= 1000 and val % 1000 == 0:
+                    expanded.add(("$k", val / 1000.0))
+        q_lower = question.lower()
+        for phrase, val in _SPELLED_AGE_MAP.items():
+            if re.search(rf"\b{re.escape(phrase)}\b", q_lower):
+                expanded.add(("", val))
+                expanded.add(("year", val))
+    return expanded
 
 
 def _plain(text: str) -> str:

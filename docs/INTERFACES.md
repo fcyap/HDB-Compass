@@ -409,9 +409,10 @@ new question (then it is handled as one). The websocket `STEP_UPDATE` carries `c
 `{"kind", "question", "options": [{"label", "text"}]}`; the page shows the options as chips and sends `text` on click.
 Location clarifications (`kind: "location"`) have only a label, which is used as the text.
 
-**Policy relevance floor.** `RetrieveHdbPolicyKnowledgeOutput.best_keyword_score` (new, optional float) is the best raw
-BM25 score of the retrieved passages. The supervisor says "no policy passage matches" when it is below the floor instead
-of printing the nearest weak passages. Member 3/4: the field is additive; the policy tool's other outputs are unchanged.
+**Policy relevance floor.** `RetrieveHdbPolicyKnowledgeOutput.best_relevance_score` (optional float) is the cross-encoder
+score of the best of the question's hybrid candidates; `best_keyword_score` is the best raw BM25 score. The supervisor
+(`policy_below_floor`) says "no HDB rule found" when the relevance score is below `POLICY_RELEVANCE_FLOOR` (-3.2) instead
+of printing the nearest weak passages; the BM25 floor (`POLICY_SCORE_FLOOR`) is used only when the cross-encoder could not load. Member 3/4: the field is additive; the policy tool's other outputs are unchanged.
 
 **Town price questions.** "How much is a 4-room in Tampines?", "median price of 5-room flats in Punggol" and "Is Woodlands
 cheaper than Yishun" go to `get_market_snapshot` (the town snapshot) instead of a block search. With two towns the answer

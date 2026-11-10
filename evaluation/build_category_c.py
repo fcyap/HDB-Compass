@@ -435,10 +435,88 @@ CATEGORY_C_CASES = [
 ]
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# Official ground truth (Nov 2026). The ground_truth_facts above were written from the legacy hand-written corpus, which
+# was later found wrong in places (Plus/Prime subsidy-recovery rates, the singles $7,000 ceiling, the 15-month wait-out).
+# Each question's truth is now taken from the captured official pages via evaluation/policy_fact_sheet.yaml (`fact_ids`).
+# key_clauses: the words a correct answer (and a relevant passage) must contain; target_sections: titles of the official
+# pages that hold the answer (matched against the chunk's section breadcrumb). answerable=False: no captured page states
+# the rule, so the correct answer says it is not in the documents (a test of the grounding rule).
+# The old truth is kept under "legacy_ground_truth" for the old-vs-new corpus comparison.
+# ---------------------------------------------------------------------------------------------------------------------
+FRAMEWORK = "Standard, Plus, and Prime Housing Framework"
+OFFICIAL_TRUTH = {
+    "C1-01": dict(fact_ids=["mop_by_classification", "plus_prime_subsidy_recovery_rate",
+                            "subsidy_recovery_not_on_open_market_resale", "no_whole_flat_rental_plus_prime"],
+                  key_clauses=[["10 years"], ["subsidy recovery"], ["open market"], ["whole flat", "not allowed"]],
+                  target_sections=[FRAMEWORK]),
+    "C1-02": dict(fact_ids=["no_whole_flat_rental_plus_prime"],
+                  key_clauses=[["whole flat"], ["not allowed"]],
+                  target_sections=[FRAMEWORK, "Conditions After Buying a New Flat"]),
+    "C1-03": dict(fact_ids=["plus_prime_subsidy_recovery_rate", "subsidy_recovery_not_on_open_market_resale"],
+                  key_clauses=[["percentage"], ["launched"], ["open market"]],
+                  target_sections=[FRAMEWORK]),
+    "C1-04": dict(fact_ids=["singles_new_flat_type", "singles_flexi_income_ceiling", "singles_age_35"],
+                  key_clauses=[["2-room"], ["$8,000"], ["35"]],
+                  target_sections=["Singles"]),
+    "C1-05": dict(fact_ids=["mop_by_classification", "no_whole_flat_rental_plus_prime"],
+                  key_clauses=[["5 years"], ["10 years"], ["Allowed after MOP"], ["Not allowed"]],
+                  target_sections=[FRAMEWORK]),
+    "C2-01": dict(fact_ids=["singles_age_35", "singles_new_flat_type"],
+                  key_clauses=[["35"], ["2-room Flexi"]],
+                  target_sections=["Singles"]),
+    "C2-02": dict(fact_ids=["singles_age_35", "singles_flexi_income_ceiling"],
+                  key_clauses=[["35"], ["$8,000"]],
+                  target_sections=["Singles"]),
+    "C2-03": dict(fact_ids=["two_singles_together", "singles_new_flat_type", "singles_age_35"],
+                  key_clauses=[["two or more singles"], ["35"]],
+                  target_sections=["Singles"]),
+    "C2-04": dict(fact_ids=["non_resident_spouse_flats", "non_resident_spouse_grant_age"],
+                  key_clauses=[["non-resident spouse"], ["21"]],
+                  target_sections=["CPF Housing Grant for Singles Buying Resale Flats", "Couples and Families"]),
+    "C2-05": dict(fact_ids=["fiance_solemnise_new_flat", "fiance_solemnise_resale"],
+                  key_clauses=[["solemnise"], ["3 months"]],
+                  target_sections=["Key Collection", "Couples and Families"],
+                  note="HDB's pages state the marriage must be solemnised within 3 months of key collection (new flat) "
+                       "or of completion (resale); an overseas marriage certificate is submitted within the same 3 months."),
+    "C3-01": dict(fact_ids=["wait_out_removed_2026", "wait_out_senior_exemption"],
+                  key_clauses=[["no longer"], ["15-month wait-out"], ["55 and above"]],
+                  target_sections=["Removal of the 15-month Wait-out Period for Private Residential Property Owners "
+                                   "Purchasing Non-Subsidised HDB Resale Flats"],
+                  note="HDB removed the 15-month wait-out on 27 July 2026 for non-subsidised resale purchases without an "
+                       "HDB loan; before that, citizens aged 55+ moving to a 4-room or smaller resale flat were exempt."),
+    "C3-02": dict(fact_ids=["private_property_30_months"],
+                  key_clauses=[["30 months"], ["6 months"]],
+                  target_sections=["Couples and Families"]),
+    "C3-03": dict(fact_ids=["private_property_30_months"],
+                  key_clauses=[["30 months"], ["grant"]],
+                  target_sections=["Couples and Families"]),
+    "C3-04": dict(fact_ids=["eip_same_ethnicity"],
+                  key_clauses=[["same ethnic group"]],
+                  target_sections=["Ethnic Integration Policy (EIP) and Singapore Permanent Resident Quota"]),
+    "C3-05": dict(fact_ids=["eip_buyback_criteria", "eip_buyback_marketing_period"],
+                  key_clauses=[["Minimum Occupation Period"], ["10 years"], ["six months"]],
+                  target_sections=["More Support for Flat Owners Constrained by the Ethnic Integration Policy"],
+                  note="Source is HDB's 2022 announcement of the EIP buyback; the conditions may have changed since."),
+}
+
+
+def official_cases():
+    """The cases with their official ground truth (the legacy truth kept beside it)."""
+    cases = []
+    for case in CATEGORY_C_CASES:
+        case = json.loads(json.dumps(case))
+        truth = OFFICIAL_TRUTH[case["id"]]
+        case["legacy_ground_truth"] = case.pop("ground_truth_facts")
+        case["ground_truth_facts"] = {"source": "evaluation/policy_fact_sheet.yaml", "answerable": True, **truth}
+        cases.append(case)
+    return cases
+
+
 def build():
     OUTPUT_JSON.parent.mkdir(parents=True, exist_ok=True)
     with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
-        json.dump(CATEGORY_C_CASES, f, indent=2, ensure_ascii=False)
+        json.dump(official_cases(), f, indent=2, ensure_ascii=False)
     print(f"Generated {len(CATEGORY_C_CASES)} Category C queries -> {OUTPUT_JSON}")
 
 

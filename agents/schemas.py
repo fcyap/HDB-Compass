@@ -591,15 +591,21 @@ class PolicyPassage(BaseModel):
     policy_category: str = ""
     flat_classification: Optional[str] = None
     effective_date: Optional[str] = None
+    # provenance of the official page the chunk was taken from (None for the legacy hand-written corpus)
+    publisher: Optional[str] = None
+    retrieved: Optional[str] = None
     rerank_score: float = 0.0
 
 
 class RetrieveHdbPolicyKnowledgeOutput(BaseModel):
     passages: List[PolicyPassage]
-    pipeline: Literal["RAG-1", "RAG-2", "RAG-3"] = "RAG-3"
+    pipeline: Literal["RAG-1", "RAG-2", "RAG-3"] = "RAG-2"
     # The raw (unnormalised) BM25 score of the best-matching passage. rerank_score is scaled so the top passage is
     # always 1.0, so it cannot say whether anything in the knowledge base really matches; this can. None = unknown.
     best_keyword_score: Optional[float] = None
+    # The cross-encoder's raw score for the best candidate passage: how well anything in the knowledge base answers the
+    # question. Unlike raw BM25 it does not grow with question length or corpus size. None = cross-encoder unavailable.
+    best_relevance_score: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------

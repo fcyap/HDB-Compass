@@ -145,7 +145,9 @@ def test_declining_a_flat_when_invited_gets_the_penalty_rule():
     (t1,) = conversation("What happens if I decline to choose a flat when invited in a BTO exercise?")   # P-34
     assert not is_menu(t1)
     assert t1["user_constraints"]["policy_fallback"]
-    assert "declines to select a flat when invited" in t1["draft_response"]
+    # HDB's wording: "... application restrictions will apply if you choose not to book a BTO or SBF flat" /
+    # "you will incur a non-selection count" (the legacy corpus wrote "declines to select a flat when invited")
+    assert "non-selection" in t1["draft_response"]
 
 
 def test_a_rule_question_with_no_matching_passage_says_so():

@@ -22,6 +22,10 @@ __pycache__/
 # Large dataset raw download cache (data.gov.sg blobs)
 data/cache/
 data/chroma_db/
+# Captured official pages (8+ MB of HTML): kept locally; their URLs, capture dates and hashes are in the manifest
+data/policy_sources/raw/*
+!data/policy_sources/raw/manifest.json
+data/policy_sources/extracted/
 
 # Generated databases
 data/local/

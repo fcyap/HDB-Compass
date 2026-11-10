@@ -361,8 +361,34 @@ def test_clause_scorer_agrees_with_member_3s_function():
                     (item["id"], clause, a)
 
 
-def test_policy_answer_is_fully_right_only_with_every_clause():
-    item = next(i for i in CAT_C if i["id"] == "C1-03")
+# The live Category C truth now comes from the captured official pages and has no known-wrong clauses
+# (architecture_metrics.KNOWN_WRONG_CLAUSES is empty). The flagging mechanism is still tested, on the legacy truth it was
+# built for (kept in each question as "legacy_ground_truth") with the list it held then.
+LEGACY_WRONG = {
+    "C1-01": {("clawback", "6%", "9%"): "Prime subsidy recovery given as 6% to 9%; the project brief gives the current "
+                                        "Prime rate as 9% (the 6% to 9% range comes from earlier Prime launches).",
+              ("clawback", "3%", "6%"): "Plus subsidy recovery given as 3% to 6%; the current HDB range for Plus flats "
+                                        "is 6% to 8%."},
+    "C1-03": {"3% to 6% subsidy recovery": "Plus subsidy recovery given as 3% to 6%; the current HDB range for Plus "
+                                           "flats is 6% to 8%."},
+}
+
+
+def _legacy(item):
+    return {**item, "ground_truth_facts": item["legacy_ground_truth"]}
+
+
+@pytest.fixture
+def legacy_wrong(monkeypatch):
+    monkeypatch.setattr(M, "KNOWN_WRONG_CLAUSES", LEGACY_WRONG)
+
+
+def test_live_category_c_truth_has_no_known_wrong_clauses():
+    assert all(M.known_wrong_clauses(item) == [] for item in CAT_C)
+
+
+def test_policy_answer_is_fully_right_only_with_every_clause(legacy_wrong):
+    item = _legacy(next(i for i in CAT_C if i["id"] == "C1-03"))
     all_in = {"variant": "C", "draft_response": "Plus flats carry a 3% to 6% subsidy recovery, which applies only to the "
                                                 "first resale."}
     s = M.score_item(item, all_in)
@@ -375,11 +401,11 @@ def test_policy_answer_is_fully_right_only_with_every_clause():
     assert half["ground_truth"]["clauses_missing"] == ["applies only to the first resale"]
 
 
-def test_known_wrong_clauses_are_listed_from_the_dataset_as_it_stands():
-    c101 = next(i for i in CAT_C if i["id"] == "C1-01")
+def test_known_wrong_clauses_are_listed_from_the_dataset_as_it_stands(legacy_wrong):
+    c101 = _legacy(next(i for i in CAT_C if i["id"] == "C1-01"))
     wrong = [w["clause"] for w in M.known_wrong_clauses(c101)]
     assert ["clawback", "3%", "6%"] in wrong and ["clawback", "6%", "9%"] in wrong
-    assert M.known_wrong_clauses(next(i for i in CAT_C if i["id"] == "C2-02")) == []
+    assert M.known_wrong_clauses(_legacy(next(i for i in CAT_C if i["id"] == "C2-02"))) == []
     # once Member 3 corrects a clause it no longer matches the list, so it is no longer flagged
     fixed = {"id": "C1-03", "ground_truth_facts": {"key_clauses": ["6% to 8% subsidy recovery"]}}
     assert M.known_wrong_clauses(fixed) == []
@@ -424,8 +450,9 @@ def test_paired_table_counts_each_question_once_per_pair():
     assert "Needs Variant C" in AN.paired_table([_row("A", "E1-01", True)])
 
 
-def test_category_c_caveat_names_the_wrong_clauses_and_who_passed():
+def test_category_c_caveat_names_the_wrong_clauses_and_who_passed(legacy_wrong, monkeypatch):
     from evaluation import analyze_category_e as AN
+    monkeypatch.setattr(AN, "ITEMS", {**AN.ITEMS, **{i["id"]: _legacy(i) for i in CAT_C}})
     passed = _row("C", "C1-03", True)
     passed["scores"]["ground_truth"] = {"kind": "policy", "success": True}
     text = AN.known_wrong_caveat([passed, _row("A", "C1-03", False)])

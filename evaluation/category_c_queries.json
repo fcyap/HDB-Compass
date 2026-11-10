@@ -16,7 +16,7 @@
         }
       }
     ],
-    "ground_truth_facts": {
+    "legacy_ground_truth": {
       "prime_mop_years": 10,
       "plus_mop_years": 10,
       "prime_clawback_pct_range": "6% to 9%",
@@ -48,6 +48,34 @@
         "Detailed Rules for Plus Flats",
         "Key Policy Comparison Matrix"
       ]
+    },
+    "ground_truth_facts": {
+      "source": "evaluation/policy_fact_sheet.yaml",
+      "answerable": true,
+      "fact_ids": [
+        "mop_by_classification",
+        "plus_prime_subsidy_recovery_rate",
+        "subsidy_recovery_not_on_open_market_resale",
+        "no_whole_flat_rental_plus_prime"
+      ],
+      "key_clauses": [
+        [
+          "10 years"
+        ],
+        [
+          "subsidy recovery"
+        ],
+        [
+          "open market"
+        ],
+        [
+          "whole flat",
+          "not allowed"
+        ]
+      ],
+      "target_sections": [
+        "Standard, Plus, and Prime Housing Framework"
+      ]
     }
   },
   {
@@ -67,7 +95,7 @@
         }
       }
     ],
-    "ground_truth_facts": {
+    "legacy_ground_truth": {
       "whole_flat_rental_allowed": false,
       "room_rental_allowed": true,
       "key_clauses": [
@@ -77,6 +105,25 @@
       "target_sections": [
         "Detailed Rules for Prime Flats",
         "Rental Restrictions"
+      ]
+    },
+    "ground_truth_facts": {
+      "source": "evaluation/policy_fact_sheet.yaml",
+      "answerable": true,
+      "fact_ids": [
+        "no_whole_flat_rental_plus_prime"
+      ],
+      "key_clauses": [
+        [
+          "whole flat"
+        ],
+        [
+          "not allowed"
+        ]
+      ],
+      "target_sections": [
+        "Standard, Plus, and Prime Housing Framework",
+        "Conditions After Buying a New Flat"
       ]
     }
   },
@@ -97,7 +144,7 @@
         }
       }
     ],
-    "ground_truth_facts": {
+    "legacy_ground_truth": {
       "clawback_pct_range": "3% to 6%",
       "applies_to_subsequent_buyers": false,
       "key_clauses": [
@@ -107,6 +154,28 @@
       "target_sections": [
         "Detailed Rules for Plus Flats",
         "Subsidy Recovery Mechanism"
+      ]
+    },
+    "ground_truth_facts": {
+      "source": "evaluation/policy_fact_sheet.yaml",
+      "answerable": true,
+      "fact_ids": [
+        "plus_prime_subsidy_recovery_rate",
+        "subsidy_recovery_not_on_open_market_resale"
+      ],
+      "key_clauses": [
+        [
+          "percentage"
+        ],
+        [
+          "launched"
+        ],
+        [
+          "open market"
+        ]
+      ],
+      "target_sections": [
+        "Standard, Plus, and Prime Housing Framework"
       ]
     }
   },
@@ -127,7 +196,7 @@
         }
       }
     ],
-    "ground_truth_facts": {
+    "legacy_ground_truth": {
       "singles_eligible": true,
       "max_flat_size": "2-room only",
       "income_ceiling_sgd": 7000,
@@ -139,6 +208,29 @@
       "target_sections": [
         "Key Policy Comparison Matrix",
         "Resale Market Eligibility Conditions"
+      ]
+    },
+    "ground_truth_facts": {
+      "source": "evaluation/policy_fact_sheet.yaml",
+      "answerable": true,
+      "fact_ids": [
+        "singles_new_flat_type",
+        "singles_flexi_income_ceiling",
+        "singles_age_35"
+      ],
+      "key_clauses": [
+        [
+          "2-room"
+        ],
+        [
+          "$8,000"
+        ],
+        [
+          "35"
+        ]
+      ],
+      "target_sections": [
+        "Singles"
       ]
     }
   },
@@ -159,7 +251,7 @@
         }
       }
     ],
-    "ground_truth_facts": {
+    "legacy_ground_truth": {
       "standard_mop_years": 5,
       "plus_mop_years": 10,
       "standard_whole_flat_rental": true,
@@ -172,6 +264,31 @@
       "target_sections": [
         "Key Policy Comparison Matrix",
         "Detailed Rules for Standard Flats"
+      ]
+    },
+    "ground_truth_facts": {
+      "source": "evaluation/policy_fact_sheet.yaml",
+      "answerable": true,
+      "fact_ids": [
+        "mop_by_classification",
+        "no_whole_flat_rental_plus_prime"
+      ],
+      "key_clauses": [
+        [
+          "5 years"
+        ],
+        [
+          "10 years"
+        ],
+        [
+          "Allowed after MOP"
+        ],
+        [
+          "Not allowed"
+        ]
+      ],
+      "target_sections": [
+        "Standard, Plus, and Prime Housing Framework"
       ]
     }
   },
@@ -192,7 +309,7 @@
         }
       }
     ],
-    "ground_truth_facts": {
+    "legacy_ground_truth": {
       "age_34_eligible": false,
       "age_35_eligible": true,
       "eligible_flat_types_at_35": "2-room Flexi BTO in any estate, or resale flat of any size",
@@ -205,6 +322,25 @@
       "target_sections": [
         "Single Singapore Citizen Scheme (SSC)",
         "Minimum Age and Citizenship Restrictions Summary"
+      ]
+    },
+    "ground_truth_facts": {
+      "source": "evaluation/policy_fact_sheet.yaml",
+      "answerable": true,
+      "fact_ids": [
+        "singles_age_35",
+        "singles_new_flat_type"
+      ],
+      "key_clauses": [
+        [
+          "35"
+        ],
+        [
+          "2-room Flexi"
+        ]
+      ],
+      "target_sections": [
+        "Singles"
       ]
     }
   },
@@ -225,7 +361,7 @@
         }
       }
     ],
-    "ground_truth_facts": {
+    "legacy_ground_truth": {
       "min_age": 35,
       "income_ceiling_sgd": 7000,
       "flat_type": "2-room Flexi BTO",
@@ -235,6 +371,25 @@
       ],
       "target_sections": [
         "Single Singapore Citizen Scheme (SSC)"
+      ]
+    },
+    "ground_truth_facts": {
+      "source": "evaluation/policy_fact_sheet.yaml",
+      "answerable": true,
+      "fact_ids": [
+        "singles_age_35",
+        "singles_flexi_income_ceiling"
+      ],
+      "key_clauses": [
+        [
+          "35"
+        ],
+        [
+          "$8,000"
+        ]
+      ],
+      "target_sections": [
+        "Singles"
       ]
     }
   },
@@ -255,7 +410,7 @@
         }
       }
     ],
-    "ground_truth_facts": {
+    "legacy_ground_truth": {
       "eligible": true,
       "scheme": "Joint Singles Scheme (JSS)",
       "key_clauses": [
@@ -264,6 +419,26 @@
       ],
       "target_sections": [
         "Joint Singles Scheme (JSS)"
+      ]
+    },
+    "ground_truth_facts": {
+      "source": "evaluation/policy_fact_sheet.yaml",
+      "answerable": true,
+      "fact_ids": [
+        "two_singles_together",
+        "singles_new_flat_type",
+        "singles_age_35"
+      ],
+      "key_clauses": [
+        [
+          "two or more singles"
+        ],
+        [
+          "35"
+        ]
+      ],
+      "target_sections": [
+        "Singles"
       ]
     }
   },
@@ -284,7 +459,7 @@
         }
       }
     ],
-    "ground_truth_facts": {
+    "legacy_ground_truth": {
       "scheme_name": "Non-Citizen Spouse Scheme",
       "resale_options": "Any flat size on open market",
       "bto_options": "2-room Flexi if aged 35+",
@@ -294,6 +469,26 @@
       ],
       "target_sections": [
         "Non-Citizen Spouse Scheme"
+      ]
+    },
+    "ground_truth_facts": {
+      "source": "evaluation/policy_fact_sheet.yaml",
+      "answerable": true,
+      "fact_ids": [
+        "non_resident_spouse_flats",
+        "non_resident_spouse_grant_age"
+      ],
+      "key_clauses": [
+        [
+          "non-resident spouse"
+        ],
+        [
+          "21"
+        ]
+      ],
+      "target_sections": [
+        "CPF Housing Grant for Singles Buying Resale Flats",
+        "Couples and Families"
       ]
     }
   },
@@ -314,7 +509,7 @@
         }
       }
     ],
-    "ground_truth_facts": {
+    "legacy_ground_truth": {
       "deadline_months": 3,
       "trigger_event": "taking possession / key collection",
       "key_clauses": [
@@ -323,6 +518,27 @@
       "target_sections": [
         "Fiancé / Fiancée Scheme"
       ]
+    },
+    "ground_truth_facts": {
+      "source": "evaluation/policy_fact_sheet.yaml",
+      "answerable": true,
+      "fact_ids": [
+        "fiance_solemnise_new_flat",
+        "fiance_solemnise_resale"
+      ],
+      "key_clauses": [
+        [
+          "solemnise"
+        ],
+        [
+          "3 months"
+        ]
+      ],
+      "target_sections": [
+        "Key Collection",
+        "Couples and Families"
+      ],
+      "note": "HDB's pages state the marriage must be solemnised within 3 months of key collection (new flat) or of completion (resale); an overseas marriage certificate is submitted within the same 3 months."
     }
   },
   {
@@ -342,7 +558,7 @@
         }
       }
     ],
-    "ground_truth_facts": {
+    "legacy_ground_truth": {
       "is_exempt": true,
       "min_senior_age": 55,
       "max_flat_size_for_exemption": "4-room or smaller",
@@ -353,6 +569,29 @@
       "target_sections": [
         "Senior Citizen Exemption from 15-Month Wait-Out"
       ]
+    },
+    "ground_truth_facts": {
+      "source": "evaluation/policy_fact_sheet.yaml",
+      "answerable": true,
+      "fact_ids": [
+        "wait_out_removed_2026",
+        "wait_out_senior_exemption"
+      ],
+      "key_clauses": [
+        [
+          "no longer"
+        ],
+        [
+          "15-month wait-out"
+        ],
+        [
+          "55 and above"
+        ]
+      ],
+      "target_sections": [
+        "Removal of the 15-month Wait-out Period for Private Residential Property Owners Purchasing Non-Subsidised HDB Resale Flats"
+      ],
+      "note": "HDB removed the 15-month wait-out on 27 July 2026 for non-subsidised resale purchases without an HDB loan; before that, citizens aged 55+ moving to a 4-room or smaller resale flat were exempt."
     }
   },
   {
@@ -372,7 +611,7 @@
         }
       }
     ],
-    "ground_truth_facts": {
+    "legacy_ground_truth": {
       "wait_out_months": 15,
       "is_exempt": false,
       "reason": "Under 55 years of age",
@@ -390,6 +629,24 @@
       ],
       "target_sections": [
         "The 15-Month Wait-Out Period for Open Market Resale Flats"
+      ]
+    },
+    "ground_truth_facts": {
+      "source": "evaluation/policy_fact_sheet.yaml",
+      "answerable": true,
+      "fact_ids": [
+        "private_property_30_months"
+      ],
+      "key_clauses": [
+        [
+          "30 months"
+        ],
+        [
+          "6 months"
+        ]
+      ],
+      "target_sections": [
+        "Couples and Families"
       ]
     }
   },
@@ -410,7 +667,7 @@
         }
       }
     ],
-    "ground_truth_facts": {
+    "legacy_ground_truth": {
       "wait_out_months": 30,
       "applies_to_bto": true,
       "applies_to_grants": true,
@@ -421,6 +678,24 @@
       ],
       "target_sections": [
         "The 30-Month Wait-Out Period"
+      ]
+    },
+    "ground_truth_facts": {
+      "source": "evaluation/policy_fact_sheet.yaml",
+      "answerable": true,
+      "fact_ids": [
+        "private_property_30_months"
+      ],
+      "key_clauses": [
+        [
+          "30 months"
+        ],
+        [
+          "grant"
+        ]
+      ],
+      "target_sections": [
+        "Couples and Families"
       ]
     }
   },
@@ -441,7 +716,7 @@
         }
       }
     ],
-    "ground_truth_facts": {
+    "legacy_ground_truth": {
       "transaction_allowed": true,
       "exception_rule": "Same-ethnicity transactions do not alter the ethnic balance and are always permitted.",
       "key_clauses": [
@@ -451,6 +726,21 @@
       "target_sections": [
         "Ethnic Integration Policy (EIP)",
         "Transaction Restrictions"
+      ]
+    },
+    "ground_truth_facts": {
+      "source": "evaluation/policy_fact_sheet.yaml",
+      "answerable": true,
+      "fact_ids": [
+        "eip_same_ethnicity"
+      ],
+      "key_clauses": [
+        [
+          "same ethnic group"
+        ]
+      ],
+      "target_sections": [
+        "Ethnic Integration Policy (EIP) and Singapore Permanent Resident Quota"
       ]
     }
   },
@@ -471,7 +761,7 @@
         }
       }
     ],
-    "ground_truth_facts": {
+    "legacy_ground_truth": {
       "mop_completed": true,
       "active_marketing_months": 6,
       "buyback_pricing": "Prevailing fair market valuation",
@@ -485,6 +775,29 @@
         "EIP Buyback Assistance Scheme",
         "Eligibility Requirements"
       ]
+    },
+    "ground_truth_facts": {
+      "source": "evaluation/policy_fact_sheet.yaml",
+      "answerable": true,
+      "fact_ids": [
+        "eip_buyback_criteria",
+        "eip_buyback_marketing_period"
+      ],
+      "key_clauses": [
+        [
+          "Minimum Occupation Period"
+        ],
+        [
+          "10 years"
+        ],
+        [
+          "six months"
+        ]
+      ],
+      "target_sections": [
+        "More Support for Flat Owners Constrained by the Ethnic Integration Policy"
+      ],
+      "note": "Source is HDB's 2022 announcement of the EIP buyback; the conditions may have changed since."
     }
   }
 ]

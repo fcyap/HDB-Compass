@@ -23,6 +23,8 @@ pytest>=8.0
 # Member 3 policy RAG (mcp_server/policy_rag_tools.py): BM25 sparse retrieval + dense embeddings + cross-encoder reranker
 rank-bm25>=0.2.2
 sentence-transformers>=3.0.0
+# policy corpus capture (data/policy_sources/extract_sources.py): HTML and PDF pages to verbatim Markdown
+trafilatura>=2.0
+pymupdf4llm>=0.0.17
 scikit-learn>=1.4.0
-chromadb>=0.5.0
 ragas>=0.1.0
