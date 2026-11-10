@@ -276,6 +276,7 @@ def run_settings(profile: Dict[str, Any]) -> Dict[str, Any]:
         "runtime_auditor_installed": sv._AUDITOR is not None,
         "trust_model_reading": sv.trust_model_reading(),     # HDB_TRUST_MODEL_READING: code's checks on the reading off
         "reading_context": sv.reading_context_on(),          # HDB_READING_CONTEXT: earlier turns given to the reading
+        "answer_style": sv.answer_style(),                   # HDB_ANSWER_STYLE: the app's answer style (template here)
         "llm_timeout_s": os.getenv("LLM_TIMEOUT_S") or (cfg.get("llm", {}).get("profiles", {}).get(profile.get("name") or "", {}) or {}).get("timeout_s"),
     }
     if sv.HOOK_LOAD_PROBLEMS:
@@ -499,6 +500,10 @@ def _main(args: Optional[argparse.Namespace] = None) -> None:
     args = args or build_parser().parse_args()
 
     require_open_model_profile()
+    from agents import supervisor as sv
+    if sv.answer_style() != "template":
+        raise SystemExit(f"HDB_ANSWER_STYLE={sv.answer_style()} is the app's answer style; the evaluation measures the "
+                         "template answers only (unset HDB_ANSWER_STYLE).")
     profile = active_profile()
     queries = dataset_path(args.dataset)
     global RUN_SETTINGS, DATASET_NAME, DATASET_SHA

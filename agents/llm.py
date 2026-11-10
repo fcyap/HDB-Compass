@@ -52,7 +52,8 @@ def all_profiles() -> Dict[str, Any]:
 
 
 def active_profile_name() -> str:
-    return (os.getenv("LLM_PROFILE") or load_config()["llm"]["active"]).strip()
+    from agents.session_settings import setting   # the chat's model choice in the app, else the environment
+    return (setting("LLM_PROFILE") or load_config()["llm"]["active"]).strip()
 
 
 def _configured_profile(name: str) -> Dict[str, Any]:
@@ -447,6 +448,7 @@ def get_llm(profile: Optional[str] = None, model: Optional[str] = None, **overri
     profile: build this named profile instead of the active one (e.g. an evaluation judge from another model family,
     so the judge does not grade its own model's answers). model: use this model of that profile instead of its
     configured one. Each profile:model pair keeps its own rate limiter and its own free-tier limits."""
+    from agents.session_settings import setting
     p = _configured_profile(profile) if profile else active_profile()
     if p["name"] == "none":
         return None
@@ -460,8 +462,8 @@ def get_llm(profile: Optional[str] = None, model: Optional[str] = None, **overri
         model=p["model"],
         max_tokens=int(overrides.get("max_tokens") or p.get("max_tokens", 2048)),
         # LLM_TIMEOUT_S / LLM_MAX_RETRIES: the live demo lowers these so a stalled server fails over in seconds
-        timeout=float(os.getenv("LLM_TIMEOUT_S", p.get("timeout_s", 120))),
-        max_retries=int(os.getenv("LLM_MAX_RETRIES", 2)),
+        timeout=float(setting("LLM_TIMEOUT_S", p.get("timeout_s", 120))),
+        max_retries=int(setting("LLM_MAX_RETRIES", 2)),
     )
     overrides = dict(overrides)
     cbs = list(overrides.pop("callbacks", None) or [])

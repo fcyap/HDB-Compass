@@ -22,6 +22,7 @@ class UserConstraints(TypedDict, total=False):
     comparable_resale: Optional[Dict[str, Any]]
     nearby_schools: Optional[Dict[str, Any]]
     requested_tools: List[str]             # optional tools the user asked for (supervisor.OPTIONAL_TOOLS), read by code
+    turn_focus: Optional[str]              # "search" or "other" under HDB_ANSWER_STYLE (supervisor.turn_focus), read by code
 
 
 class HDBCompassState(TypedDict, total=False):
@@ -58,6 +59,9 @@ class HDBCompassState(TypedDict, total=False):
                                                                    # synthesize's checks ("" when code wrote it all): what the
                                                                    # runtime auditor judges (docs/INTERFACES.md section 3)
     fast_path: bool                                                # app mode: answer recognised questions without model calls
+    answer_style: str                                              # "composed" when the model wrote the reply from checked facts
+                                                                   # (HDB_ANSWER_STYLE=conversational), else "template"
+    fallback_draft: str                                            # today's answer for that turn, shown if the composed one is refused
     # Follow-up flow for missing financial facts (Member 4). clarification: what this turn asks the user for;
     # prior_constraints / pending_clarification: carried in from the previous turn by initial_state(previous=...).
     suggestions: Optional[List[Dict[str, str]]]      # drill-down follow-up questions [{label, text}]; NOT a pending clarification
