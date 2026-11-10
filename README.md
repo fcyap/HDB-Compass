@@ -96,7 +96,7 @@ flowchart TD
     Reg --> MCP["MCP tools (mcp_server/, 25)<br/>DuckDB resale · SVY21 spatial index · OneMap ·<br/>financial calculators · policy RAG"]
     MCP --> Join["8 · Join (code): intersect price ∩ distance ∩ budget;<br/>relax limits if nothing fits"]
     Join --> Syn["9 · Synthesise: code writes the facts;<br/>the model (when set) writes only the opening sentences"]
-    Syn --> Aud["10 · Auditor: rules, then an LLM judge,<br/>checks the model's own sentences only;<br/>a failed opening is dropped or rewritten (≤ 2 tries)"]
+    Syn --> Aud["10 · Auditor: rules, then an LLM judge,<br/>checks the model's own sentences only, against this turn's<br/>tool results, earlier turns' tool facts and what the user said;<br/>a failed opening is dropped or rewritten (≤ 2 tries)"]
     Aud --> Out(["Answer + chips + map payload → streamed back<br/>to the chat and the MapLibre map; state saved per session"])
 ```
 
@@ -185,6 +185,8 @@ flowchart TD
 ```
 
 **Guardrail and auditor (Member 5, `agents/guardrails.py`; Variant C and the app only):** before the graph, `agents/sanitizer.py` replaces NRIC/FIN, phone, email, card, bank-account and password values with placeholders (`[NRIC]`, `[PHONE]`...) where the text enters the system (the WebSocket handler and `supervisor.initial_state`), so the graph, the remembered session, the chat log and LangSmith traces never see them; a message that carried one is refused with a plain-language reply. The input guardrail then refuses SQL and prompt injection, requests for guaranteed or speculative profit, and out-of-scope asks (rule-based, no model). After `synthesize`, the runtime auditor checks that every figure, distance, lease and block number the model wrote appears in the tool results and that nothing speculative or stigmatising is said, then asks an LLM judge when a model is configured; a rejection rewrites the model's sentences (at most 2 retries). In Variant C the answer is code's opening sentence, the model's own sentences, then the code-written facts; the `model_opening` state key holds only the model's sentences, and the auditor judges only that text. Contract: `docs/INTERFACES.md` section 3.
+
+**The auditor reads the conversation, not only the latest turn.** In a follow-up, the evidence also includes the previous turn's listed blocks (`prior_block_facts`, taken from that turn's tool results) and the constraints the user stated earlier (`prior_constraints`), and any figure the user wrote in any message may be repeated back. Before this, a true reference to an earlier turn ("Blk 174D, which you saw at $520,000", "with your $8,000 income") was rejected as ungrounded, and after two retries the model's sentences were stripped from the answer. Earlier *assistant* replies are deliberately not evidence, so a figure that slipped through once cannot vouch for itself on the next turn. `HDB_AUDITOR_HISTORY=off` restores the turn-by-turn check, for the ablation; `HDB_AUDITOR=off` switches the auditor off entirely, and `HDB_AUDITOR_LLM=off` keeps the rule check but skips the judge model. Tests: `tests/test_auditor_conversation_context.py`.
 
 **Inside each specialist:** a ReAct tool loop offered **only the tools this question needs** (`TASK_TOOLS` gating), with a deterministic plan as fallback when the model makes no valid call. Results become evidence only if the plan called for them (`requested_outputs`), and every call is logged (`ToolCallRecord`) for Tool F1.
 
@@ -293,6 +295,22 @@ The same tools and model are compared in three designs; the app runs Variant C.
 | B · Coarse (`arch_2_coarse.py`) | extract → route → data agent / policy agent → synthesize | a data agent (market, spatial, financial tools) and a policy agent; the writer reconciles results |
 | C · Specialist (`arch_3_specialist_5agent.py`) | diagram 2 | Supervisor routes to 4 specialists, code joins and checks results, auditor reviews |
 
+All three run on one model (the `vllm` profile, Qwen3-30B-A3B, temperature 0, seed 42) over the 90-question benchmark. Only Variant C has the input guardrail and the runtime auditor, by design: the study asks whether that structure pays for its cost. A fourth pass runs Variant C with the auditor switched off, so its effect is measured on its own.
+
+```bash
+# on the GPU cluster: starts the vLLM job, opens the tunnel, runs every pass, writes the report, cancels the job
+bash cluster/run_architecture_eval.sh arch90
+
+# or directly, with a model already reachable (resumable)
+python -m evaluation.run_architecture_eval --run --tag arch90
+python -m evaluation.run_architecture_eval --report --tag arch90   # offline, from the saved rows
+
+# no-model plumbing check (about a minute; see "Results and findings" for what it does and does not show)
+LLM_PROFILE=none python -m evaluation.run_category_e_prelim --dataset evaluation/benchmark_hdb_90.json --variants A,B,C --tag nomodel90
+```
+
+The report goes to `evaluation/results/architecture_eval_<tag>.md` and `.json`: task success per variant and category with Wilson 95% intervals, Tool Selection F1, parameter exact match, CSR, latency and tokens; Category F safety by variant; what the auditor did (rejections, rewrites, loops that ran out); and Variant C with and without the auditor, question by question (exact McNemar test). `evaluation/results/` is git-ignored, so a run's results must be attached to the report or committed under another path to be cited.
+
 ### 5. Known limitations and next steps
 
 | Limitation | Effect | Next step |
@@ -301,6 +319,80 @@ The same tools and model are compared in three designs; the app runs Variant C.
 | `agents/supervisor.py` holds extraction, routing, join, synthesis, policy gating and the auditor loop (~7,400 lines) | Diagram 2's nodes are not separate modules; several members edit one file | Split by node: `extract.py`, `routing.py`, `join.py`, `synthesize.py`, `audit.py`, keeping `supervisor.py` as the graph wiring |
 | Regex reads the question first | Unusual wording is misread; unsupported town questions fall back to a block search | The model-first intent reading planned in 1b, behind the free checks |
 | Policy relevance gate has a narrow margin (0.5 around -3.2) | A corpus or cross-encoder change can flip borderline questions | Re-run `tests/test_scope_routing.py` and the RAG ablation whenever `data/policy_documents/` changes |
+| The auditor checks grounding, not relevance | An answer that ignores a follow-up ("which of those is near a good school?") and repeats the last list still passes, because every figure in it is true | Give the LLM judge the last 2-3 turns and ask whether the reply answers the latest request; ship it behind a switch and measure it on scripted multi-turn conversations |
+| Each node reads earlier turns from its own state keys | Context handling is spread across extraction, routing, synthesis and the auditor | One conversation-context object built per turn (what the user said, earlier results, corrections) that every specialist and the auditor read |
+
+---
+
+## Results and findings (as of 10 Nov 2026)
+
+Every number below can be reproduced from this repository, or is quoted from the commit that recorded it. Live-model
+runs write to the git-ignored `evaluation/results/`, so their full tables are attached to the report, not committed.
+
+### Experiment 1, offline: what the structure alone does (no model)
+
+`LLM_PROFILE=none`, main `e71ad37`, all 90 questions. **Read this as a plumbing check, not as model performance:**
+with no model, every variant runs on its own code fallbacks, so the table shows what each design's deterministic
+structure (routing, the SQL ∩ spatial join, relaxation, the guardrail) contributes, with nothing for the model to get wrong.
+
+| Category (15 questions each) | A · Monolith | B · Coarse | C · Specialist |
+|---|---|---|---|
+| A · resale statistics | 15/15 | 15/15 | 15/15 |
+| B · spatial (schools, amenities, commute) | 1/15 | 0/15 | **15/15** |
+| C · HDB policy (key clauses in the answer) | 8/15 | 8/15 | 8/15 |
+| D · financial calculators | 3/15 | 15/15 | 15/15 |
+| E · multi-constraint search, relaxation | 0/15 | 0/15 | **15/15** |
+| F · adversarial and safety | 0/15 | 0/15 | **15/15** |
+| **Task success, all 90 (Wilson 95% CI)** | 42/90 · 47% (37-57%) | 53/90 · 59% (49-68%) | **83/90 · 92% (85-96%)** |
+| Tool Selection F1 | 0.51 | 0.72 | 0.99 |
+
+- **Where C's structure matters:** spatial search (B), multi-constraint search with relaxation (E) and safety (F) are
+  only solved by C. A and B have no intersection node, no relaxation and no input guardrail, by design.
+- **Where it doesn't:** all three variants share the same policy tool, so Category C (policy) scores are identical
+  across A, B and C and say nothing about the architectures. They measure the RAG pipeline (Experiment 2). Category C
+  is the weakest category (8/15, mean clause coverage 0.67): the answer often shows the right page but not the
+  paragraph holding every key clause. Its ground truth was rebuilt from the official pages on 10 Nov, so it is not
+  comparable with runs before that date.
+- **Reproduce:** the table needs `sentence-transformers` installed (without it the policy search degrades and Category C
+  drops to 5/15) and takes about 15 minutes on a laptop CPU with the cross-encoder.
+
+### Experiment 1, live (Qwen3-30B-A3B on the GPU cluster): what we found and fixed
+
+The live runs (`live31` on 31 Oct, `live34`/`live35` on 1 Nov, the 166-turn replay on 3 Nov, `arch90` on 3-4 Nov) were
+used as a debugging loop: each found failure became a fix and a test. Recorded in the commits named:
+
+| Finding (live run) | Fix | Commit |
+|---|---|---|
+| B's and C's policy agents answered from memory instead of searching in 15 of 15 Category C questions | An agent with one tool has its first turn bound to that tool | `8568e98` |
+| C's specialists called tools nobody asked for: C's Tool F1 was **0.81 vs 0.94 for A and B** | Each specialist is offered only the tools the stated constraints call for | `8568e98` |
+| Qwen3 put figures in all 90 of C's openings; the figure check dropped them, leaving 26 answers with no opening at all | Code writes a figure-free lead sentence from the same state as the facts | `52aec18` |
+| The model set limits nobody asked for (a 1 km school question also got MRT, hawker and park limits) and split "Kallang/Whampoa" into two invalid towns | Model limits kept only for amenities the user mentions; towns mapped through the alias table | `abc378a` |
+| The model guessed an MRT station or invented block numbers for the commute check, emptying the search | A model's station is kept only when the user named it | `7bcdcf5` |
+| 18% of constraint readings ran away to 4,096 tokens (about 30 s each) | Reading capped at 1,536 tokens: p90 latency **37 s → 16 s** | `5a2dccf` |
+| **Auditor over-rejection (`arch90`, C, auditor on): 46 of 90 answers rejected, 29 ran out of retries; all 22 rejected ranking claims were true** | The LLM judge gets the rankings (cheapest, most lease, nearest) computed in code | `f55fcb5` |
+
+The last row is the main lesson about the auditor: a self-correction loop is only as good as its judge, and an
+uncalibrated judge silently costs latency and answer quality. The same lesson led to the conversation-context fix
+(diagram 2 notes): judged turn by turn, true follow-up statements were rejected too.
+
+**Not yet measured:** the full A/B/C comparison and the auditor on/off ablation have not been re-run on the live model since
+these fixes. Run `bash cluster/run_architecture_eval.sh arch90` to produce the final table (see section 4).
+
+### Guardrail and auditor (no model needed)
+
+| Check | Result | Command |
+|---|---|---|
+| Adversarial block rate, Category F1-F4 | **15/15** blocked with the expected kind; 15/15 replies offer the objective alternative | `python -m evaluation.run_category_f` |
+| False blocks on Categories A-E | **0** | same |
+| Auditor rule check, injected figure faults (price, distance, lease, block) | gross **123/123**, subtle **86/86** caught | `python -m evaluation.auditor_fault_injection` |
+| Clean answers wrongly rejected | **0/49** | same |
+| Real figures attached to the wrong block | **0/105** caught: a value-only check cannot see these; the LLM judge (`--llm`) is the layer meant to | same |
+| Follow-up turns that refer to earlier results | true references now pass; invented figures and figures only in earlier assistant replies are still rejected | `pytest tests/test_auditor_conversation_context.py` |
+
+### Experiment 2: policy RAG
+
+See the Member 3 section below: RAG-2 (hybrid + cross-encoder) roughly doubles combined context recall over naive dense
+retrieval (0.82 vs 0.42) for 0.2 s more latency, and RAG-3's query rewriting adds about 5 s for no further gain.
 
 ---
 
@@ -387,7 +479,11 @@ HDB-Compass/
 │   ├── build_category_a|b|c|d|f.py  # Builders for A, B, C, D and F (E: ground_category_e.py)
 │   ├── build_benchmark_90.py        # Merges the six categories into benchmark_hdb_90.json
 │   ├── architecture_metrics.py      # Tool F1, parameter match, CSR, ground-truth scoring
+│   ├── run_architecture_eval.py     # Experiment 1 on all 90 questions + auditor ablation, and its report
 │   ├── run_category_f.py            # Guardrail block-rate and false-block runner
+│   ├── auditor_fault_injection.py   # Auditor catch rate on corrupted answers, and false rejections
+│   ├── check_truth_independent.py   # Re-derives ground truth without the app's own tools
+│   ├── policy_fact_sheet.yaml       # 47 policy facts with exact quotes (Category C ground truth)
 │   ├── langsmith_evals.py           # LangSmith datasets and experiments
 │   ├── run_category_e_prelim.py, analyze_category_e.py, compare_runs.py,
 │   │   plot_category_e.py, vary_category_e.py, category_e_extra/varied.json
@@ -400,7 +496,7 @@ HDB-Compass/
 ├── scripts/start_ollama.sh          # Start a local Ollama server
 ├── cluster/                         # Slurm / vLLM scripts for the GPU cluster (serve, tunnel, smoke test)
 │
-└── tests/                           # ~50 test modules (pytest): tools, agents, graph, guardrails,
+└── tests/                           # 70 test modules (pytest): tools, agents, graph, guardrails,
                                      # backend WebSocket, evaluation builders and scorers
 ```
 
@@ -525,11 +621,28 @@ python -m pytest tests/ -q
 ```
 
 Tests need no API credentials or running model, and include agent and in-memory
-MCP calls. Many use synthetic or mock fixtures, but they are not fully database-free:
-with `HDB_COMPASS_DB_PATH` pointing at a missing file, about 82 of ~1,460 tests fail
-(mostly the Category A analysis, price-check, place-question and code-opening tests, which
-read the built market database), and the rest pass. Build the database (step 3)
-before running the full suite.
+MCP calls. The suite has about 1,930 tests in 70 modules and takes about 6 minutes on a
+laptop CPU. Two things must be in place, or tests fail for reasons unrelated to the code:
+
+1. **Every package in `requirements.txt`, including `sentence-transformers`.** Without it the
+   policy search silently drops its dense retrieval and cross-encoder (a `[Warning] CrossEncoder
+   load failed` line), and 8 policy tests fail (`tests/test_policy_answers.py`,
+   `tests/test_policy_rag.py`). A GPU is not needed; on a CPU-only machine the CPU build of
+   PyTorch keeps the download small:
+   `pip install torch --index-url https://download.pytorch.org/whl/cpu` before `pip install -r requirements.txt`.
+2. **The built market database (step 3) at the team's snapshot.** The benchmark's ground truth
+   is pinned to database snapshot `be71fe16c4e7e7548eb7` (the `snapshot_id` in
+   `evaluation/category_a_queries.json` and `category_e_extra.json`). A database built from an
+   older download fails the 6 `tests/test_category_e_extra.py::test_ground_truth_is_reproducible_from_the_tools`
+   cases on the snapshot id alone. The id is a hash of the downloaded resale file, the spatial index and the
+   analysis month, so `--refresh` on a later day gives a new id, not this one: to match the answer keys exactly,
+   copy the team's shared `hdb_compass.duckdb` into `data/local/` (or build from the same CSV with
+   `python -m data.build_market_db --csv ...`), then check with `python -m evaluation.build_category_a --check`.
+   With no database at all, the tests that read it (Category A analysis, price checks, place questions,
+   code-written openings) fail.
+
+Measured on 10 Nov 2026 (main `e71ad37`, `LLM_PROFILE=none`, older local snapshot `d888eb158ece`):
+1,906 passed, 17 skipped, 6 failed, all 6 being the snapshot-id cases above.
 
 After building the database, with `LLM_PROFILE=none` in `.env`:
 
@@ -1173,7 +1286,7 @@ Scoring is in `evaluation/architecture_metrics.py` (`ground_truth_scores` dispat
 
 **Category D (financial, 15 questions).** D1 grants (6), D2 maximum affordability (5), D3 stamp duty and upfront cash (4). Each is one self-contained household description in the plain-statement wording the app's deterministic extractor reads. Ground truth comes from calling the three calculators through the Supervisor's own hand-off (a successful grant total feeds affordability, an affordability LTV feeds the upfront calculator), with a rule-snapshot version recorded in each item, and the build fails if the extractor does not read back every stated fact. The set includes questions whose correct answer is `needs_information` (a fact left out: cash savings, the market valuation) or `unsupported` (second-timer household, a lease that does not reach the youngest buyer's age 95, an HDB loan with other debts, a loan above the LTV limit): the scorer (`financial_scores`) then requires the answer to say so and give no figure, instead of a number. For `ok` questions it requires the calculators' amounts (grant total, maximum purchase price, or BSD and cash required) to appear in the answer. Tests: `tests/test_category_d.py`.
 
-**Guardrail and auditor** are in `agents/guardrails.py` and `agents/sanitizer.py` (behaviour described under diagram 2 above). Tests: `tests/test_guardrails.py`, `tests/test_auditor_model_opening.py`.
+**Guardrail and auditor** are in `agents/guardrails.py` and `agents/sanitizer.py` (behaviour described under diagram 2 above). Tests: `tests/test_guardrails.py`, `tests/test_auditor_model_opening.py`, `tests/test_auditor_loop.py`, `tests/test_auditor_conversation_context.py`. The auditor's catch rate is measured by `python -m evaluation.auditor_fault_injection` (rules only, no model; `--llm` adds the judge on figure-free false claims).
 
 **Category F and its block-rate runner.**
 
