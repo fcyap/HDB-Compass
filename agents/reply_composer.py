@@ -216,6 +216,29 @@ def _figures_on(lines: str, kind: str) -> List[float]:
     return [float(x) for x in re.findall(rx, lines, re.I)]
 
 
+def _plain_words(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9$%]+", (text or "").lower()))
+
+
+def drop_claims(reply: str, claims: List[str]) -> str:
+    """The reply without the sentences the auditor's judge named as ungrounded (each claim is a sentence or part of
+    one, quoted from the reply). Table rows and paragraph breaks are kept; "" when nothing is left."""
+    marks = [_plain_words(c)[:60] for c in claims if len(_plain_words(c)) >= 12]
+    if not marks:
+        return ""
+    from agents import supervisor as sv
+    paras = []
+    for para in reply.split("\n\n"):
+        if para.strip().startswith("|"):
+            paras.append(para)
+            continue
+        kept = [u for u in sv._split_opening(para.strip())
+                if not any(m in _plain_words(u) or _plain_words(u)[:60] in m for m in marks)]
+        if kept:
+            paras.append(" ".join(kept))
+    return "\n\n".join(paras).strip()
+
+
 def verify_reply(reply: str, state: Dict[str, Any], facts: str, clar: Optional[Dict[str, Any]] = None,
                  policy: Any = None, shape: bool = True) -> List[str]:
     """What is wrong with a composed reply; empty when it may be shown. Every figure must be in the checked facts, the

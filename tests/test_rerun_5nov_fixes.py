@@ -43,7 +43,7 @@ def model_reading(query, **fields):
 def test_a_single_buyers_age_is_the_core_member_age():
     t1, t2, t3 = conversation(SINGLE_38, "I have worked continuously for 12 months.",
                               "If I look at a $450k flat, is that within the ceiling?")
-    assert t1["clarification"]["needed"] == ["continuous_employment_12_months"]
+    assert not t1.get("clarification")   # 12 months' work is assumed and said so (live on Claude, 11 Nov)
     assert t2["user_constraints"]["financial_inputs"]["grants"]["youngest_core_member_age"] == 38
     assert "Max purchase price" in t2["draft_response"]
     assert t3["draft_response"].startswith("No, that flat is above your estimated ceiling.")

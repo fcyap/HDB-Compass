@@ -924,6 +924,8 @@ _PARTNER = r"(?:husband|wife|spouse|partner|fianc[eé]e?|hubby|girlfriend|boyfri
 # "my husband is 34", "husband's 52", "wife 31", "hubby: 40"; never "husband 50,000 in CPF"
 _PARTNER_AGE = re.compile(rf"\b(?:{_PARTNER}|he|she)(?:\s+is|'s|\s+aged|\s*[:,(-]?)\s*(?:aged\s+)?(\d{{2}})\b" + _AGE_END, re.I)
 # "me 33", "myself: 38", "I (34)"
+_YEARS_OLD = re.compile(r"\b(\d{2})[\s-]*(?:years?|yrs?)[\s-]*old\b", re.I)
+_NOT_PERSON_AGE = re.compile(r"\b(?:flats?|blocks?|blks?|units?|leases?|buildings?|homes?|houses?|apartments?|cars?)\b", re.I)
 _SELF_AGE = re.compile(r"\b(?:me|myself)\s*[:,-]?\s*(\d{2})\b" + _AGE_END + r"|\bI\s*\(\s*(\d{2})\s*\)", re.I)
 # "SC couple, 32 and 30", "Both SC, 45 and 47", "wife and I 27/28"
 _PAIR_AGES = re.compile(rf"\b(?:couple|SCs?|singaporeans?|citizens?|both|married|{_PARTNER}\s+and\s+i)\b[^.\d$]{{0,15}}?"
@@ -982,6 +984,13 @@ def buyer_ages(text: str, couple: Optional[bool] = None) -> List[int]:
             age = int(next(g for g in m.groups() if g))
             if age not in ages and not _NOT_BUYER.search(_phrase_before(t, m.start())):
                 ages.append(age)
+    if not ages:
+        # "I am a single Singapore citizen, 34 years old, ...": the speaker's own age (L-X-03, live on Claude 11 Nov:
+        # code asked for "the age of each buyer" after it was given); never a flat's, a lease's or a relative's
+        for m in _YEARS_OLD.finditer(t):
+            before = _phrase_before(t, m.start())
+            if not _NOT_BUYER.search(before) and not _NOT_PERSON_AGE.search(before):
+                ages.append(int(m.group(1)))
     ages = [a for a in ages if 18 <= a <= 99]
     if both and len(ages) == 1:
         ages = ages * 2                                    # "we are both 30"
@@ -3300,9 +3309,12 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     if grants.get("proximity_eligibility_confirmed") is False and grants.get("proximity") in ("near", "with"):
         # the calculator refuses every grant while a PHG is unconfirmed; the other grants do not depend on it
         grants["proximity"] = "none"
+        grants["near_parents_4km"] = False   # else the calculator sees "near" and "none" together and gives no grant (L-M-19)
         grants.pop("proximity_eligibility_confirmed", None)
         constraints["assumptions"] = list(constraints.get("assumptions") or []) + [
             "The Proximity Housing Grant is left out because your eligibility for it is not confirmed."]
+    _assume_grant_conditions(constraints, users)
+    _assume_loan_conditions(constraints)
     if grants.get("youngest_core_member_age") is not None and grants.get("citizenship_pair") == "SC_Single" \
             and single_buying_alone(users) and SINGLE_ALONE_NOTE not in (constraints.get("assumptions") or []):
         # the core member's age code took from the buyer's own (stated_financial_inputs), said so: the grants and
@@ -3380,6 +3392,14 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
                       query, re.I)
     constraints["asked_price"] = None   # this message's own question only
     constraints["budget_asked"] = bool(_BUDGET_ASK.search(asked_part(query)))
+    price_q = town_price_question(query)
+    if price_q and constraints.get("towns") and not constraints.get("addresses") and not constraints.get("block_keys") \
+            and not calculator_facts(constraints):
+        # "is 600k too much for 4 room in AMK": a price to judge against the town's recent median, not a budget to
+        # list blocks under (L-M-14, live on Claude 11 Nov: 86 blocks and "every limit you set")
+        constraints["asked_town_price"] = price_q
+        constraints["wants_market_snapshot"] = True
+        constraints["max_budget_sgd"] = None
     if m:
         num, unit = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
         price = _money(f"{num}{unit or ''}")
@@ -3467,6 +3487,11 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     constraints["unresolved_workplaces"] = unknown
     if unknown:
         constraints["work_destinations"] = [w for w in work if w not in unknown]
+    work = constraints.get("work_destinations") or []
+    if len(work) == 1 and constraints.get("max_commute_minutes") and _SAME_WORKPLACE.search(query):
+        # "We work at Changi Airport": both buyers commute there, so the two-workplace check times that place for both
+        # (L-F-33, live on Claude 11 Nov: it asked for "the second workplace")
+        constraints["work_destinations"] = [work[0], work[0]]
     found = len(constraints.get("work_destinations") or [])
     if unknown and constraints.get("max_commute_minutes") and found < 2 <= found + len(unknown) \
             and not constraints.get("clarifications") and not constraints.get("about_results"):
@@ -3757,8 +3782,112 @@ def _add_area_purchase(c: Dict[str, Any]) -> None:
     _assume_flat_basics(c)
 
 
-FOUR_ROOM_GRANT_NOTE = ("Grants were worked out for a 4-room flat (a 5-room or larger flat gets a smaller Family Grant); "
+FOUR_ROOM_GRANT_NOTE = ("Grants assume a 4-room flat (a 5-room or larger flat gets a smaller Family Grant); "
                         "name a flat type to change this.")
+
+# Grant facts a household rarely states and the grant calculator will not guess. Asking for them left most grant
+# questions without a figure (live on Claude, 11 Nov: about 20 turns, e.g. L-F45, L-X-05, L-FX1-01 asked "whether your
+# grant eligibility is confirmed", which only an HFE letter can confirm). Code assumes the usual case once the key
+# facts are known, says so, and a stated fact always wins.
+GRANT_CONDITIONS_NOTE = ("The grants assume you meet HDB's usual conditions for them (for example, no private property "
+                         "owned or sold in the last 30 months); only an HFE letter confirms your eligibility.")
+GRANT_EMPLOYMENT_NOTE = ("The Enhanced CPF Housing Grant assumes at least one of you has worked continuously for the "
+                         "past 12 months; without that it is $0.")
+GRANT_EMPLOYMENT_NOTE_SINGLE = ("The Enhanced CPF Housing Grant assumes you have worked continuously for the past "
+                                "12 months; without that it is $0.")
+NO_PHG_NOTE = ("The Proximity Housing Grant is not included; tell me if you are buying with or within 4 km of your "
+               "parents or child.")
+BUYERS_ONLY_NOTE = ("Only the buyers are taken to live in the flat; tell me if a child or another family member will "
+                    "live with you.")
+SINGLE_UNDER_35_NOTE = ("A single Singapore Citizen must be at least 35 to buy a resale flat under the Single "
+                        "Singapore Citizen scheme, so no grant or budget is worked out for you yet.")
+
+
+def _assume_grant_conditions(c: Dict[str, Any], users: str) -> None:
+    """Fill the grant facts people seldom state, once citizenship, first-timer status, income and the youngest
+    buyer's age are known: the usual conditions met, 12 months' work, no Proximity Housing Grant and, with no one else
+    named, only the buyers living in the flat. Each assumption is disclosed. A fact the user stated (including a "not
+    confirmed") is kept as it is."""
+    grants = (c.get("financial_inputs") or {}).get("grants")
+    if not grants or c.get("pr_couple") or grants.get("first_timer_status") is not True:
+        return
+    if not all(grants.get(k) is not None for k in ("citizenship_pair", "monthly_income", "youngest_buyer_age")):
+        return
+    notes: List[str] = []
+    single = grants.get("citizenship_pair") == "SC_Single"
+    if single and grants.get("flat_category", "resale") == "resale" and grants["youngest_buyer_age"] < 35:
+        c["single_under_35"] = True
+        if SINGLE_UNDER_35_NOTE not in (c.get("assumptions") or []):
+            c["assumptions"] = list(c.get("assumptions") or []) + [SINGLE_UNDER_35_NOTE]
+        return   # no grant applies, so nothing else is assumed for one
+    if grants.get("youngest_core_member_age") is None:
+        s = statements(users)
+        if not _KID_WORDS.search(re.sub(_NO_KIDS, " ", s, flags=re.I)) and not _OTHER_OCCUPANT.search(s):
+            grants["youngest_core_member_age"] = grants["youngest_buyer_age"]
+            if not single:
+                notes.append(BUYERS_ONLY_NOTE)
+    if grants.get("eligibility_confirmed") is None:
+        grants["eligibility_confirmed"] = True
+        notes.append(GRANT_CONDITIONS_NOTE)
+    if grants.get("continuous_employment_12_months") is None:
+        grants["continuous_employment_12_months"] = True
+        notes.append(GRANT_EMPLOYMENT_NOTE_SINGLE if single else GRANT_EMPLOYMENT_NOTE)
+    if grants.get("proximity") is None and not grants.get("near_parents_4km"):
+        grants["proximity"] = "none"
+        notes.append(NO_PHG_NOTE)
+    have = c.get("assumptions") or []
+    c["assumptions"] = list(have) + [n for n in notes if n not in have]
+
+
+HDB_LOAN_NOTE = ("The budget assumes you qualify for an HDB loan (for example, no outstanding housing loan); only the "
+                 "HFE letter confirms the loan amount.")
+
+
+def _assume_loan_conditions(c: Dict[str, Any]) -> None:
+    """An HDB-loan budget with the household's money facts known: HDB loan eligibility is assumed and said so, instead
+    of being asked ("whether your HDB loan eligibility is confirmed", which only the HFE letter answers: L-FT-SC t2,
+    L-F08 t3, live on Claude 11 Nov). A bank loan keeps asking for its in-principle approval; a stated "not confirmed"
+    is kept."""
+    aff = (c.get("financial_inputs") or {}).get("affordability")
+    if not aff or aff.get("loan_type", "hdb") != "hdb" or aff.get("loan_eligibility_confirmed") is not None:
+        return
+    if aff.get("monthly_income") is None or not any(aff.get(k) is not None for k in ("cpf_oa_balance", "cash_savings")):
+        return
+    aff["loan_eligibility_confirmed"] = True
+    if HDB_LOAN_NOTE not in (c.get("assumptions") or []):
+        c["assumptions"] = list(c.get("assumptions") or []) + [HDB_LOAN_NOTE]
+
+
+def _ASSUMABLE_OK(state: Dict[str, Any]) -> bool:
+    """Whether the facts _assume_grant_conditions fills may be left out of the "more information needed" lines: not
+    for a bank loan (its approval is asked for) or when the user said a grant fact is not confirmed."""
+    fin_in = (state.get("user_constraints") or {}).get("financial_inputs") or {}
+    bank = (fin_in.get("affordability") or {}).get("loan_type") == "bank"
+    return not bank and (fin_in.get("grants") or {}).get("eligibility_confirmed") is not False
+
+
+def _hidden_budget_gap(state: Dict[str, Any]) -> int:
+    """1 when the budget calculator still needs facts in a grants-only conversation: that gap is neither listed nor
+    asked about (financial_lines, clarification_needed), so the opening does not mention it either."""
+    fin = state.get("financial_breakdown") or {}
+    aff = fin.get("calculate_maximum_affordability") or {}
+    return int(aff.get("status") == "needs_information" and "calculate_cpf_housing_grants" in fin
+               and not budget_in_conversation(state))
+
+
+def budget_in_conversation(state: Dict[str, Any]) -> bool:
+    """Whether any message in the conversation asked for a budget, a price ceiling or affordability. A grants-only
+    question ("How much grant can we get?") is not asked for CPF, cash and debts it does not need (L-F56 t1, L-F45 t2,
+    live on Claude 11 Nov)."""
+    c = state.get("user_constraints") or {}
+    if any(c.get(k) for k in ("budget_asked", "asked_price", "wants_area_affordability", "wants_flat_affordability",
+                              "flat_purchase")):
+        return True
+    users = [m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user"]
+    if not users:
+        return True   # no conversation to read: every fact is asked for, as before
+    # any mention, not only the question sentence: "Map the matches and tell us our grants and maximum budget." (E1-07)
+    return any(_BUDGET_ASK.search(u) for u in users)
 
 
 # The affordability calculator models buyers below 55 only (CPF withdrawal limits and the loan tenure to age 65 change
@@ -3847,6 +3976,59 @@ def mentioned_amenities(text: str) -> set:
     """The amenity keys a message mentions in any words, plus any the regex reading gives a distance to."""
     found = {k for k, pat in _AMENITY_MENTION.items() if re.search(pat, text, re.I)}
     return found | set((rule_based_extract(text).amenity_radii_meters or {}).keys())
+
+
+_NAMED_STATION_WORDS = re.compile(r"\b(?:near|close to|next to|beside|around|by|at|from|to)\s+(?:the\s+)?"
+                                  r"((?:[A-Z][\w'’-]*\s+){1,3})(?:MRT|LRT)\b")
+_NOT_A_STATION_NAME = {"AN", "A", "THE", "ANY", "NEAREST", "NEARBY", "AN", "SOME", "ONE", "MY", "OUR", "THIS", "THAT"}
+
+
+_ZERO_BUDGET = re.compile(r"\b(?:under|below|budget(?: of| is)?|max(?:imum)?|up to|at most)\s*S?\$\s?0(?![\d.,]*\d)\b", re.I)
+_SAME_WORKPLACE = re.compile(r"\b(?:we|both of us|my (?:wife|husband|spouse|partner) and i)\s+(?:both\s+)?"
+                             r"(?:work|are working)\s+(?:at|in|near)\b|\bwe both work\b|\bboth of us work\b", re.I)
+_TOWN_PRICE_Q = re.compile(r"\b(?:is|are|would|will)\b[^?.]{0,30}?(?:S?\$\s?)?(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand)?\b[^?.]{0,25}?"
+                           r"\b(?:too (?:much|high|expensive|pricey|steep)|(?:over|under)\s*priced|expensive|cheap|fair|"
+                           r"reasonable|a good (?:price|deal)|worth it)\b", re.I)
+
+
+def town_price_question(query: str) -> Optional[float]:
+    """The price in "is 600k too much for a 4-room in AMK?" (600000.0); None when the message asks no such thing."""
+    m = _TOWN_PRICE_Q.search(query or "")
+    if not m:
+        return None
+    value = float(m.group(1).replace(",", ""))
+    unit = (m.group(2) or "").lower()
+    value *= 1000 if unit in ("k", "thousand") else 1_000_000 if unit == "m" else 1
+    return value if 50_000 <= value <= 3_000_000 else None
+
+
+def town_price_opening(state: Dict[str, Any]) -> Optional[str]:
+    """The answer to "is 600k too much for 4 room in AMK?" in one sentence, from the town's row of the market
+    snapshot: "No: $600,000 is about 3% below ..." (L-M-14)."""
+    asked = (state.get("user_constraints") or {}).get("asked_town_price")
+    snap = (state.get("sql_market_results") or {}).get("get_market_snapshot") or {}
+    rows = [r for r in snap.get("rows") or [] if r.get("town") != "ALL TOWNS" and r.get("median_price")]
+    if not asked or len(rows) != 1:
+        return None
+    r = rows[0]
+    diff = (asked - r["median_price"]) / r["median_price"] * 100
+    # no figures in an opening (keep_supported_sentences): the facts line below gives the price, median and gap
+    where = "in line with" if abs(diff) <= 3 else "below" if diff < 0 else "above"
+    lead = "No" if diff <= 3 else "Yes"
+    return (f"{lead}: that price is {where} the latest quarter's median for {r['flat_type'].lower().replace(' room', '-room')} flats in "
+            f"{r['town'].title()}, as shown below.")
+
+
+def unknown_station_named(query: str) -> Optional[str]:
+    """A capitalised station name the user gave that is not in the station index ("near Fake Street MRT" ->
+    "Fake Street"); None for a known station or no name ("near an MRT", "near Novena MRT")."""
+    if ri.named_mrt_station(query or ""):
+        return None
+    for m in _NAMED_STATION_WORDS.finditer(query or ""):
+        words = [w for w in m.group(1).split() if w.upper() not in _NOT_A_STATION_NAME]
+        if words and not any(w.isdigit() for w in words):
+            return " ".join(words)
+    return None
 
 
 def _station_key(name: Any) -> str:
@@ -3988,6 +4170,22 @@ def _verify_extraction(c: Dict[str, Any], query: str, errors: List[str], from_mo
         c["school_name"] = None
         (c.get("amenity_radii_meters") or {}).pop("school", None)
         c["clarifications"] = list(dict.fromkeys((c.get("clarifications") or []) + [ri.SCHOOL_CLARIFICATION]))
+    if _ZERO_BUDGET.search(query):
+        # "4 room in Tampines under $0": no flat costs nothing; the search said "no blocks with recent sales", as if
+        # the town had none (L-M-28, live on Claude 11 Nov)
+        c["max_budget_sgd"] = None
+        c["clarifications"] = list(dict.fromkeys((c.get("clarifications") or []) + [
+            "A budget of $0 can't match any flat. What budget should I search with?"]))
+    unknown = unknown_station_named(query)
+    if unknown and not c.get("mrt_station"):
+        # "near Fake Street MRT": no such station, so the search measured every block to whichever station is nearest
+        # and the opening claimed every limit was met over 2,177 blocks (L-F-24, live on Claude 11 Nov). Said, asked
+        # about, and the opening says only some limits could be checked (partly_checked)
+        c["clarifications"] = list(dict.fromkeys((c.get("clarifications") or []) + [
+            f"I couldn't find an MRT or LRT station called {unknown} in my data. Which station did you mean?"]))
+        c["assumptions"] = list(dict.fromkeys((c.get("assumptions") or []) + [
+            f"I can't measure distances to {unknown} MRT: no station by that name is in my data, so any MRT distance "
+            "below is to the nearest station."]))
     # Distance phrases ("200m of a hawker centre") are constraints, not places; nor is a kind of school ("Show flats near
     # a good primary school": the place lookup then said no place matches "a good primary school", SEM-30)
     c["addresses"] = [a for a in c.get("addresses") or [] if a.strip() and not re.match(r"\s*\d+(?:\.\d+)?\s*k?m\b", a, re.I)
@@ -4860,8 +5058,20 @@ def run_financial_sequence(runners, constraints, query):
     upfront_name = "calculate_bsd_and_upfront_outlay"
     # A stamp-duty / upfront-cost question that states no grant or budget fact runs only the upfront calculator: the
     # grant and affordability calculators would only answer with a long list of facts nobody asked about.
+    asked = asked_part(query)
     upfront_only = (upfront_name in runners and asked_for(upfront_name, constraints, query)
-                    and upfront_args.get("purchase_price") and not grant_args and not aff_args)
+                    and upfront_args.get("purchase_price")
+                    and ((not grant_args and not aff_args)
+                         # "How much cash do we need upfront?" with the CPF, cash and loan given: those facts are the
+                         # upfront costs', not a budget question (L-M-37/38, live on Claude 11 Nov: it asked for income
+                         # and ages)
+                         or (upfront_args.get("loan_amount") and not _BUDGET_ASK.search(asked)
+                             and not re.search(r"\bgrants?\b", asked, re.I)
+                             and set(aff_args) <= {"cpf_oa_balance", "cash_savings", "loan_type", "total_grants"}
+                             and set(grant_args) <= {"flat_type", "flat_category", "remaining_lease_years"})))
+    if upfront_args.get("loan_type", "hdb") == "hdb" and upfront_args.get("loan_amount") is not None:
+        # an HDB loan's limit is 75% (the calculator accepts no other HDB figure), so it is never asked for as "ltv ratio"
+        upfront_args.setdefault("ltv_ratio", 0.75)
     # no grants at all ("Assume zero housing grants.", two PRs): the grant calculator would only ask its facts again
     # (HOUSE-04)
     grants_known = aff_args.get("total_grants") == 0 or constraints.get("pr_couple")
@@ -5757,7 +5967,13 @@ def template_response(state: HDBCompassState) -> str:
             for b in blocks[:LISTED_BLOCKS]:
                 price = f" — median ${b['median_resale_price']:,.0f}" if b.get("median_resale_price") else ""
                 lease = f", {b['median_remaining_lease_years']:.0f} yrs lease" if b.get("median_remaining_lease_years") else ""
-                dist = ", ".join(_distance_label(k, v) for k, v in (b.get("distances") or {}).items())
+                shown = dict(b.get("distances") or {})
+                work = (state.get("user_constraints") or {}).get("work_destinations") or []
+                if len(work) == 2 and work[0] == work[1] and "commute_a_mins" in shown:
+                    shown.pop("commute_b_mins", None)   # both buyers work at the same place: one commute time
+                dist = ", ".join(_distance_label(k, v) for k, v in shown.items())
+                if len(work) == 2 and work[0] == work[1]:
+                    dist = dist.replace("commute to workplace 1:", f"commute to {work[0]}:")
                 kind = f" {b['flat_type']}" if b.get("flat_type") and len({x.get("flat_type") for x in blocks}) > 1 else ""
                 town = f" ({b['town']})" if b.get("town") else ""
                 lines.append(f"- Blk {b['block']} {b['street']}{town}{kind}{price}{lease}{(' — ' + dist) if dist else ''}")
@@ -5861,17 +6077,35 @@ def template_response(state: HDBCompassState) -> str:
                                  "this estimate does not model.")
                     continue
                 if value.get("status") in ("needs_information", "unsupported") and name != "calculate_bsd_and_upfront_outlay" \
+                        and uc.get("single_under_35"):
+                    # no fact would give a single under 35 a resale grant or budget: none is listed (L-X-03, 11 Nov)
+                    lines.append(f"- {label}: not worked out — a single Singapore Citizen must be at least 35 to buy a "
+                                 "resale flat under the Single Singapore Citizen scheme.")
+                    continue
+                if value.get("status") in ("needs_information", "unsupported") and name != "calculate_bsd_and_upfront_outlay" \
                         and uc.get("senior_buyer"):
                     # only the loan model stops at 55; the grants were not asked about, so their facts are not either
                     lines.append(f"- {label}: not worked out — " + (
                         f"this estimate covers buyers below {SENIOR_BUYER_AGE} only." if name == "calculate_maximum_affordability"
                         else "ask me for a grant estimate if you'd like one."))
                     continue
-                if value.get("status") == "needs_information" and name == "calculate_cpf_housing_grants" and grants_unconfirmed:
+                if value.get("status") in ("needs_information", "unsupported") and name == "calculate_cpf_housing_grants" \
+                        and grants_unconfirmed:
                     lines.append(f"- {label}: not worked out — your grant eligibility is not confirmed yet (HDB confirms "
                                  "it in the HFE letter).")
                     continue
-                detail = ", ".join(field.replace("_", " ") for field in value.get("missing_inputs", [])) or "; ".join(value.get("notes", []))
+                if name == "calculate_maximum_affordability" and value.get("status") == "needs_information" \
+                        and "calculate_cpf_housing_grants" in fin and not budget_in_conversation(state):
+                    continue   # a grants-only conversation: no budget was asked for, so its missing facts are not listed
+                # plain words, not field names ("cpf oa balance", "total grants": live on Claude, 11 Nov); the grant
+                # total is worked out by the grant calculator, so it is never listed as a fact to give
+                # facts code will assume once the key ones are in (_assume_grant_conditions) are not listed as needed
+                assumable = {"eligibility_confirmed", "continuous_employment_12_months", "proximity",
+                             "loan_eligibility_confirmed"} if _ASSUMABLE_OK(state) else set()
+                missing_words = [FACT_WORDS.get(f, f.replace("_", " ")) for f in value.get("missing_inputs", [])
+                                 if not (f == "total_grants" and "calculate_cpf_housing_grants" in fin)
+                                 and f not in assumable]
+                detail = ", ".join(dict.fromkeys(missing_words)) or "; ".join(value.get("notes", []))
                 status = "more information needed" if value.get("status") == "needs_information" else "scenario unavailable"
                 lines.append(f"- {label}: {status} — {detail}")
                 if name == "calculate_bsd_and_upfront_outlay" and value.get("buyer_stamp_duty") is not None:
@@ -6167,8 +6401,11 @@ def school_unchecked(state: HDBCompassState) -> bool:
         return False
     searched = (state.get("candidate_blocks_intersection") or _sql_blocks(state) is not None
                 or state.get("spatial_block_candidates") is not None)
+    # "near a (good) primary school" asks which school (research_intents.SCHOOL_CLARIFICATION) while the search runs:
+    # the school limit is not applied yet (L-F-61, L-F36, live on Claude 11 Nov: "every limit you set" was claimed)
+    asking = ri.SCHOOL_CLARIFICATION in ((state.get("user_constraints") or {}).get("clarifications") or [])
     # the guard with "no school named" says whether the words ask for a distance to a school (school_queries)
-    return bool(searched) and guard_school_request(last_user_query(state), lambda q: False) == SCHOOL_NAME_QUESTION
+    return bool(searched) and (asking or guard_school_request(last_user_query(state), lambda q: False) == SCHOOL_NAME_QUESTION)
 
 
 def commute_unchecked(state: HDBCompassState) -> bool:
@@ -6289,6 +6526,8 @@ def clarification_needed(state: HDBCompassState) -> Optional[Dict[str, Any]]:
         return None   # the lease ends before the youngest buyer turns 95: no fact asked for could give an estimate (SEM-21)
     if c.get("senior_buyer"):
         return None   # a buyer aged 55 or over: the calculators give no loan or ceiling whatever else is told (HOUSE-09)
+    if c.get("single_under_35"):
+        return None   # a single below 35 cannot buy resale on their own: no fact asked for would give a grant (L-X-03)
     grants_unconfirmed = ((c.get("financial_inputs") or {}).get("grants") or {}).get("eligibility_confirmed") is False
     if c.get("pr_couple") or grants_unconfirmed:
         # no grant can be worked out (two PRs; grant eligibility not confirmed: "HDB has not confirmed our grant
@@ -6296,14 +6535,28 @@ def clarification_needed(state: HDBCompassState) -> Optional[Dict[str, Any]]:
         grant_only = set(((fin.get("calculate_cpf_housing_grants") or {}).get("missing_inputs") or [])) - \
             set(((fin.get("calculate_maximum_affordability") or {}).get("missing_inputs") or []))
         needed = [n for n in needed if n not in grant_only and (n != "citizenship_pair" or not c.get("pr_couple"))]
+    if "calculate_cpf_housing_grants" in fin and not budget_in_conversation(state):
+        # a grants-only conversation: the budget's own facts (CPF, cash, debts) were not asked about
+        aff_only = set(((fin.get("calculate_maximum_affordability") or {}).get("missing_inputs") or [])) - \
+            set(((fin.get("calculate_cpf_housing_grants") or {}).get("missing_inputs") or []))
+        needed = [n for n in needed if n not in aff_only]
     needed = list(dict.fromkeys(needed))
     if not c.get("flat_purchase"):
         needed = [n for n in needed if n != "remaining_lease_years"]   # assumed from the buyers' ages (_assume_flat_basics)
     if not needed:
         return None
     bank = ((c.get("financial_inputs") or {}).get("affordability") or {}).get("loan_type") == "bank"
+    # facts code assumes once the key facts are in (_assume_grant_conditions, _assume_loan_conditions) are not asked
+    # for; "needed" keeps them, so a user who states one is still read
+    users = " ".join(m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user")
+    assumed = {"eligibility_confirmed", "continuous_employment_12_months", "proximity"} | (
+        set() if bank else {"loan_eligibility_confirmed"})
+    s = statements(users)
+    if not _KID_WORDS.search(re.sub(_NO_KIDS, " ", s, flags=re.I)) and not _OTHER_OCCUPANT.search(s):
+        assumed.add("youngest_core_member_age")
+    to_ask = [n for n in needed if n not in assumed] or needed
     words = {**FACT_WORDS, **(BANK_FACT_WORDS if bank else {})}
-    phrases = list(dict.fromkeys(words.get(n, n.replace("_", " ")) for n in needed))
+    phrases = list(dict.fromkeys(words.get(n, n.replace("_", " ")) for n in to_ask))
     listed = phrases[0] if len(phrases) == 1 else ", ".join(phrases[:-1]) + " and " + phrases[-1]
     if answer_style() != "template":
         # a few facts at a time, the most important first (HDB_ANSWER_STYLE): the calculators' full list ran to 13
@@ -6311,16 +6564,18 @@ def clarification_needed(state: HDBCompassState) -> Optional[Dict[str, Any]]:
         # (parse_clarification_answer); the page's form shows "asked" (backend chip_clarification)
         budget = bool(c.get("budget_asked") or c.get("asked_price") or c.get("wants_area_affordability")
                       or c.get("wants_flat_affordability"))
-        key = [n for n in KEY_GRANT_FACTS if n in needed]
-        grant_missing = [n for n in ((fin.get("calculate_cpf_housing_grants") or {}).get("missing_inputs") or []) if n in needed]
-        asked = list(dict.fromkeys(key + [n for n in grant_missing if n not in key]))[:3] or needed[:3]
+        key = [n for n in KEY_GRANT_FACTS if n in to_ask]
+        grant_missing = [n for n in ((fin.get("calculate_cpf_housing_grants") or {}).get("missing_inputs") or []) if n in to_ask]
+        asked = list(dict.fromkeys(key + [n for n in grant_missing if n not in key]))[:3] or to_ask[:3]
         if budget:
-            asked = list(dict.fromkeys(asked + [n for n in ("cpf_oa_balance", "cash_savings") if n in needed]))[:5]
+            asked = list(dict.fromkeys(asked + [n for n in ("cpf_oa_balance", "cash_savings") if n in to_ask]))[:5]
         short = list(dict.fromkeys(words.get(n, n.replace("_", " ")) for n in asked))
         aim = "your grant and budget" if budget else "your grant"
         return {"kind": "financial", "needed": needed, "asked": asked, "form": len(asked) >= 3,
                 "question": f"To work out {aim}, could you tell me {_join_words(short)}?"}
-    return {"kind": "financial", "needed": needed, "question": f"To finish your grant and budget estimate, please tell me {listed}."}
+    aim = "grant and budget estimate" if budget_in_conversation(state) or "calculate_cpf_housing_grants" not in fin \
+        else "grant estimate"
+    return {"kind": "financial", "needed": needed, "question": f"To finish your {aim}, please tell me {listed}."}
 
 
 def user_request(state: HDBCompassState) -> str:
@@ -6659,7 +6914,7 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
         if clar:
             follows += (f"; {'the rest of y' if done else 'y'}our grant and budget estimate needs a few more facts, "
                         "asked for at the end")
-        elif len(fin_ok) < len(fin):
+        elif len(fin_ok) < len(fin) - _hidden_budget_gap(state):
             follows += f"; {'part of y' if done else 'y'}our estimate could not be worked out, as said below"
         if c and not stated_limits(checked):   # (a state with no constraints at all is test data, not a real run)
             # nothing was asked of the blocks, so "they meet every limit you set" would promise a check that never happened
@@ -6694,6 +6949,9 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
         ranked = snapshot_rank_sentence(state)
         if ranked:
             sentences.append(ranked)
+        verdict = town_price_opening(state)
+        if verdict:
+            sentences.append(verdict)
         forced = forced_opening(state)[0]
         if forced:
             sentences.append(forced)
@@ -7347,7 +7605,18 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     # line by line (agents/reply_composer.py), with the facts kept under it as Details. Not for a refusal or disclosure
     # code must lead with, a turn that only asks, a fallback-only answer, or a composed reply the auditor refused (that
     # turn shows today's answer, so a rejection never deletes the reply).
-    if facts and answer_style() == "conversational" and not only_asking and not c.get("about_results") \
+    if refused_composed and facts and answer_style() == "conversational":
+        # the auditor's judge refused some sentences of the composed reply: those are removed and the rest kept, when it
+        # still passes every check. Dropping the whole reply left only the passage list (live on Claude, 11 Nov: "how
+        # long must I stay in my BTO" lost its correct "5 years" over three added sentences the judge could not ground)
+        from agents import reply_composer as rc
+        before = str(state.get("draft_response") or "").split(rc.DETAILS_SEP)[0]
+        kept = rc.drop_claims(before, verdict.get("ungrounded_claims") or []) if rc.DETAILS_SEP in str(
+            state.get("draft_response") or "") else ""
+        if kept and kept != before.strip() and not rc.verify_reply(kept, state, facts, clar, policy):
+            text, model_text, style = kept + rc.DETAILS_SEP + facts, kept, "composed"
+            errors.append("synthesize: sentences the auditor could not ground were removed from the composed reply")
+    if not text and facts and answer_style() == "conversational" and not only_asking and not c.get("about_results") \
             and not fallback_only and not refused_composed and not forced_opening(state)[0]:
         composer = get_llm()
         if composer is not None:

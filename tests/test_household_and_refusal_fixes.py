@@ -61,8 +61,11 @@ def test_a_yes_or_an_unsure_answer_is_not_read_as_no(text):
 
 @pytest.fixture(scope="module")
 def asked():
+    # 12 months' work is assumed and said so, not asked (live on Claude, 11 Nov: grant questions never reached a figure)
     first = app(HOUSEHOLD)
-    assert first["clarification"]["needed"] == ["continuous_employment_12_months"]
+    assert not first.get("clarification")
+    assert "EHG $5,000 + Family $80,000" in first["draft_response"]
+    assert sv.GRANT_EMPLOYMENT_NOTE in first["user_constraints"]["assumptions"]
     return first
 
 
