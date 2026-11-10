@@ -11,7 +11,7 @@ Each document starts with the header data/ingest_hdb_policy_rag.extract_frontmat
 
     .venv/bin/python -m data.policy_sources.extract_sources            # write data/policy_sources/extracted/*.md
     .venv/bin/python -m data.policy_sources.extract_sources --install  # also install them as the RAG corpus
-                                                                        # (the old documents move to *_legacy/)
+                                                                        # 
 """
 from __future__ import annotations
 
@@ -30,7 +30,6 @@ HERE = Path(__file__).resolve().parent
 EXTRACTED_DIR = HERE / "extracted"
 DATA_DIR = HERE.parent
 CORPUS_DIR = DATA_DIR / "policy_documents"
-LEGACY_DIR = DATA_DIR / "policy_documents_legacy"
 MIN_WORDS = 80   # less than this after extraction means a failed capture (a bot page, an empty JS shell)
 
 # Page furniture trafilatura sometimes keeps: lines that are UI, not policy text.
@@ -349,14 +348,11 @@ def extract_all(sources: List[Dict[str, Any]]) -> Tuple[List[Tuple[str, str]], L
 
 
 def install(written: List[Tuple[str, str]]) -> None:
-    """Make the extracted documents the RAG corpus. The legacy documents are moved, never deleted."""
+    """Make the extracted documents the RAG corpus, replacing the previous install."""
     if not written:
         raise SystemExit("Nothing extracted; not installing.")
-    if not LEGACY_DIR.exists():
-        shutil.move(str(CORPUS_DIR), str(LEGACY_DIR))
-        print(f"  moved the old documents to {LEGACY_DIR.relative_to(DATA_DIR.parent)}")
-    elif CORPUS_DIR.exists():
-        shutil.rmtree(CORPUS_DIR)   # a previous install of extracted documents (the legacy copy is already safe)
+    if CORPUS_DIR.exists():
+        shutil.rmtree(CORPUS_DIR)
     CORPUS_DIR.mkdir(parents=True)
     for name, _ in written:
         shutil.copy2(EXTRACTED_DIR / name, CORPUS_DIR / name)

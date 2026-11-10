@@ -307,6 +307,20 @@ facts:
     key_clause: ["dispose", "6 months"]
 
   # --- Saved later (press releases and IRAS) -------------------------------------------------------------------------
+  - id: wait_out_removed_2026
+    source: hdb_press_wait_out_removal_2026
+    policy_category: eligibility
+    status: verified
+    fact: From 27 July 2026, private property owners and ex-owners buying a non-subsidised HDB resale flat without an HDB housing loan no longer serve the 15-month wait-out.
+    quote: "will no longer be subject to a 15-month wait-out period"
+    key_clause: ["no longer", "15-month wait-out"]
+  - id: wait_out_senior_exemption
+    source: hdb_press_wait_out_removal_2026
+    policy_category: eligibility
+    status: verified
+    fact: Before the removal, Singapore citizens aged 55 and above were exempt from the 15-month wait-out when moving from private property to a 4-room or smaller non-subsidised resale flat.
+    quote: "Singapore citizens aged 55 and above were exempted from the 15-month wait-out period"
+    key_clause: ["55 and above", "4-room or smaller"]
   - id: eip_buyback_criteria
     source: hdb_press_eip_buyback_2022
     policy_category: eip

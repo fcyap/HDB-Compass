@@ -479,11 +479,12 @@ OFFICIAL_TRUTH = {
                   target_sections=["Key Collection", "Couples and Families"],
                   note="HDB's pages state the marriage must be solemnised within 3 months of key collection (new flat) "
                        "or of completion (resale); an overseas marriage certificate is submitted within the same 3 months."),
-    "C3-01": dict(fact_ids=["private_property_dispose_6_months", "private_property_30_months"],
-                  key_clauses=[["6 months"], ["dispose"]],
-                  target_sections=["Couples and Families", "Seniors"],
-                  note="HDB's current pages state no 15-month wait-out: a private-property owner buying a non-subsidised "
-                       "resale flat must dispose of it within 6 months of completing the purchase."),
+    "C3-01": dict(fact_ids=["wait_out_removed_2026", "wait_out_senior_exemption"],
+                  key_clauses=[["no longer"], ["15-month wait-out"], ["55 and above"]],
+                  target_sections=["Removal of the 15-month Wait-out Period for Private Residential Property Owners "
+                                   "Purchasing Non-Subsidised HDB Resale Flats"],
+                  note="HDB removed the 15-month wait-out on 27 July 2026 for non-subsidised resale purchases without an "
+                       "HDB loan; before that, citizens aged 55+ moving to a 4-room or smaller resale flat were exempt."),
     "C3-02": dict(fact_ids=["private_property_30_months"],
                   key_clauses=[["30 months"], ["6 months"]],
                   target_sections=["Couples and Families"]),

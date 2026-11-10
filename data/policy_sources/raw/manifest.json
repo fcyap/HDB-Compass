@@ -381,6 +381,16 @@
     "url": "https://www.hdb.gov.sg/hdb-pulse/news/2026/hdb-launches-7964-flats-across-seven-projects-in-nov-2026-bto-sales-exercise",
     "url_verified": true
   },
+  "hdb_press_wait_out_removal_2026": {
+    "captured_at": "2026-11-10T12:37:12.658190+00:00",
+    "file": "Removal of the 15-month Wait-out Period for Private Residential Property Owners Purchasing Non-Subsidised HDB Resale Flats.html",
+    "method": "manual",
+    "recorded_at": "2026-11-10T12:40:25.566995+00:00",
+    "sha256": "f411e281879b15fbad82d8e252f147fcabfecb9f5a8897f67375e54374bc3973",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/hdb-pulse/news/2026/removal-of-the-15-month-wait-out-period-for-private-residential-property-owners",
+    "url_verified": true
+  },
   "hdb_priority_schemes": {
     "captured_at": "2026-11-09T10:43:10.404790+00:00",
     "file": "Priority Schemes.html",

@@ -12,7 +12,7 @@ Nothing is paraphrased or summarised by a person or a model.
 | 2c. Record the hand-saved pages | `... fetch_sources --record-manual` | manifest entries (`method: manual`) |
 | 3. Extract verbatim text | `.venv/bin/python -m data.policy_sources.extract_sources` | `extracted/<NN>_<id>.md` |
 | 4. Check the facts | edit `evaluation/policy_fact_sheet.yaml`, run `pytest tests/test_policy_corpus.py` | verified facts with exact quotes |
-| 5. Install as the corpus | `... extract_sources --install` | `data/policy_documents/` (old documents move to `data/policy_documents_legacy/`) |
+| 5. Install as the corpus | `... extract_sources --install` | `data/policy_documents/` (replaces the previous install) |
 | 6. Re-index | `.venv/bin/python data/ingest_hdb_policy_rag.py` | `data/policy_store.pkl`, `data/policy_chunks.json` |
 
 Check progress at any time with `... fetch_sources --status`.

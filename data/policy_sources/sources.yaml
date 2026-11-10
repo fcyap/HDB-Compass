@@ -12,7 +12,7 @@
 # exclude:   true keeps the capture but leaves the page out of the corpus (navigation hubs: links only, no policy)
 # optional:  true lets the corpus be installed while this page is still missing
 #
-# Coverage checklist (the topics of the legacy corpus, data/policy_documents_legacy/ once installed):
+# Coverage checklist (the topics the first, hand-written corpus covered):
 #   flat classification, eligibility schemes, wait-out, HFE letter, HDB loan / LTV, MSR / TDSR, BSD, CPF grants
 #   (EHG, Family Grant, PHG, singles), CPF usage and the 95-year lease rule, EIP and SPR quota, EIP buyback,
 #   BTO application / priority schemes, MOP and resale, renting out.
@@ -343,6 +343,14 @@ sources:
     verified: true
     file: "More Support for Flat Owners Constrained by the Ethnic Integration Policy.html"
     notes: Announcement of the EIP buyback for EIP-constrained flat owners (2022), with its conditions.
+  - id: hdb_press_wait_out_removal_2026
+    url: https://www.hdb.gov.sg/hdb-pulse/news/2026/removal-of-the-15-month-wait-out-period-for-private-residential-property-owners
+    publisher: HDB
+    policy_category: eligibility
+    capture: manual
+    verified: true
+    file: "Removal of the 15-month Wait-out Period for Private Residential Property Owners Purchasing Non-Subsidised HDB Resale Flats.html"
+    notes: 27 July 2026 removal of the 15-month wait-out for private property owners buying non-subsidised resale flats without an HDB loan; records the earlier 55+ senior exemption (4-room or smaller).
 
   # --- CPF Board (auto: server-rendered, robots.txt allows /member/) -------------------------------------------------
   - id: cpf_ehg_phg_guide

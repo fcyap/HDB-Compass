@@ -677,44 +677,6 @@ def evaluate_chunk_threshold_sweep(cases: List[Dict[str, Any]],
     return sweep
 
 
-def evaluate_corpus_comparison(cases: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """Old vs new corpus: the legacy hand-written documents (data/policy_documents_legacy) against the captured
-    official pages (data/policy_documents), each indexed the same way and searched with RAG-2 (top-5, no model calls),
-    scored on the SAME official truth by clause matching only (the legacy section names differ from the page titles,
-    so section matching would favour the new corpus). Shows what rebuilding the corpus changed."""
-    from rank_bm25 import BM25Okapi
-    from data.ingest_hdb_policy_rag import build_policy_corpus, compute_dense_embeddings, tokenize_words
-    from mcp_server.policy_rag_tools import reciprocal_rank_fusion, rerank_cross_encoder, retrieve_bm25, retrieve_dense
-
-    legacy_dir = DOCS_DIR.parent / "policy_documents_legacy"
-    corpora = {"Legacy hand-written (6 docs)": (legacy_dir, 0.55), "Official pages (current)": (DOCS_DIR, None)}
-    out: Dict[str, Dict[str, Any]] = {}
-    for name, (folder, threshold) in corpora.items():
-        if not folder.exists():
-            continue
-        chunks = build_policy_corpus(folder, threshold=threshold)
-        store = {"chunks": chunks, "bm25": BM25Okapi([tokenize_words(c["text"]) for c in chunks]),
-                 "dense_embeddings": compute_dense_embeddings(chunks)}
-        recalls, precisions = [], []
-        for case in cases:
-            q = case["query"]
-            fused = reciprocal_rank_fusion(retrieve_dense(q, store, top_k=20), retrieve_bm25(q, store, top_k=20), k=60, top_n=20)
-            top = [clean_text(chunks[i]["text"]) for i, _ in rerank_cross_encoder(q, fused, store, top_n=5)]
-            clauses = case.get("ground_truth_facts", {}).get("key_clauses", [])
-            recalls.append(sum(1 for cl in clauses if any(is_clause_in_passage(cl, t) for t in top)) / max(1, len(clauses)))
-            rel = [1 if any(is_clause_in_passage(cl, t) for cl in clauses) else 0 for t in top]
-            hits, cum = 0, []
-            for k, r in enumerate(rel, 1):
-                if r:
-                    hits += 1
-                    cum.append(hits / k)
-            precisions.append(sum(cum) / len(cum) if cum else 0.0)
-        out[name] = {"documents": len(list(folder.glob("*.md"))), "num_chunks": len(chunks),
-                     "mean_context_recall": round(statistics.mean(recalls), 4),
-                     "mean_clause_precision": round(statistics.mean(precisions), 4)}
-    return out
-
-
 def compute_group_summary(results: List[Dict[str, Any]]) -> Dict[str, Optional[float]]:
     latencies_sorted = sorted(r["latency_ms"] for r in results)
     p50_idx = int(0.50 * len(latencies_sorted))
@@ -872,17 +834,6 @@ def run_ablation(use_llm: bool = False, limit: Optional[int] = None):
               f"{row['mean_context_recall']:<11.4f} | {row['mean_context_precision']:<13.4f}")
     print("=" * 96)
 
-    corpus_comparison = evaluate_corpus_comparison(cat_c_cases)
-    print("\n" + "=" * 96)
-    print(f" EXPERIMENT 2D: LEGACY vs OFFICIAL-PAGE CORPUS, RAG-2, scored on the official Category C truth (N={len(cat_c_cases)})")
-    print("=" * 96)
-    print(f"{'Corpus':<32} | {'Docs':<5} | {'Chunks':<7} | {'Ctx Recall':<11} | {'Clause Precision':<16}")
-    print("-" * 96)
-    for name, row in corpus_comparison.items():
-        print(f"{name:<32} | {row['documents']:<5} | {row['num_chunks']:<7} | {row['mean_context_recall']:<11.4f} | "
-              f"{row['mean_clause_precision']:<16.4f}")
-    print("=" * 96)
-
     # Save to JSON (backward-compatible summary key + group breakdowns)
     output_payload = {
         "summary": combined_summary,
@@ -891,7 +842,6 @@ def run_ablation(use_llm: bool = False, limit: Optional[int] = None):
         "combined_summary": combined_summary,
         "chunk_window_ablation": chunk_window_study,
         "chunk_threshold_sweep": threshold_sweep,
-        "corpus_comparison": corpus_comparison,
         "unanswerable_category_c": unanswerable,
         "queries_evaluated": len(all_cases),
         "llm_mode": use_llm,

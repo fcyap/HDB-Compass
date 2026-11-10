@@ -5105,7 +5105,8 @@ POLICY_PASSAGES_SHOWN = 4  # of the search's 5: with 3, the passage that answere
                            # 2 Nov: C1-02, C2-01); A and B's models read all 5, so C's facts should not show far fewer
 POLICY_LINES_SHOWN = 4      # at most; at least 2 when the passage has them
 POLICY_LINE_CHARS = 240     # a longer line keeps its whole sentences that fit; a sentence is never cut…
-POLICY_LINE_MAX = 400       # …unless it alone is longer than this (no real passage line is)
+POLICY_LINE_MAX = 450       # …unless it alone is longer than this (the longest real line, the 2026 wait-out page's
+                            # 30-month rule, is 417 characters)
 _STOP_WORDS = frozenset((
     "a about after all also am an and any are as at be been before but by can could did do does for from get got had has "
     "have how i if in into is it its me more must my no not now of on or our out so than that the their them then there "

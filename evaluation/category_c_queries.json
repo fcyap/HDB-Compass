@@ -574,22 +574,24 @@
       "source": "evaluation/policy_fact_sheet.yaml",
       "answerable": true,
       "fact_ids": [
-        "private_property_dispose_6_months",
-        "private_property_30_months"
+        "wait_out_removed_2026",
+        "wait_out_senior_exemption"
       ],
       "key_clauses": [
         [
-          "6 months"
+          "no longer"
         ],
         [
-          "dispose"
+          "15-month wait-out"
+        ],
+        [
+          "55 and above"
         ]
       ],
       "target_sections": [
-        "Couples and Families",
-        "Seniors"
+        "Removal of the 15-month Wait-out Period for Private Residential Property Owners Purchasing Non-Subsidised HDB Resale Flats"
       ],
-      "note": "HDB's current pages state no 15-month wait-out: a private-property owner buying a non-subsidised resale flat must dispose of it within 6 months of completing the purchase."
+      "note": "HDB removed the 15-month wait-out on 27 July 2026 for non-subsidised resale purchases without an HDB loan; before that, citizens aged 55+ moving to a 4-room or smaller resale flat were exempt."
     }
   },
   {

@@ -27,7 +27,7 @@ flowchart LR
 
     subgraph BE["Backend · FastAPI · backend/main.py"]
         WS["WebSocket /ws?session=…<br/>streams each agent step"]
-        Sessions[("Per-session memory<br/>last state → follow-ups")]
+        Sessions[("Per-session memory (in-process,<br/>≤ 200 sessions) · last state → follow-ups")]
         REST["REST /api/spatial/*<br/>/api/model/status · /health"]
     end
 
@@ -46,7 +46,7 @@ flowchart LR
         Duck[("DuckDB resale transactions<br/>data.gov.sg")]
         Spatial[("SVY21 KD-tree index<br/>blocks · MRT/LRT · hawkers ·<br/>supermarkets · schools · OneMap")]
         BTO[("BTO launch annexes<br/>data/bto/*.csv")]
-        Policy[("Policy store<br/>BM25 + dense + cross-encoder")]
+        Policy[("Policy store · 53 official<br/>HDB / CPF / IRAS pages<br/>BM25 + dense + cross-encoder")]
     end
 
     User --> Chat
@@ -145,7 +145,10 @@ Every chat message runs this LangGraph state machine (`agents/arch_3_specialist_
 
 ```mermaid
 flowchart TD
-    Start(["User message<br/>+ map pin + previous turn"]) --> Guard
+    Start(["User message<br/>+ map pin + previous turn"]) --> San
+
+    San["Sanitiser<br/>agents/sanitizer.py, code<br/>(NRIC / phone / card / bank values → placeholders)"]
+    San --> Guard
 
     Guard["Input guardrail<br/>Member 5 · agents/guardrails.py, rules only, no model<br/>(SQL / prompt injection, identifiers, speculative profit,<br/>then scope: greeting, off-topic, condo, forecast)"]
     Guard -->|"out of scope:<br/>fixed reply, no model"| Final
@@ -189,7 +192,7 @@ flowchart TD
 
 **Broad questions:** "statistics near MRT stations", "by town", "which stations are priciest", "in the east" are answered from grouped resale statistics (code-written tables), with chips to drill down from island-wide to a town, a station's area and a block's sales; other data questions go to the market agent's analysis mode. Details: `docs/INTERFACES.md` §11.
 
-**Never an unrelated answer:** nothing defaults to the policy search any more. Policy passages are shown only for a question that names an HDB rule and only when the search finds a real match (keyword-score floor); price questions get town medians, and unsupported asks (a single-destination commute, price forecasts) are declined plainly. `tests/test_scope_routing.py` locks this, and locks the Category C/E benchmark routes. Details: `docs/INTERFACES.md` §10. Known gap: a message that names a town but asks for something no tool covers (for example "best school for my kid in Bishan") still falls back to the generic block search instead of a plain "I can't answer that".
+**Never an unrelated answer:** nothing defaults to the policy search any more. Policy passages are shown only for a question that names an HDB rule and only when the search finds a real match (relevance gate: best cross-encoder score ≥ -3.2, `POLICY_RELEVANCE_FLOOR`; raw BM25 floor only if the cross-encoder cannot load); price questions get town medians, and unsupported asks (a single-destination commute, price forecasts) are declined plainly. `tests/test_scope_routing.py` locks this, and locks the Category C/E benchmark routes. Details: `docs/INTERFACES.md` §10. Known gap: a message that names a town but asks for something no tool covers (for example "best school for my kid in Bishan") still falls back to the generic block search instead of a plain "I can't answer that".
 
 ### 3. Agents and the tools they can use
 
@@ -247,7 +250,7 @@ flowchart LR
     SPA --> Idx[("SVY21 spatial index<br/>+ OneMap")]
     a6 & a7 & a8 --> Idx
     FIN --> Rules[("CPF / HDB grant<br/>& loan rules (code)")]
-    POL --> Store[("Policy store<br/>6 HDB policy docs")]
+    POL --> Store[("Policy store<br/>53 official HDB / CPF / IRAS pages")]
 ```
 
 ➕ = add-on tool. Owners: market and financial tools Member 1, spatial tools Member 2, policy RAG Member 3, orchestration Member 4, guardrail and auditor Member 5.
@@ -289,6 +292,15 @@ The same tools and model are compared in three designs; the app runs Variant C.
 | A · Monolith (`arch_1_monolith.py`) | one agent → finalize | one model with all core tools |
 | B · Coarse (`arch_2_coarse.py`) | extract → route → data agent / policy agent → synthesize | a data agent (market, spatial, financial tools) and a policy agent; the writer reconciles results |
 | C · Specialist (`arch_3_specialist_5agent.py`) | diagram 2 | Supervisor routes to 4 specialists, code joins and checks results, auditor reviews |
+
+### 5. Known limitations and next steps
+
+| Limitation | Effect | Next step |
+|---|---|---|
+| Session memory is an in-process dict (`backend/main.py`, ≤ 200 sessions) | Follow-up context is lost on restart, is not shared between workers, and old sessions are evicted | Move session state to Redis (or SQLite for a single host) behind a small `SessionStore` interface |
+| `agents/supervisor.py` holds extraction, routing, join, synthesis, policy gating and the auditor loop (~7,400 lines) | Diagram 2's nodes are not separate modules; several members edit one file | Split by node: `extract.py`, `routing.py`, `join.py`, `synthesize.py`, `audit.py`, keeping `supervisor.py` as the graph wiring |
+| Regex reads the question first | Unusual wording is misread; unsupported town questions fall back to a block search | The model-first intent reading planned in 1b, behind the free checks |
+| Policy relevance gate has a narrow margin (0.5 around -3.2) | A corpus or cross-encoder change can flip borderline questions | Re-run `tests/test_scope_routing.py` and the RAG ablation whenever `data/policy_documents/` changes |
 
 ---
 
@@ -1061,29 +1073,28 @@ eligibility and funding facts described in the financial contracts.
 As specified in the **HDB-Compass Project Proposal** (Pages 5, 9, 11, 13, and 14):
 
 - **Workstream:** Member 3 — Advanced RAG & Regulatory Knowledge Base (Category C).
-- **Regulatory Corpus Curation:** Curated official policies covering the October 2024 Standard/Plus/Prime flat classification framework, Singles & Joint Singles Schemes, 15-month/30-month private property wait-out rules (including senior 55+ right-sizing exemptions), August 2024 Enhanced CPF Housing Grant (EHG) updates (up to $120k for families), Family/Proximity Housing Grants, financing ceilings (MSR 30%, LTV 75%, TDSR 55%, tiered BSD), and Ethnic Integration Policy (EIP) quotas & Buyback Scheme.
+- **Regulatory Corpus Curation:** Curated official policies covering the October 2024 Standard/Plus/Prime flat classification framework, Singles & Joint Singles Schemes, private property ownership and disposal rules (a 30-month wait for subsidised purchases and HDB loans, disposal within 6 months for non-subsidised resale, and HDB's 27 July 2026 removal of the 15-month wait-out, including the earlier 55+ senior exemption for 4-room or smaller flats), August 2024 Enhanced CPF Housing Grant (EHG) updates (up to $120k for families), Family/Proximity Housing Grants, financing ceilings (MSR 30%, LTV 75%, TDSR 55%, tiered BSD), and Ethnic Integration Policy (EIP) quotas & Buyback Scheme (from HDB's 2022 press release, the only official source captured for it).
 - **SAGE-inspired Chunker:** Preserves section breadcrumbs and Markdown tables, then groups adjacent sentences using MiniLM similarity boundaries; the paper's trained segmentation classifier is not bundled. The index is rebuilt from these semantically segmented chunks.
 - **Hybrid Retrieval & RRF:** Combines `BM25Okapi` sparse keyword search (for exact acronyms like MOP, EIP, HFE, EHG) with `SentenceTransformer` dense vector search (`all-MiniLM-L6-v2`) via Reciprocal Rank Fusion (RRF, $k=60$) to retrieve top-20 candidates.
 - **Cross-Encoder Reranker:** Scores hybrid candidates using `cross-encoder/ms-marco-MiniLM-L-6-v2`; RAG-2 returns the top 5, while RAG-3 applies SAGE-style score-drop selection.
 - **FastMCP Tool & Agent 5:** Implements the official tool `retrieve_hdb_policy_knowledge(query, policy_domain)` on the FastMCP server, hooked into the 5-agent LangGraph workflow and standalone `PolicyRagAgent`.
-- **Policy corpus from official pages:** the knowledge base is 49 official pages (41 HDB, 8 CPF Board), captured and kept word for word with page-level provenance (source URL, capture date, content hash). See [`data/policy_sources/README.md`](data/policy_sources/README.md). The 6 earlier hand-written documents are kept in `data/policy_documents_legacy/` for comparison. They contained figures HDB's pages do not support: a fixed Plus/Prime subsidy-recovery range (HDB sets it per project at launch), a $7,000 singles ceiling (HDB: $8,000) and a 15-month wait-out (HDB's pages state a 30-month rule for subsidised purchases).
-- **Ground truth from the pages:** [`evaluation/policy_fact_sheet.yaml`](evaluation/policy_fact_sheet.yaml) holds 40 verified facts, each with an exact quote from its captured page (checked by `tests/test_policy_corpus.py`). The Category C key clauses are built from it (`evaluation/build_category_c.py`, old truth kept as `legacy_ground_truth`). 1 of the 15 questions (C3-05, EIP Buyback) has no answer in the captured pages and is left out of retrieval metrics.
-- **Experiment 2 Ablation Study:** `evaluation/run_rag_ablation.py` compares three pipelines: RAG-1 (naive dense), RAG-2 (BM25 + dense for the question and its corpus-vocabulary expansion, rank fusion, cross-encoder rerank) and RAG-3 (RAG-2 plus query rewriting, HyDE and entity-graph expansion). It also runs a chunking sweep and a legacy-vs-official corpus comparison. `--llm` adds LLM-judged faithfulness and relevance (judge: Groq gpt-oss-120b, a different model family from the Gemini generator) and a long-context baseline. Results of the 9 Nov 2026 run (15 Category C + 15 Category E questions; Gemini paced, no rate-limit errors):
+- **Ground truth from the pages:** [`evaluation/policy_fact_sheet.yaml`](evaluation/policy_fact_sheet.yaml) holds 47 verified facts, each with an exact quote from its captured page (checked by `tests/test_policy_corpus.py`). The Category C key clauses are built from it (`evaluation/build_category_c.py`); all 15 questions are answerable from the corpus.
+- **Experiment 2 Ablation Study:** `evaluation/run_rag_ablation.py` compares three pipelines: RAG-1 (naive dense), RAG-2 (BM25 + dense for the question and its corpus-vocabulary expansion, rank fusion, cross-encoder rerank) and RAG-3 (RAG-2 plus query rewriting, HyDE and entity-graph expansion). It also runs a chunking sweep. `--llm` adds LLM-judged faithfulness and relevance (judge: Groq gpt-oss-120b, a different model family from the Gemini generator) and a long-context baseline. All metrics are computed by the script's own formulas, modelled on RAGAS definitions; the `ragas` library is not called. Without `--llm`, "faithfulness" is a lexical check (each answer line's words and numbers found in the retrieved passages), so it sits near 0.96-0.98 for every pipeline and does not separate them. Results of the 10 Nov 2026 run without `--llm` (53 pages, 1,085 chunks) (`llm_mode: false` in `evaluation/rag_ablation_results.json`; 15 Category C + 15 Category E questions):
 
   | | Cat C recall | Cat E recall | Combined recall / precision | p50 latency |
   |---|---|---|---|---|
-  | RAG-1 naive dense | 0.56 | 0.25 | 0.41 / 0.62 | 0.2 s |
-  | RAG-2 hybrid + cross-encoder | 0.86 | 0.83 | 0.84 / 0.94 | 0.4 s |
-  | RAG-3 rewrite + HyDE + graph | 0.86 | 0.77 | 0.81 / 0.88 | 2.2 s |
+  | RAG-1 naive dense | 0.57 | 0.27 | 0.42 / 0.62 | 0.2 s |
+  | RAG-2 hybrid + cross-encoder | 0.81 | 0.83 | 0.82 / 0.91 | 0.4 s |
+  | RAG-3 rewrite + HyDE + graph | 0.81 | 0.77 | 0.79 / 0.87 | 5.4 s |
 
-  Corpus rebuild, same RAG-2 pipeline, scored on the official truth: legacy recall 0.61 / clause precision 0.78, official pages 0.86 / 0.95. RAG-2 is the most accurate and about 5x faster than RAG-3, so the app uses it (`policy_rag.active_pipeline` in `config/experiment_config.yaml`).
+  Category C recall moved from 0.86 to 0.81 on 10 Nov because C3-01's ground truth changed, not because retrieval got worse: it used to be a stand-in disposal rule (2 clauses), and is now HDB's actual answer from the 2026 wait-out removal page (3 clauses: "no longer", "15-month wait-out", "55 and above"). RAG-2 ranks that page first, but the retrieved chunk is paragraph 7, which holds 1 of the 3 clauses. Every other question scored the same as on 9 Nov. Latency varies with machine load.
+
 - **Whiteboard Presentation Guide:** [`docs/member_3_whiteboard_guide.md`](docs/member_3_whiteboard_guide.md).
 
 | File | What it is |
 |---|---|
 | `data/policy_documents/` | The RAG corpus: verbatim official pages extracted by `data/policy_sources/extract_sources.py` (do not edit by hand) |
 | `data/policy_sources/` | Source inventory (`sources.yaml`), capture and extraction scripts, raw captures and their manifest |
-| `data/policy_documents_legacy/` | The earlier hand-written documents, kept for the corpus comparison |
 | `data/ingest_hdb_policy_rag.py` | Hierarchical chunker, BM25 indexing, dense vector embedding generation & store serialization |
 | `data/policy_store.pkl` | Precomputed dual index (chunks, BM25 model, dense embeddings matrix) |
 | `mcp_server/policy_rag_tools.py` | Official FastMCP tool `retrieve_hdb_policy_knowledge` (hybrid RRF + cross-encoder reranker) |

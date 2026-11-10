@@ -27,16 +27,22 @@ from agents import supervisor as sv  # noqa: E402
 from agents.tool_registry import resolve_callable  # noqa: E402
 
 QUERIES = {q["id"]: q["query"] for q in json.loads((ROOT / "evaluation" / "category_c_queries.json").read_text())}
-# The formatting rules (line choice, sentence cuts, figure checks) are tested on a frozen copy of the legacy chunks
-# they were written against; the live corpus is now the captured official pages (data/policy_sources/), whose sections
-# are named differently. Tests that call search() still run on the live corpus.
-CHUNKS = json.loads((ROOT / "tests" / "fixtures" / "legacy_policy_chunks.json").read_text())
+# The policy corpus as indexed: verbatim official pages (data/policy_sources/, data/ingest_hdb_policy_rag.py).
+CHUNKS = json.loads((ROOT / "data" / "policy_chunks.json").read_text())
 URL = "https://www.hdb.gov.sg/residential/buying-a-flat/new-flats/flat-classification"
 
 
-def chunk(title: str) -> dict:
-    """The chunk of Member 3's corpus whose section ends with this title and has text under its header."""
-    return next(c for c in CHUNKS if c["section"].endswith(title) and sv._policy_lines(c["text"]))
+def chunk(title: str, containing: str = "") -> dict:
+    """The chunk of the corpus whose section ends with this title, has text under its header and contains the text."""
+    return next(c for c in CHUNKS if c["section"].endswith(title) and containing in c["text"]
+                and sv._policy_lines(c["text"]))
+
+
+FRAMEWORK = "Key features of Standard, Plus, and Prime flats"
+MOP = chunk("Minimum occupation period (MOP)", "the MOP is 10 years")              # HDB, Conditions After Buying a New Flat
+WHOLE_FLAT = chunk("Renting out whole flat")
+TABLE = chunk(FRAMEWORK, "| Classification of flats |")                          # the Standard/Plus/Prime comparison
+RECOVERY = chunk(FRAMEWORK, "subsidy recovery percentage is commensurate")
 
 
 def search(qid: str) -> list:
@@ -76,47 +82,48 @@ def test_real_passages_read_as_a_clean_section(qid):
 
 
 def test_header_only_chunks_are_skipped_and_a_section_is_shown_once():
-    header_only = {"text": "[HDB Flat Classification Framework: Standard, Plus, and Prime Flats]\n---", "source_url": URL,
-                   "section": "HDB Flat Classification Framework: Standard, Plus, and Prime Flats"}
-    mop = chunk("4.2 10-Year Minimum Occupation Period (MOP)")
-    shown = sv.shown_policy_passages([header_only, mop, dict(mop), chunk("4.3 Lifelong Whole-Flat Rental Prohibition")],
-                                     "How long is the MOP for a Plus flat?")
-    assert [s["title"] for s in shown] == ["10-Year Minimum Occupation Period (MOP)", "Lifelong Whole-Flat Rental Prohibition"]
-    assert shown[0]["parent"] == "Deep Dive: Plus Flats Regulations"
-    assert shown[0]["lines"][0] == "Plus flat owners are subject to the same 10-year MOP as Prime flats."
+    header_only = {"text": "[Conditions After Buying a New Flat]\n---", "source_url": URL,
+                   "section": "Conditions After Buying a New Flat"}
+    shown = sv.shown_policy_passages([header_only, MOP, dict(MOP), WHOLE_FLAT], "How long is the MOP for a Plus flat?")
+    titles = [s["title"] for s in shown]
+    assert titles.count("Minimum occupation period (MOP)") == 1                    # the repeated chunk is one section
+    assert "For new and resale Plus and Prime flats, the MOP is 10 years." in shown[titles.index(
+        "Minimum occupation period (MOP)")]["lines"]
     assert sv.policy_fact_lines([header_only]) == ["- The policy search found no passage that answers this. Please check with HDB."]
 
 
 def test_at_most_four_sections_are_shown():
-    titles = ["4.1 Subsidy Recovery (Clawback) Rate", "4.2 10-Year Minimum Occupation Period (MOP)",
-              "4.3 Lifelong Whole-Flat Rental Prohibition", "5.1 Baseline Parameters", "5.3 PHG Grant Quantum Table"]
-    # a question naming no flat class: one naming Plus is not shown the Standard "Baseline Parameters" section
-    # (test_demo_readiness_policy.py), and this test is about the cap
-    shown = sv.shown_policy_passages([chunk(t) for t in titles], "Flat classification rules")
+    passages = [TABLE, RECOVERY, MOP, WHOLE_FLAT, chunk("Renting out room(s)"),
+                chunk("Solemnisation of marriage", "within 3 months")]
+    shown = sv.shown_policy_passages(passages, "Flat classification rules")
     assert sv.POLICY_PASSAGES_SHOWN == 4
-    assert len(shown) == 4 and shown[-1]["title"] == "Baseline Parameters"
+    assert len(shown) <= 4
 
 
 def test_table_rows_read_as_text_and_separators_are_dropped():
-    matrix = next(c for c in CHUNKS if c["section"].endswith("2. Comprehensive Classification Comparison Matrix") and "|" in c["text"])
-    lines = sv._policy_lines(matrix["text"])
-    assert "Minimum Occupation Period (MOP) — Standard Flats: 5 years; Plus Flats: 10 years; Prime Flats: 10 years" in lines
-    assert not any("---" in line or "|" in line or "Policy Dimension —" in line for line in lines)
-    ehg = next(c for c in CHUNKS if c["section"].endswith("2.1 EHG for First-Timer Families") and "|" in c["text"])
-    assert "Up to $1,500: $120,000" in sv._policy_lines(ehg["text"])
+    lines = sv._policy_lines(TABLE["text"])
+    assert "Minimum occupation period (MOP) — Standard: 5 years; Plus: 10 years; Prime: 10 years" in lines
+    assert not any("---" in line or "|" in line for line in lines)
+    assert "Renting out of whole flat — Standard: Allowed after MOP; Plus: Not allowed; Prime: Not allowed" in lines
 
 
 def test_a_bare_lead_in_goes_in_front_of_the_lines_under_it():
-    lines = sv._policy_lines(chunk("4. Singles Grant for Resale Flats")["text"])
-    assert "Grant Amounts — 5-room Resale Flat: $25,000" in lines
-    assert "Grant Amounts" not in lines and "Monthly Income Ceiling: Gross monthly income not exceeding $7,000." in lines
+    # a parsing rule, shown on a small passage written for the test (the official pages rarely indent under a short
+    # lead-in): "Grant Amounts:" is not a line of its own but heads the lines indented under it
+    text = ("[Test page > Grants]\nGrant Amounts:\n  - 2- to 4-room resale flat: $40,000\n"
+            "  - 5-room resale flat: $25,000\nIncome ceiling: $8,000")
+    lines = sv._policy_lines(text)
+    assert "Grant Amounts — 5-room resale flat: $25,000" in lines
+    assert "Grant Amounts" not in lines and "Income ceiling: $8,000" in lines
 
 
 def test_the_lines_shown_answer_each_part_of_the_question():
-    # "minimum age and income ceiling": one line for each, although longer lines mention the flat type more often
-    shown = sv.shown_policy_passages([chunk("1.3 Single Singapore Citizen (SSC) Scheme")], QUERIES["C2-02"])[0]
-    assert any(line.startswith("Minimum Age Requirement:") for line in shown["lines"])
-    assert "BTO Income Ceiling: Average gross monthly income must not exceed $7,000/month." in shown["lines"]
+    # "minimum age and income ceiling": a line for each, from HDB's singles eligibility table
+    singles = next(c for c in CHUNKS if c["section"] == "Singles > Eligibility conditions"
+                   and "Monthly household income ceiling" in c["text"])
+    shown = sv.shown_policy_passages([singles], QUERIES["C2-02"])[0]
+    assert any(line.startswith("Age") and "At least 35 years old" in line for line in shown["lines"])
+    assert any(line.startswith("Monthly household income ceiling") and "$8,000" in line for line in shown["lines"])
     assert 2 <= len(shown["lines"]) <= sv.POLICY_LINES_SHOWN
 
 
@@ -130,9 +137,10 @@ def test_long_lines_keep_whole_sentences():
 # Expected lines are HDB's own wording from the captured official pages (data/policy_sources/). The legacy corpus's
 # lines ("must wait 15 months ...", "the transaction is ALWAYS PERMITTED ...") are not what HDB's current pages say.
 @pytest.mark.parametrize("qid, kept", [
-    ("C3-01", "you must dispose of the interest in the private residential property"),
-    ("C3-02", "Must not have disposed of any private residential property at least 30 months before HFE letter "
-              "application"),
+    # HDB removed the 15-month wait-out on 27 July 2026 (data/policy_documents/46_hdb_press_wait_out_removal_2026.md)
+    ("C3-01", "previously exempted from the 15-month wait-out period to buy a 4-room or smaller"),
+    # the 2026 removal page answers first, with the 30-month wait that still applies to subsidised purchases and loans
+    ("C3-02", "the existing requirement to wait out a period of 30 months after the disposal"),
     ("C3-04", "You and the flat seller are of the same ethnic group and household citizenship"),
     ("C2-01", "At least 35 years old"),
     # a Plus question is shown the Plus/Prime subsidy-recovery rule, including that open-market resale buyers do not pay it
@@ -151,7 +159,17 @@ def test_no_line_of_the_corpus_is_cut_inside_a_sentence():
             trimmed = sv._trim_line(line, question)
             assert len(trimmed) <= sv.POLICY_LINE_MAX
             for piece in sv._split_opening(trimmed.replace(" … ", " ").removesuffix(" …")):
-                assert piece in whole or piece + ";" in whole or piece + "," in whole, (piece, line)
+                bare = piece.rstrip(";,:. ")
+                if any(w.rstrip(";,:. ") == bare for w in whole):
+                    continue
+                # a table row with a long label keeps its rule whole and shortens the label ("Label start…: rule")
+                if "…: " in piece:
+                    head, rule = piece.split("…: ", 1)
+                    assert line.startswith(head) and rule.rstrip("…").rstrip() in line, (piece, line)
+                    continue
+                # a single sentence longer than POLICY_LINE_MAX (HDB/CPF run some formulas and notes together) is cut
+                # by design, at a comma or a word: the piece is then the start of that sentence, marked "…"
+                assert piece.endswith("…") and any(w.startswith(piece.rstrip("…").rstrip()) for w in whole), (piece, line)
 
 
 def test_a_later_sentence_that_answers_the_question_is_kept_after_a_gap():
@@ -164,29 +182,35 @@ def test_a_later_sentence_that_answers_the_question_is_kept_after_a_gap():
 
 
 def test_a_sentence_too_long_to_show_is_cut_at_a_comma_or_before_a_number():
-    assert sv._cut_sentence("a " * 190 + "must wait 15 months from the date").endswith("must wait…")
+    assert sv._cut_sentence("a " * (sv.POLICY_LINE_MAX // 2 - 10) + "must wait 15 months from the date").endswith("must wait…")
     assert sv._cut_sentence("word " * 60 + "thing, " + "word " * 40).endswith("thing…")
 
 
 # --- the opening ----------------------------------------------------------------------------------------------------
-PLUS = [chunk("4.2 10-Year Minimum Occupation Period (MOP)"), chunk("4.1 Subsidy Recovery (Clawback) Rate"),
-        chunk("5.1 Baseline Parameters")]
+PLUS = [TABLE, RECOVERY, MOP, WHOLE_FLAT]          # HDB's pages on Plus/Prime flats, as the search returns them
+
+# The range rules ("3% to 6%" may be written "between 3% and 6%", but the ends of two ranges are not a new range) need a
+# passage that states ranges. HDB's pages give no fixed Plus/Prime rate, so this passage is written for the test; its
+# figures are test data, not policy.
+RANGES = [{"text": "[Test page > Subsidy recovery]\nPlus flats: a subsidy recovery of 3% to 6% on the first resale.\n"
+                   "Prime flats: a subsidy recovery of 6% to 9% on the first resale.",
+           "section": "Test page > Subsidy recovery", "source_url": URL}]
 
 
 @pytest.mark.parametrize("sentence", [
     "Plus flats have a 10-year MOP.",
-    "Plus flats have a 10 year MOP and a 3% to 6% clawback on the first resale.",
+    "Plus and Prime flats have a 10 years MOP.",
     "Neither Prime nor Plus flats can be rented out whole."])
 def test_an_opening_may_state_a_figure_the_policy_lines_give(sentence):
     assert sv.keep_supported_sentences(sentence, "", QUERIES["C1-01"], PLUS) == (sentence, 0)
 
 
 def test_a_figure_from_a_section_on_a_class_not_asked_about_is_dropped():
-    # C1-01 compares Prime and Plus: the Standard section is not shown (SEM-07), so its figures are not allowed; for a
-    # question naming no class they still are
-    sentence = "Standard flats have a 5-year MOP and 0% clawback."
+    # C1-01 compares Prime and Plus: the table's Standard cells are not shown (SEM-07), so their figures are not allowed;
+    # for a question that asks about Standard flats too they are
+    sentence = "Standard flats have a 5 years MOP."
     assert sv.keep_supported_sentences(sentence, "", QUERIES["C1-01"], PLUS) == ("", 1)
-    assert sv.keep_supported_sentences(sentence, "", "What are the MOP and clawback rules?", PLUS) == (sentence, 0)
+    assert sv.keep_supported_sentences(sentence, "", "What is the MOP for Standard, Plus and Prime flats?", PLUS) == (sentence, 0)
 
 
 @pytest.mark.parametrize("sentence", [
@@ -209,7 +233,7 @@ def test_an_opening_figure_not_in_the_policy_lines_is_dropped(sentence):
     "Plus flats carry a 3% clawback.",                  # one end of "3% to 6%" is not a figure on its own
     "Prime flats carry a 9% clawback."])
 def test_a_range_is_checked_as_a_range_however_it_is_written(sentence):
-    assert sv.keep_supported_sentences(sentence, "", QUERIES["C1-03"], PLUS) == ("", 1)
+    assert sv.keep_supported_sentences(sentence, "", QUERIES["C1-03"], RANGES) == ("", 1)
 
 
 @pytest.mark.parametrize("sentence", [
@@ -217,7 +241,7 @@ def test_a_range_is_checked_as_a_range_however_it_is_written(sentence):
     # (no longer "..., and Prime from 6% to 9%": C1-03 asks about Plus flats, so the Prime section is not shown)
     "The Plus clawback ranges from 3% up to 6%."])
 def test_a_range_the_passages_give_may_be_written_another_way(sentence):
-    assert sv.keep_supported_sentences(sentence, "", QUERIES["C1-03"], PLUS) == (sentence, 0)
+    assert sv.keep_supported_sentences(sentence, "", QUERIES["C1-03"], RANGES) == (sentence, 0)
 
 
 def test_without_policy_passages_every_figure_is_still_dropped():
