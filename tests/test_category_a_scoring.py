@@ -17,6 +17,7 @@ from evaluation import architecture_metrics as M  # noqa: E402
 ITEMS = {i["id"]: i for i in json.loads(
     (Path(__file__).resolve().parent.parent / "evaluation" / "category_a_queries.json").read_text())}
 TRUTH_SNAPSHOT = ITEMS["A1-01"]["ground_truth_facts"]["snapshot_id"]
+STALE_SNAPSHOT = "00000000000000000000"   # any id other than the truth's: the test must not depend on which snapshot the truth was built on
 
 A1_01_TABLE = """**Resale statistics in Singapore, 2017-01 to 2026-09**
 Flats within 200 m of an MRT station sold at a median of $515,000, 5.5% above flats more than 1,000 m away ($488,000).
@@ -159,7 +160,7 @@ def test_headings_transposed_tables_and_grant_lines():
 def test_snapshot_is_recorded_so_a_stale_truth_is_visible(monkeypatch):
     gt = _score("A1-01", A1_01_TABLE)
     assert gt["snapshot_matches"] is True and gt["snapshot_source"] == "tool"
-    gt = _score("A1-01", A1_01_TABLE, snapshot="be71fe16c4e7e7548eb7")
+    gt = _score("A1-01", A1_01_TABLE, snapshot=STALE_SNAPSHOT)
     assert gt["snapshot_matches"] is False and gt["success"]       # figures are still compared, the mismatch shown
     monkeypatch.setattr(M, "database_snapshot", lambda: None)
     gt = _score("A1-01", A1_01_TABLE, snapshot=None)
@@ -181,7 +182,7 @@ def test_report_and_run_comparison_show_figures_and_a_stale_snapshot():
     item = ITEMS["A1-01"]
     rows = []
     for v, draft in (("A", A1_01_TABLE.replace("$525,000", "$530,000")), ("C", A1_01_TABLE)):
-        st = dict(_state(draft, snapshot="be71fe16c4e7e7548eb7"), variant=v)
+        st = dict(_state(draft, snapshot=STALE_SNAPSHOT), variant=v)
         rows.append({"variant": v, "id": item["id"], "sub_use_case": item["sub_use_case"], "status": "ok",
                      "scores": M.score_item(item, st)})
     table = AN.statistics_table(rows)
