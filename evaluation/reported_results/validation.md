@@ -57,7 +57,7 @@ The historical baseline was 1,906 passed, 17 skipped, 6 failed. The same six fai
 - `verify_results.py` now includes `haiku55` and passes: 1,440 tracked rows agree with the five JSON reports.
 - Not checked: the effort level the API applied, the billed cost, and per-call prompt sizes (not recorded in the rows).
 
-## Re-runs on code `4ff2767`: `q3m`, `gptm`, `gemm` (added 12 Nov 2026; Qwen3.8 `q38m` pending, phase B)
+## Re-runs on code `4ff2767`: `q3m`, `gptm`, `gemm` (added 12 Nov 2026)
 
 - Each merged raw file has 270 rows, all `ok`, all recording commit `4ff2767` with `uncommitted_changes: false`. It is
   identical, row for row, to the last row per variant and question across its stream files (Gemma 4 5 streams of
@@ -76,8 +76,8 @@ The historical baseline was 1,906 passed, 17 skipped, 6 failed. The same six fai
 - Serving: the cluster job logs of the three re-runs (jobs 363448, 363449, 363453) show vLLM 0.33.0, the same GPU
   types and `max_model_len` as the initial runs (L40S at 65,536; Blackwell slice at 65,536 and 32,768), and for Gemma 4
   and Qwen3-30B-A3B the same KV-cache sizes as the initial runs.
-- `verify_results.py` now includes `q3m`, `gptm` and `gemm` and the three before/after pairs, and passes: 2,250
-  tracked rows agree with the eight JSON reports. Every README number for the re-runs (task counts, per-category
+- `verify_results.py` now includes `q3m`, `gptm` and `gemm` and the three before/after pairs, and passed: 2,250
+  tracked rows agreed with the eight JSON reports at that point (2,610 with the Qwen3.8 re-run, below). Every README number for the re-runs (task counts, per-category
   cells, Tool F1, latency and token means and p90, input-token distributions, context-limit rows, fallback and
   tool-source counts, within-run, same-variant and before/after McNemar tests) was recomputed from the merged raw
   rows; every per-category row sums to the variant total.
@@ -86,9 +86,33 @@ The historical baseline was 1,906 passed, 17 skipped, 6 failed. The same six fai
 - Not checked: run-to-run variation on the same code (no repeat run), and the re-run answer texts (the Category F
   and Gemma calculator readings in the README are from the initial-run rows).
 
+## Qwen3.8 re-run on `4ff2767`: `q38m` and `q38m-noauditor` (added 12 Nov 2026)
+
+- The merged raw files have 270 and 90 rows, all `ok`, all recording commit `4ff2767` and `llm_timeout_s` 180. Each
+  is identical, row for row, to the last row per variant and question across its 8 stream files; the chunks' question
+  sets are disjoint. The stream files hold 16 `model_unreachable` lines on 8 rows (auditor on: A B3-04, C2-01, E1-01;
+  B B2-04; C B1-02, B2-05; auditor off: C B1-02, B2-05), all replaced by later `ok` rows.
+- `q38m.csv` and `q38m-noauditor.csv` against the merged rows: 270 and 90 pairs, 0 mismatches in status, category,
+  success, Tool F1 and tokens; latency within CSV rounding (30 and 6 rows exactly on the 0.05 s boundary). The CSV
+  builder reproduces the tracked `q38fp8-noauditor.csv`.
+- `architecture_eval_q38m.md/.json`: running `python -m evaluation.run_architecture_eval --report --no-ablation --tag
+  q38m` on the merged rows reproduces both (JSON byte for byte; trailing blank line dropped from the Markdown). The
+  summary JSONs come from `run_category_e_prelim.summarise`.
+- Window: the cluster logs of both server jobs (363485, 363509; NVIDIA L40S, vLLM 0.33.0) show `max_model_len`
+  65,536, KV cache 150,732 tokens and 28.81 GiB of weights; the two jobs the first schedule submitted (363483,
+  363484) were cancelled without starting, and the first queue item was claimed after job 363485 was up. So every
+  re-run row ran at 65,536; the rows themselves do not record the window. Peak load on job 363485 from its log: 13
+  requests running, 5 waiting, KV cache 99.5%.
+- Auditor-off chunks: the second server's workers could take only auditor-off items (all A/B/C chunks were already
+  claimed); which server ran each auditor-off chunk is not recorded, and the final sweep resumed one auditor-off chunk
+  on job 363485.
+- `verify_results.py` now includes `q38m`, both auditor on/off pairs and the Qwen3.8 before/after pairs (including
+  the auditor-off pass), and passes: 2,610 tracked rows agree with the nine JSON reports. All README Qwen3.8 re-run
+  figures were recomputed from the merged raw rows; per-category rows sum to the variant totals.
+
 ## Interpretation limits
 
 The Qwen3.8 initial run retains 132 successful rows from its original smaller context window, including 20 C rows on
 the auditor-on side. The resulting mixed-window comparison is disclosed rather than presented as a controlled uniform-window run.
-Apart from the re-runs on `4ff2767` (one run per model, Qwen3.8 pending), no additional seeds, repeated runs on the
+Apart from the re-runs on `4ff2767` (one run per model), no additional seeds, repeated runs on the
 same code, human answer-quality assessment or multi-turn history ablation were performed.

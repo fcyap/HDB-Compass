@@ -3,10 +3,9 @@
 The raw result rows (`evaluation/results/prelim_*.jsonl`, 3-12 MB per run) are git-ignored. This folder holds what the
 main README cites: per-run summaries and a slim per-question CSV, so the principal quantitative comparisons can be checked without the
 raw rows. Detailed behavioural claims use selected evidence extracts or the original rows. Code commit in every row of the four
-open-weight initial runs: `23c9076`; in every row of the three finished re-runs (`q3m`, `gptm`, `gemm`): `4ff2767`;
-the hosted reference row `haiku55` records `a6e8557` (see below). Benchmark `evaluation/benchmark_hdb_90.json` (sha
-`0bbca6193b0a`) in all eight. The Qwen3.8 re-run (`q38m`, `q38m-noauditor`) is pending (phase B); its files are not
-here yet.
+open-weight initial runs: `23c9076`; in every row of the four re-runs (`q38m`, `q38m-noauditor`, `q3m`, `gptm`,
+`gemm`): `4ff2767`; the hosted reference row `haiku55` records `a6e8557` (see below). Benchmark
+`evaluation/benchmark_hdb_90.json` (sha `0bbca6193b0a`) in all nine.
 
 | Tag | Model | Status | Files |
 |---|---|---|---|
@@ -19,7 +18,8 @@ here yet.
 | `q3m` | Qwen/Qwen3-30B-A3B-GPTQ-Int4, re-run on `4ff2767` | complete: A, B, C 90 rows each (2 parallel streams, merged) | `q3m.csv`, `q3m.md`, `architecture_eval_q3m.md/.json`, `prelim_vllm_Qwen_Qwen3-30B-A3B-GPTQ-Int4_q3m.summary.json` |
 | `gptm` | openai/gpt-oss-20b, re-run on `4ff2767` | complete: A, B, C 90 rows each (3 parallel streams, merged) | `gptm.csv`, `gptm.md`, `architecture_eval_gptm.md/.json`, `prelim_vllm_openai_gpt-oss-20b_gptm.summary.json` |
 | `gemm` | nvidia/Gemma-4-26B-A4B-NVFP4, re-run on `4ff2767` | complete: A, B, C 90 rows each (5 parallel streams, merged; L40S, smoke test skipped) | `gemm.csv`, `gemm.md`, `architecture_eval_gemm.md/.json`, `prelim_vllm_nvidia_Gemma-4-26B-A4B-NVFP4_gemm.summary.json` |
-| `q38m`, `q38m-noauditor` | Qwen/Qwen3.8-27B-FP8, re-run on `4ff2767` | pending (phase B) | pending (phase B) |
+| `q38m` | Qwen/Qwen3.8-27B-FP8 (headline), re-run on `4ff2767` | complete: A, B, C 90 rows each (8 chunks from a shared queue, merged; 65,536 throughout) | `q38m.csv`, `q38m.md`, `architecture_eval_q38m.md/.json`, `prelim_vllm_Qwen_Qwen3.8-27B-FP8_q38m.summary.json` |
+| `q38m-noauditor` | same, Variant C with `HDB_AUDITOR=off`, re-run on `4ff2767` | complete: 90 rows | `q38m-noauditor.csv`, `prelim_vllm_Qwen_Qwen3.8-27B-FP8_q38m-noauditor.summary.json` |
 | `nomodel90_e71ad37_st` | no model (`LLM_PROFILE=none`), offline plumbing check | complete | `prelim_none_none_nomodel90_e71ad37_st.summary.json` |
 
 **CSV columns** (one row per variant and question; the last row per pair in the raw file wins, so reruns replace
@@ -37,11 +37,11 @@ interpolated p90, so p90 values can differ by a few seconds.
 python evaluation/reported_results/verify_results.py
 ```
 
-The standard-library script checks 2,250 CSV rows (eight runs of 270, plus the 90 auditor-off rows) against the eight
-JSON reports and recomputes task counts, Tool F1, Wilson intervals, exact paired McNemar comparisons (within each
+The standard-library script checks 2,610 CSV rows (nine runs of 270, plus two sets of 90 auditor-off rows) against
+the nine JSON reports and recomputes task counts, Tool F1, Wilson intervals, exact paired McNemar comparisons (within each
 run, and same-variant between every pair of runs), the before/after pairs of each initial run and its re-run
-(answers that changed in each direction, McNemar on all 90 and without F, change in mean latency and tokens) and
-token means. It prints the mean, conventional
+(answers that changed in each direction, McNemar on all 90 and without F, change in mean latency and tokens; for
+Qwen3.8 also the auditor-off pass), the auditor on/off comparison of both Qwen3.8 runs, and token means. It prints the mean, conventional
 median and upper-middle auditor token differences separately. It checks saved results, not answer-key validity.
 CSV latency is rounded; the main README's interpolated p90 uses unrounded raw latency.
 
@@ -51,16 +51,18 @@ explanation of model quality. Full answer text is not needed for these scorer-le
 
 `q38fp8_context_provenance.csv` records which final rows match the original 32,768-window backup in id, latency
 and token counts: A 33, B 79, C 20. False means not retained from that backup, rather than an independently
-recorded per-row server configuration. The live rows did not store server context size. Thus the headline run
-mixes windows; the auditor-on side also retains 20 older C rows.
+recorded per-row server configuration. The live rows did not store server context size. Thus the headline model's
+initial run mixes windows; the auditor-on side also retains 20 older C rows. Its re-run (`q38m`, `q38m-noauditor`)
+ran entirely at 65,536: both of its server jobs logged that window from start-up and no other server produced rows.
 
 `serving_evidence.md` records the Gemma server measurements. Other serving specifications in the README were
 transcribed from the earlier local model notes; the original logs are not included in these slim artifacts.
 
-The initial Experiment 1 runs used code `23c9076` and its 53-document policy corpus. The re-runs (`q3m`, `gptm`,
-`gemm`) used main `4ff2767`: the updated supervisor, complete-answer policy prompt and 55-document corpus, with the
-same serving scripts, and with each model's questions split into parallel streams against one server (so re-run
-latency is not comparable with the initial runs). `4ff2767` differs from Haiku's `a6e8557` only in the policy index
+The initial Experiment 1 runs used code `23c9076` and its 53-document policy corpus. The re-runs (`q38m`, `q38m-noauditor`,
+`q3m`, `gptm`, `gemm`) used main `4ff2767`: the updated supervisor, complete-answer policy prompt and 55-document corpus, with the
+same serving scripts, and with each model's questions split into parallel streams against one server (Qwen3.8: a
+shared queue of 8 question chunks served by 8 workers on one server and 4 on a second), so re-run latency is not
+comparable with the initial runs. `4ff2767` differs from Haiku's `a6e8557` only in the policy index
 text, one chat UI file and documentation. The re-run `.md` snapshots were produced with the same table code as
 `haiku55.md`, not by the local checkpoint helper. Current main's 55-document corpus and updated
 policy prompt are reported separately in Experiment 2; reproducing historical scores requires the earlier code,
@@ -76,7 +78,7 @@ not distributed; `verify_results.py` provides the tracked path for recomputing t
 | Evaluation concern | Evidence |
 |---|---|
 | Meaningful alternatives and trade-offs | Main README architecture comparison, 75-question headline comparison, latency and token tables |
-| Quantitative analysis | Four complete open-weight initial runs, three complete re-runs on the updated code (Qwen3.8 re-run pending), one hosted reference row, paired tests, before/after comparison, confidence intervals, auditor on/off comparison |
+| Quantitative analysis | Four complete open-weight initial runs, four complete re-runs on the updated code, one hosted reference row, paired tests, before/after comparison, confidence intervals, auditor on/off comparison |
 | Qualitative analysis | Main README failure examples and `qualitative_checks.json`; calculator behaviour and Category F caveats |
 | Debugging, risks and reflection | Main README earlier-run fixes, Gemma attempts, context-window provenance, threats to validity and next steps |
 | Reproducibility | Recorded code/data identifiers, model/serving settings, CSV verification command and current test results |
