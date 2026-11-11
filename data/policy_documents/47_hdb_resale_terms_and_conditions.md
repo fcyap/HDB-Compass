@@ -1,4 +1,4 @@
-# **<u>TERMS AND CONDITIONS OF SALE AND PURCHASE OF AN HDB RESALE FLAT</u>**
+# TERMS AND CONDITIONS OF SALE AND PURCHASE OF AN HDB RESALE FLAT
 
 **Source URL:** https://www.hdb.gov.sg/-/media/managing-my-home/selling-a-flat/process-for-selling-a-flat/option-to-purchase/Resale-Terms--Conditions.pdf?sc_lang=en&hash=9EF92CAB044AA54F4B093A670530BF1E
 **Publisher:** HDB
@@ -9,9 +9,9 @@
 **Content SHA256:** 3eb7d8097c76182e99c55b18b8cc8f660ff67febfddbc36c415c0415b4e3969f
 
 ---
-## **<u>TERMS AND CONDITIONS OF SALE AND PURCHASE OF AN HDB RESALE FLAT</u>**
+## TERMS AND CONDITIONS OF SALE AND PURCHASE OF AN HDB RESALE FLAT
 
-**<u>TERMS AND CONDITIONS OF SALE AND PURCHASE OF AN HDB RESALE FLAT</u>**
+**TERMS AND CONDITIONS OF SALE AND PURCHASE OF AN HDB RESALE FLAT**
 
 ## HOUSING & DEVELOPMENT BOARD
 
@@ -239,13 +239,13 @@ Under the Lease, HDB flat owners are responsible for maintaining the fixtures an
 
 #### 17 CANCELLATION OF RESALE APPLICATION BY SELLER/BUYER
 
-<u>Before Acceptance of Resale Application</u>
+Before Acceptance of Resale Application
 
 - 17.1 The resale application may be withdrawn by the seller or buyer at any time before the acceptance of the resale application by HDB upon notice in writing by either party to HDB.
 
 - 17.2 Upon such withdrawal, the administrative and valuation fees paid will not be refunded.
 
-#### <u>After Acceptance of Resale Application</u>
+#### After Acceptance of Resale Application
 
 - 17.3 HDB will only cancel the resale application upon receiving written confirmation from both the seller and buyer to that effect.
 
@@ -323,7 +323,7 @@ Where there are two or more buyers, the buyers must indicate in the resale appli
 
 - 24.3 The buyer who takes a housing loan from HDB must first use all his CPF savings in his Ordinary Account for the purchase of the flat up to the prevailing limits depending on the remaining lease of the flat before the loan is disbursed.  HDB may allow each buyer to retain up to $20,000 in his CPF Ordinary Account or such other amount as HDB may, at its sole discretion, decide (“retention amount”).  Once the buyer has endorsed the financial plan for the flat purchase, no change of the plan will be allowed.
 
-- 24.4 **<u>Use of proceeds from the sale/disposal of an existing or immediate past HDB flat/private residential property owned by the buyer and/or a member of the core family nucleus for the purchase of a next HDB flat with a second HDB Housing Loan at Concessionary Interest Rate</u>**
+- 24.4 **Use of proceeds from the sale/disposal of an existing or immediate past HDB flat/private residential property owned by the buyer and/or a member of the core family nucleus for the purchase of a next HDB flat with a second HDB Housing Loan at Concessionary Interest Rate**
 
 In clause 24.4, the manner of disposal includes disposal by way of transfer, surrender or compulsory acquisition.
 
@@ -423,15 +423,15 @@ The buyer must pay the prevailing stamp duties relating to the purchase of the f
 
 - 30.2 HDB in its discretion reserves the right to determine if the seller has satisfied the Minimum Occupation Period in accordance with the prevailing policies, rules and regulations. Without prejudice to the generality of the aforementioned, the current Minimum Occupation Period is as follows:
 
-   - <u>1-Room Flat</u>
+   - 1-Room Flat
 
       - No occupation period for owners of 1-room flat.
 
-   - <u>Subsidised Flat</u> **<u>and</u>** <u>Resale Flat bought under CPF Housing Grant Scheme.</u>
+   - Subsidised Flat **and** Resale Flat bought under CPF Housing Grant Scheme.
 
       - 5 years from the date of purchase of the flat or the resale completion.
 
-   - <u>Flat bought under Selective En-bloc Redevelopment Scheme (SERS)</u>
+   - Flat bought under Selective En-bloc Redevelopment Scheme (SERS)
 
 #### SERS sites announced before 7 Apr 2022
 
@@ -449,7 +449,7 @@ The buyer must pay the prevailing stamp duties relating to the purchase of the f
 
       - 5 years from the date of purchase of the replacement flat.
 
-   - <u>Resale Flat bought on the open market (without CPF Housing Grant)</u>
+   - Resale Flat bought on the open market (without CPF Housing Grant)
 
       - 5 years from the resale completion date.
 
@@ -505,7 +505,7 @@ The seller must pay the prevailing stamp duties relating to the sale of the flat
 
 - 34.4 Any payments made by HDB to the seller, including the cash proceeds, will be credited electronically to the bank account provided by the next working day after the resale completion.
 
-#### <u>NOTE:</u>
+#### NOTE:
 
 - **1 The Terms and Conditions of Sale and Purchase of an HDB Resale Flat contained in this form are valid at the time of update and are subject to HDB’s prevailing policies, rules and regulations.  HDB has the right to vary the terms and conditions of sale and purchase at any time.**
 

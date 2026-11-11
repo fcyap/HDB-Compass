@@ -167,6 +167,7 @@ def clean_title(title: Optional[str]) -> Optional[str]:
     """The page's own title without the site name before or after it ("CPFB | X", "X | HDB")."""
     if not title:
         return None
+    title = re.sub(r"[*_]{2,}", "", re.sub(r"</?[a-zA-Z]+>", "", title)).strip()   # PDF titles: "**<u>TITLE</u>**"
     title = re.sub(rf"^\s*{SITE_NAMES}\s*[|\-–:]\s*", "", title)
     title = re.sub(rf"\s*[|\-–]\s*{SITE_NAMES}\b.*$", "", title).strip()
     return None if not title or re.fullmatch(SITE_NAMES, title) else title
@@ -177,7 +178,7 @@ def extract_pdf(path: Path) -> Tuple[str, Optional[str], Optional[str]]:
     import pymupdf4llm
     body = strip_pdf_page_furniture(pymupdf4llm.to_markdown(str(path)))
     first = next((ln.strip("# ").strip() for ln in body.splitlines() if ln.strip()), None)
-    return body, first, None
+    return body, clean_title(first), None
 
 
 def strip_pdf_page_furniture(body: str) -> str:
@@ -202,6 +203,7 @@ def strip_pdf_page_furniture(body: str) -> str:
 
 
 _FOOTNOTE_REF = re.compile(r"<sup>[^<]*</sup>")
+_FORMAT_TAG = re.compile(r"</?(?:u|mark|sub|b|i|em|strong|span)>")
 _ESCAPED = re.compile(r"\\([\[\]()])")
 
 
@@ -274,6 +276,10 @@ def clean_body(body: str) -> str:
     text = "\n".join(lines)
     # footnote markers (<sup>[1]</sup>) are references, not words; escaped brackets read as plain brackets
     text = _ESCAPED.sub(r"\1", _FOOTNOTE_REF.sub("", text))
+    # inline formatting the PDF and HTML converters write as tags (underline, highlight, small text): the words stay,
+    # the tags go, otherwise they show in answers and section headings ("<u>Disbursement of ...</u>"); a line break
+    # inside a table cell becomes a space, since a cell must stay on one line
+    text = _FORMAT_TAG.sub("", text).replace("<br>", " ")
     text = re.sub(r"(\S)[ \t]+\*\*(?=\s*\||\s*$)", r"\1**", text, flags=re.M)   # "**term **" left by a removed marker
     text = lift_footnote_rows(merge_banner_headers(text))
     return re.sub(r"\n{3,}", "\n\n", text).strip()

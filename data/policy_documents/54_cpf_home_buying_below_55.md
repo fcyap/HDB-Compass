@@ -30,7 +30,7 @@ Having thought through these considerations, if you are ready to proceed with yo
 3. Ordinary Account savings (including CPF housing refunds from the sale of current flat)
 4. CPF housing grant (if eligible)
 
-Use the **<u>Home Purchase Planner</u>**, which estimates your maximum home purchase budget based on your finances and helps you visualise the impact of the purchase on your retirement payout.
+Use the **Home Purchase Planner**, which estimates your maximum home purchase budget based on your finances and helps you visualise the impact of the purchase on your retirement payout.
 
 *An example of a potential Home Purchase Planner budget*
 
@@ -44,7 +44,7 @@ Check your **Home ownership dashboard** for available savings that you can use 
 
 Sale proceeds from your current flat can be used to finance your next home, but not all may be available. If you're above 55 and haven't met the Full Retirement Sum, part of CPF housing refunds may go to your Retirement Account.
 
-If you are purchasing a resale flat next, use our **<u>Housing Usage Calculator</u>** to estimate your CPF usage based on the remaining lease.
+If you are purchasing a resale flat next, use our **Housing Usage Calculator** to estimate your CPF usage based on the remaining lease.
 
 Apply for an HDB Flat Eligibility letter to find out if you can purchase a new or resale flat, as well as the amounts of CPF housing grants and HDB housing loan you are eligible for.
 

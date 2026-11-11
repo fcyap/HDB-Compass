@@ -99,7 +99,7 @@ FT(PMC) households will receive an additional ballot chance on top of the two ba
 
 - (c) First-timer families, including FT(PMC) households, will be given more chances than the Second-timer families in the balloting, subject to the prevailing policy on ethnic limits and quota of flats available for booking.
 
-- (d)  First-timer families, including FT(PMC) households, who have a chance to book a flat based on their balloted queue number will be deemed successful in their flat application.  All additional chances accumulated from previous unsuccessful applications starting from Oct 2024 sales launch will be considered used up. This will also apply to towns where HDB has grouped certain flat types together for offer under the same Flat Application Category, such as 5-room and Executive Flats.  First-timer applicants who do not book a flat after one successful application will not be able to enjoy the <u>privileges given to First-timers</u> for a period of one year when they participate in subsequent sales exercises.
+- (d)  First-timer families, including FT(PMC) households, who have a chance to book a flat based on their balloted queue number will be deemed successful in their flat application.  All additional chances accumulated from previous unsuccessful applications starting from Oct 2024 sales launch will be considered used up. This will also apply to towns where HDB has grouped certain flat types together for offer under the same Flat Application Category, such as 5-room and Executive Flats.  First-timer applicants who do not book a flat after one successful application will not be able to enjoy the privileges given to First-timers for a period of one year when they participate in subsequent sales exercises.
 
 During the one-year period, if the First-timer family, including FT(PMC), continues to turn down another chance to book a flat, they will continue to have the First-timer privileges removed for a further period of one year.
 
@@ -119,11 +119,11 @@ Clause 1.2c to 1.2e does not apply to short-lease 2-room Flexi flat and Communit
 
 - # From the October 2024 sales launch onwards, new BTO projects will be classified as Standard, Plus, and Prime based on their locational attributes:
 
-<mark>(i)</mark> **<mark>Standard flats</mark>** <mark>will come with the standard subsidies and standard</mark> <u><mark>restrictions that are applied to all BTO flats. They will continue to form the bulk of</mark></u> <mark>the housing supply.</mark>
+(i) **Standard flats** will come with the standard subsidies and standard restrictions that are applied to all BTO flats. They will continue to form the bulk of the housing supply.
 
-<mark>(ii)</mark> **<mark>Plus flats,</mark>** <mark>a new category of flats, will be in choicer locations within each region across Singapore (e.g. near MRT station, town centre). These flats will come with more subsidies and tighter restrictions, compared to the Standard BTO flats.</mark>
+(ii) **Plus flats,** a new category of flats, will be in choicer locations within each region across Singapore (e.g. near MRT station, town centre). These flats will come with more subsidies and tighter restrictions, compared to the Standard BTO flats.
 
-<mark>(iii)</mark> **<mark>Prime flats</mark>** <mark>are in the choicest locations within Singapore, usually closer to the city centre. They will come with the most subsidies across the three categories and will have the tightest conditions. These flats were previously offered under the PLH model.</mark>
+(iii) **Prime flats** are in the choicest locations within Singapore, usually closer to the city centre. They will come with the most subsidies across the three categories and will have the tightest conditions. These flats were previously offered under the PLH model.
 
 - 1.3 Applications under the Family and Parenthood Priority Scheme (Not applicable to Open Booking of flats and applications for Community Care Apartments)
 
@@ -183,9 +183,9 @@ Any person listed in the flat application who is single at point of application 
 
 |Point of Payment|Item(s) payable|
 |---|---|
-|(i) During flat Booking|Option Fee of from $500 to $2,000 (based on<br>the type of flat booked), before HDB grants an<br>Option to Purchase|
-|(ii) Before Signing<br>Agreement for Lease|Downpayment,<br>related<br>stamp<br>duty<br>and<br>conveyancing fees to the appointed solicitor<br>before the expiry of the Option|
-|(iii) Before taking<br>possession of flat|Resale levy (for second-timer applicants)<br>Balance purchase price, related stamp duty and<br>conveyancing fees to the appointed solicitor<br>Required payment for the Basic Service<br>Package (for Community Care Apartments)|
+|(i) During flat Booking|Option Fee of from $500 to $2,000 (based on the type of flat booked), before HDB grants an Option to Purchase|
+|(ii) Before Signing Agreement for Lease|Downpayment, related stamp duty and conveyancing fees to the appointed solicitor before the expiry of the Option|
+|(iii) Before taking possession of flat|Resale levy (for second-timer applicants) Balance purchase price, related stamp duty and conveyancing fees to the appointed solicitor Required payment for the Basic Service Package (for Community Care Apartments)|
 
 - b) HDB will notify the applicants via SMS/email when the payments are due. Payments will be made via the payment modes specified by HDB in the SMS/ email notification.
 
@@ -325,7 +325,7 @@ not be allowed to participate in the subsequent sales launches, including the Op
 
 You may wish to apply for an HDB flat under one of the following Priority or Assistance schemes. The conditions for these schemes (known as the 'Conditions of the Scheme') are in addition to all of HDB's conditions for purchase. If there is any inconsistency between the Conditions of the Scheme and the General Conditions For Purchase of a flat, the Conditions of the Scheme shall prevail.
 
-You can apply for **<u>only one</u>** Priority Scheme and will be given priority allocation in accordance with HDB’s prevailing policies.
+You can apply for **only one** Priority Scheme and will be given priority allocation in accordance with HDB’s prevailing policies.
 
 In the event of death, divorce or separation of any person listed in your application after approval of the application under any of the Priority Schemes, you must provide the relevant documents (e.g. Death Certificate, divorce documents, Deed of Separation) to HDB for verification within 14 days from the date of the demise, divorce or separation respectively.
 
@@ -389,7 +389,7 @@ During this period, you must ensure that these children:
 
 To be eligible for the FCS (Proximity), you must meet the following conditions:
 
-- (a) <u>Living with Parents/Child(ren) within the 5-year minimum occupation period (10-year for Plus flats and Prime flats)</u>
+- (a) Living with Parents/Child(ren) within the 5-year minimum occupation period (10-year for Plus flats and Prime flats)
 
    - (i) If you list your parents/married child in your application to live with you, at least 1 parent/married child must be a Singapore citizen/ Singapore permanent resident.  If you list your single child(ren) (including divorced/widowed/separated persons without a child) in your application to live with you, at least 1 single child must be at least aged 35 and a Singapore citizen/Singapore permanent resident.
 
@@ -405,7 +405,7 @@ To be eligible for the FCS (Proximity), you must meet the following conditions:
 
    - (iv) If you or your occupiers are existing tenants of an HDB rental flat, you must terminate the tenancy and surrender vacant possession of the rental flat to HDB within 4 months from the date of taking possession of your new flat.
 
-- (b) <u>Living Near Parents/Child(ren)</u>
+- (b) Living Near Parents/Child(ren)
 
    - (i) If you are applying to live near your parents/married child, at least 1 parent/married child must be a Singapore citizen/Singapore permanent resident. If you are applying to live near your single child (including divorced/widowed/separated persons without a child), the single child must be at least aged 35 and a Singapore citizen/Singapore permanent resident.
 
@@ -441,7 +441,7 @@ You and your parents/child(ren) are responsible for informing HDB if any of you 
 
 - 5.5 Family Care Scheme (FCS) (Joint Balloting)
 
-   - (a) To buy a flat under FCS (Joint Balloting), you must submit a combined application: a “Parents Application” for a 2-room Flexi/3-room flat <u>and</u> a “Child Application” for a 2-room Flexi/3-room/4-room/5-room flat.  Single child is only eligible for 2-room Flexi flat.  There must be a proven parentchild relationship between the Parents and Child and both must be applicants of their respective applications.
+   - (a) To buy a flat under FCS (Joint Balloting), you must submit a combined application: a “Parents Application” for a 2-room Flexi/3-room flat and a “Child Application” for a 2-room Flexi/3-room/4-room/5-room flat.  Single child is only eligible for 2-room Flexi flat.  There must be a proven parentchild relationship between the Parents and Child and both must be applicants of their respective applications.
 
    - (b) Under the FCS (Joint Balloting), both the Parents and Child can only book a flat in the same BTO project.
 
@@ -463,7 +463,7 @@ You and your parents/child(ren) are responsible for informing HDB if any of you 
 
 - (h) If the Parents or Child applicants become ineligible to buy or retain their respective flat under the FCS (Joint Balloting) and HDB's prevailing policies/ conditions in force from time to time, both applications shall be cancelled at the discretion of HDB and all monies paid will be forfeited.
 
-- (i) The Parents and Child applicants are required to sign the Agreement for Lease and make the required downpayment for their respective units at the <u>same time. If either the Parents or the Child applicants do not proceed with</u> the signing of the Agreement for Lease and make payment, both applications will be cancelled, and the option fees will be forfeited.
+- (i) The Parents and Child applicants are required to sign the Agreement for Lease and make the required downpayment for their respective units at the same time. If either the Parents or the Child applicants do not proceed with the signing of the Agreement for Lease and make payment, both applications will be cancelled, and the option fees will be forfeited.
 
 - (j) The Parents or Child applicants will be required to collect the keys and take possession of their respective units and pay up the balance purchase price upon receipt of HDB’s written notice to do so. If the Parents or  Child applicants fail or refuse to do so, both the Parents and Child Applications will be cancelled.
 
@@ -551,9 +551,9 @@ To qualify for joint balloting, you must meet the following conditions:
 
 and their spouses reach at least age 95. You will select your lease period during flat booking.  However, if you are married and your chosen lease cannot cover your spouse till age of 95, your application will be cancelled, and you will forfeit any deposit or fees as determined by HDB.
 
-|**Age of youngest**<br>**applicant/**|**L**|**ease period**|**Age of youngest**<br>**Owner/ spouse-**|
+|**Age of youngest** **applicant/**|**L**|**ease period**|**Age of youngest** **Owner/ spouse-**|
 |---|---|---|---|
-|**spouse-Occupier**<br>**at HFE**<br>**application**|**Minimum**<br>**(Years)**|**Other Options**<br>**(Years)**|**occupier at the**<br>**end of minimum**<br>**lease**|
+|**spouse-Occupier** **at HFE** **application**|**Minimum** **(Years)**|**Other Options** **(Years)**|**occupier at the** **end of minimum** **lease**|
 |55 to 59|40|45|95 to 99|
 |60 to 64|35|40,45|95 to 99|
 |65to 69|30|35,40,45|95to 99|
@@ -579,21 +579,21 @@ The Enhanced CPF Housing Grant (EHG) will be disbursed to you and/or occupiers (
 
 Where there is more than one eligible family nucleus, you must decide which family nucleus will receive the Enhanced CPF Housing Grant, subject to HDB's prevailing policies.
 
-<u>Disbursement of Enhanced CPF Housing Grant to Parents applying with Unmarried child</u>
+Disbursement of Enhanced CPF Housing Grant to Parents applying with Unmarried child
 
 Without prejudice to any other rights, HDB  may  also  at its  discretion  allow your parents to receive the Enhanced CPF Housing Grant, if you, the unmarried child, is the only one who meets all the eligibility criteria for the grant, subject to HDB's  prevailing  policies. At least one of your parents must be a Singapore citizen and your household must also meet all other eligibility criteria for the Enhanced CPF Housing Grant.  You must not, within the 5-year period (for Standard flats and unclassified flats) or within the 10-year period (for Plus flats and Prime flats) after taking possession of the flat, sell, assign, transfer or otherwise dispose your interest in the flat to any person except to HDB. Under these terms, you would not be able to request for a transfer to become an occupier whilst you serve out the rest of the MOP.
 
 Where there is more than 1 unmarried child who is a co-applicant and meet all the requirements for the Enhanced CPF Housing Grant, you must decide which unmarried child cannot within the 5-year period (for Standard flats and unclassified flats) or within the 10-year period (for Plus flats and Prime flats) after taking possession of the flat, sell, assign, transfer or otherwise dispose your interest in the flat to any person except to HDB. Under these terms, the unmarried child would not be able to request for a transfer to become an occupier whilst he/she serves out the rest of the MOP.
 
-<u>Disbursement of Enhanced CPF Housing Grant to couples comprising a firsttimer and a second-timer applicant</u>
+Disbursement of Enhanced CPF Housing Grant to couples comprising a firsttimer and a second-timer applicant
 
 The Enhanced CPF Housing Grant for Singles will be disbursed solely into the CPF account of the First-timer citizen/Singapore permanent resident applicant or occupier, unless you have previously received an Additional CPF Housing Grant/Special CPF Housing Grant/ Enhanced CPF Housing Grant.
 
-<u>Disbursement of Enhanced CPF Housing Grant to Joint Singles Scheme applicants comprising a first-timer single and a second-timer single buying a short-lease 2-room Flexi flat</u>
+Disbursement of Enhanced CPF Housing Grant to Joint Singles Scheme applicants comprising a first-timer single and a second-timer single buying a short-lease 2-room Flexi flat
 
 The Enhanced CPF Housing Grant for Singles will be disbursed solely into the CPF account of the eligible First-timer citizen single, who shall be a coapplicant of the flat purchase.
 
-<u>Disbursement of Enhanced CPF Housing Grant to Orphans</u>
+Disbursement of Enhanced CPF Housing Grant to Orphans
 
 Where there is only **one** eligible single citizen applicant who is at least  21 years old at the time of the HFE application and he meets the following conditions:
 
@@ -689,7 +689,7 @@ HDB will only credit the Step-Up CPF Housing Grant into the CPF Ordinary Account
 
 The Step-Up CPF Housing Grant can only be given to a maximum of two applicants/occupiers (who are husband and wife) in a family nucleus. Where there is more than one eligible family nucleus, you must decide which family nucleus will receive the Step-Up CPF Housing Grant, subject to HDB's prevailing policies.
 
-## <u>Disbursement of Step-Up CPF Housing Grant to Parents applying with Unmarried Child</u>
+## Disbursement of Step-Up CPF Housing Grant to Parents applying with Unmarried Child
 
 Without prejudice to any other rights, HDB may also at its discretion allow parents to receive the Step-Up CPF Housing Grant, if you, the unmarried child, is the only one who meets all the eligibility criteria for the grant, subject to HDB's prevailing policies. At least one of your parents must be a Singapore citizen and your household must also meet all other eligibility criteria for the Step-Up CPF Housing Grant. You must not within 5 years after taking possession of the flat, sell, assign, transfer or otherwise dispose your interest in the flat to any person except to HDB. Under these terms, you would not be able to request for a transfer to become an occupier whilst you serve out the rest of the MOP.
 
@@ -753,7 +753,7 @@ HDB reserves the right to add, delete and/ or vary any of the Conditions of the 
 
    - (b) If you are taking a mortgage loan from banks or financial institutions licensed by the Monetary Authority of Singapore (MAS), you must pay 20% of the flat’s purchase price as downpayment.
 
-- 9.2 If you are taking a mortgage loan from banks or financial institutions licensed by the Monetary Authority of Singapore (MAS), you must comply with prevailing regulations and guidelines imposed by MAS and the respective banks or financial institutions including stipulations relating to the Loan-To-Value (LTV) limit and <u>cash downpayment.</u>
+- 9.2 If you are taking a mortgage loan from banks or financial institutions licensed by the Monetary Authority of Singapore (MAS), you must comply with prevailing regulations and guidelines imposed by MAS and the respective banks or financial institutions including stipulations relating to the Loan-To-Value (LTV) limit and cash downpayment.
 
 - 10 TAKING POSSESSION OF FLAT
 
@@ -779,11 +779,11 @@ If you fail to pay for the BSP as outlined in your BSP Agreement signed with the
 
 - 10.5 Disposal of Existing Flat / Property
 
-   - (a) If you or any occupier listed in your application owns an existing HDB flat (including DBSS flat), you must dispose of /relinquish your interest in the flat within <u>6 months of taking possession of your new flat. The disposal/</u> relinquishment of the existing flat is subject to HDB's approval and prevailing policies. Any HDB approvals for renting out your existing flat will also be revoked after six months from taking possession of your new flat.
+   - (a) If you or any occupier listed in your application owns an existing HDB flat (including DBSS flat), you must dispose of /relinquish your interest in the flat within 6 months of taking possession of your new flat. The disposal/ relinquishment of the existing flat is subject to HDB's approval and prevailing policies. Any HDB approvals for renting out your existing flat will also be revoked after six months from taking possession of your new flat.
 
    - (b) If you or any occupier are existing tenants of an HDB rental flat, you must terminate the tenancy and surrender vacant possession of the rental flat to HDB within 4 months of taking possession of your new flat.
 
-   - (c) If you or any occupier listed in an application buying a short-lease 2-room Flexi flat or CCA own or have an interest in a private property, you must dispose of any interest in the private property within <u>6 months of taking</u> possession of your new flat.
+   - (c) If you or any occupier listed in an application buying a short-lease 2-room Flexi flat or CCA own or have an interest in a private property, you must dispose of any interest in the private property within 6 months of taking possession of your new flat.
 
 - 11 AFTER TAKING POSSESSION OF FLAT
 
@@ -875,7 +875,7 @@ HDB reserves the right to debar any person who makes a false statement from buyi
 
 To find out more about HDB's Data Protection and Privacy policy, please visit HDB InfoWEB at www.hdb.gov.sg/privacy-statement. HDB's Privacy Statement is subject to changes from time to time. HDB reserves the right to add, delete and/or vary the Privacy Statement at any time. All decisions made by HDB shall be final and conclusive.
 
-<u>Note:</u>
+Note:
 
 The acceptance of any application does not constitute an approval for purchasing a flat from HDB. Your eligibility to buy a flat will be assessed under the prevailing policies. You are required to produce relevant supporting documents to confirm your eligibility for the flat purchase as and when required to do so.
 

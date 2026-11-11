@@ -161,11 +161,11 @@ The BSD remission may be considered, subject to the following conditions:
   2. The date that regulatory approval (e.g. WP) is granted for the development of residential units; and
 6. Pay the amount recoverable by the COSD under condition (e) at the place stated and in the manner provided in a notice served by the COSD within one month after the service of the notice by the COSD.
 
-<sub>Notes</sub>
+Notes
 
-<sub> Imposed by the relevant authorities.</sub>
+ Imposed by the relevant authorities.
 
-<sub> X% refers to the specific percentage (based on GFA) of the site that must be used/developed for non-residential purposes.</sub>
+ X% refers to the specific percentage (based on GFA) of the site that must be used/developed for non-residential purposes.
 
 ### B. BSD remission for acquisition of residential land without use restriction for 100% non-residential development
 
@@ -186,9 +186,9 @@ A buyer who acquires a residential land that does not have any use restriction 
 5. Pay the amount recoverable by the COSD under condition (d) at the place stated and in the manner provided in a notice served by the COSD within one month after the service of the notice by the COSD.
 For other remissions, please refer to Common Stamp Duty Remissions and Reliefs for Property.
 
-<sub>Notes</sub>
+Notes
 
-<sub> Imposed by the relevant authorities.</sub>
+ Imposed by the relevant authorities.
 
 ## How to apply
 
