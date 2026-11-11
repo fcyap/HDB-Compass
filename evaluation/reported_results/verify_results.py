@@ -11,8 +11,12 @@ import math
 import statistics
 
 ROOT = Path(__file__).resolve().parent
-TAGS = ('q38fp8', 'q330b90', 'gptoss90', 'gemma4nvfp90', 'haiku55')
-# haiku55 is the hosted reference row (Anthropic API, code a6e8557); the other four are the open-weight runs (code 23c9076).
+TAGS = ('q38fp8', 'q330b90', 'gptoss90', 'gemma4nvfp90', 'haiku55', 'q3m', 'gptm', 'gemm')
+# q38fp8, q330b90, gptoss90, gemma4nvfp90: initial open-weight runs (code 23c9076).
+# haiku55: hosted reference row (Anthropic API, code a6e8557).
+# q3m, gptm, gemm: re-runs of three open-weight models on code 4ff2767. The Qwen3.8 re-run (q38m, q38m-noauditor) is
+# pending (phase B) and not yet tracked here.
+RERUNS = (('q330b90', 'q3m'), ('gptoss90', 'gptm'), ('gemma4nvfp90', 'gemm'))
 
 
 def require(condition, message):
@@ -84,6 +88,15 @@ def main():
     for first, second in itertools.combinations(TAGS, 2):
         same = [paired([r for r in all_rows[first] if r['variant'] == v], [r for r in all_rows[second] if r['variant'] == v]) for v in 'ABC']
         print(f'Same variant {first} vs {second}: A {same[0]}; B {same[1]}; C {same[2]}')
+    for initial, rerun in RERUNS:
+        for v in 'ABC':
+            a = [r for r in all_rows[initial] if r['variant'] == v]
+            b = [r for r in all_rows[rerun] if r['variant'] == v]
+            d_lat = statistics.mean(float(r['latency_s']) for r in b) - statistics.mean(float(r['latency_s']) for r in a)
+            d_tok = statistics.mean(r['total_tokens'] for r in b) - statistics.mean(r['total_tokens'] for r in a)
+            print(f'Before/after {initial} -> {rerun} {v}: {sum(r["passed"] for r in a)} -> {sum(r["passed"] for r in b)} of 90; '
+                  f'fail->pass/pass->fail all {paired(b, a)}; without F {paired(b, a, True)}; '
+                  f'mean latency {d_lat:+.1f} s (CSV, rounded); mean total tokens {d_tok:+,.0f}')
     on = [r for r in all_rows['q38fp8'] if r['variant'] == 'C']
     off = load('q38fp8-noauditor')
     require(len(off) == 90 and {r['variant'] for r in off} == {'C'}, 'Expected 90 auditor-off C rows')
