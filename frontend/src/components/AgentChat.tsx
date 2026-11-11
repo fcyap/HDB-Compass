@@ -1,6 +1,24 @@
 import React, { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import type { Components } from 'react-markdown';
+
+// A link the answer wrote as a bare URL ("... remains unchanged https://www.hdb.gov.sg/...") is shown as a short
+// source label, "(hdb.gov.sg)", with the full address on hover, instead of a long address run into the sentence.
+// Links with their own text are left as they are. Every link opens in a new tab.
+function SourceLink({ href, children, node: _node, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { node?: unknown }) {
+  const text = Array.isArray(children) ? children.join('') : String(children ?? '');
+  let label: React.ReactNode = children;
+  if (href && /^https?:\/\//.test(text.trim())) {
+    try {
+      label = `(${new URL(href).hostname.replace(/^www\./, '')})`;
+    } catch {
+      label = '(source)';
+    }
+  }
+  return <a {...props} href={href} title={href} target="_blank" rel="noopener noreferrer">{label}</a>;
+}
+const MARKDOWN_COMPONENTS: Components = { a: SourceLink };
 import {
   ChevronDown,
   ChevronRight,
@@ -254,7 +272,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                 {msg.status === 'running' && !msg.structuredData && msg.streamText ? (
                   <div className="agent-card-body">
                     <div className="agent-summary-text streaming">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.streamText}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{msg.streamText}</ReactMarkdown>
                       <span className="stream-caret" aria-hidden="true" />
                     </div>
                   </div>
@@ -270,7 +288,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                   <div className="agent-summary-text">
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
-                      components={{ a: (props) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}
+                      components={MARKDOWN_COMPONENTS}
                     >
                       {msg.text.includes(DETAILS_SEP) ? msg.text.split(DETAILS_SEP)[0] : msg.text}
                     </ReactMarkdown>
@@ -281,7 +299,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({
                       <div className="agent-summary-text">
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
-                          components={{ a: (props) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}
+                          components={MARKDOWN_COMPONENTS}
                         >
                           {msg.text.split(DETAILS_SEP).slice(1).join(DETAILS_SEP)}
                         </ReactMarkdown>
