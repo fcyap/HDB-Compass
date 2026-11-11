@@ -16,9 +16,9 @@ retrieval against exact clauses from the verified fact sheet (evaluation/policy_
         RAG-3  RAG-2 plus an LLM query rewrite and entity-graph expansion
       Context recall, context precision (MAP@5), MRR, latency.
   2E  Generation: RAG-2's passages (the app's pipeline) answered by three generator models, gemini-3.5-flash-lite
-      (the app's), gemini-3.5-flash and qwen3.8-27b (LLM_E2E_GENERATORS), plus the app's model with the
-      complete-answer prompt (agents/policy_agent.ANSWER_STYLES). Same passages throughout, so only the writer or the
-      wording changes. The `ragas` library scores Faithfulness and Answer Relevancy (judge Groq gpt-oss-120b) and, once
+      (the app's), gemini-3.5-flash and qwen3.8-27b (LLM_E2E_GENERATORS), with the app's answer prompt. Same passages
+      throughout, so only the writer changes. (The 11 Nov run also compared two answer prompts; the "complete" one
+      won and is now the only prompt, see agents/policy_agent.py.) The `ragas` library scores Faithfulness and Answer Relevancy (judge Groq gpt-oss-120b) and, once
       per question, RAGAS Context Recall and Context Precision against the fact-sheet reference (Groq gpt-oss-20b);
       the judges are OpenAI models, a different family from every generator, so no model grades its own answers.
       Fact coverage (gold clauses in the answer) and citation compliance are scored by code. Answers and scores are
@@ -52,7 +52,6 @@ PIPELINE_NAMES = {
     "RAG-1": "RAG-1 (Naive Dense Vector)",
     "RAG-2": "RAG-2 (Hybrid + Cross-Encoder)",
     "RAG-3": "RAG-3 (RAG-2 + Rewrite + Graph)",
-    "RAG-2 complete": "RAG-2, app model, complete prompt",
 }
 
 CATEGORY_C_FILE = PROJECT_ROOT / "evaluation" / "category_c_queries.json"
@@ -421,6 +420,9 @@ def generator_client(spec: str) -> Any:
     return _GENERATOR_CLIENTS[spec]
 
 
+# The answer prompt the cached answers were written with (agents/policy_agent.py). Change it when that prompt changes.
+PROMPT_VERSION = "prompt=complete-2026-11-11"
+
 SCORE_GROUPS = {"generation": ("llm_faithfulness", "llm_answer_relevance"),
                 "retrieval": ("ragas_context_recall", "ragas_context_precision")}
 JUDGE_LABEL_FIELD = {"generation": "judge", "retrieval": "retrieval_judge"}
@@ -474,7 +476,6 @@ def evaluate_query_end_to_end(
     test_case: Dict[str, Any],
     pipeline: str,
     use_llm: bool = False,
-    style: Optional[str] = None,
     generator: Optional[str] = None,
 ) -> Dict[str, Any]:
     """One question through one pipeline: retrieval metrics (2D) and, with use_llm, the LLM answer and the four ragas
@@ -510,10 +511,10 @@ def evaluate_query_end_to_end(
     if use_llm:
         contexts = [f"(Source: {p['source_url']}) {p['text']}" for p in passage_dicts]
 
-        # style: the answer-style prompt (agents/policy_agent.ANSWER_STYLES); generator: a "profile:model" other than
-        # the app's. The app's own row keeps its original cache key and is the one that also judges retrieval (the
-        # passages are the same in every variant, so their RAGAS context scores are computed once).
-        variant = ([f"style={style}"] if style else []) + ([f"generator={generator}"] if generator else [])
+        # generator: a "profile:model" other than the app's. The app's own row is the one that also judges retrieval
+        # (the passages are the same for every generator, so their RAGAS context scores are computed once).
+        # PROMPT_VERSION keeps answers written with an earlier answer prompt from being reused.
+        variant = [f"generator={generator}"] if generator else []
         judges: Dict[str, Judge] = {
             "generation": (lambda row: _generation_judge(query, row["llm_answer"] or "", contexts)[1],
                            lambda row: llm_judge(query, row["llm_answer"] or "", contexts))}
@@ -522,9 +523,8 @@ def evaluate_query_end_to_end(
                                    lambda row: retrieval_judge(query, contexts, reference_answer(test_case)))
         client = generator_client(generator) if generator else None
         extra = _cached(
-            [pipeline, test_case["id"], query, *contexts] + variant,
-            lambda: answer_metrics(test_case, PolicyRagAgent.generate_llm_answer(query, passage_dicts, style=style,
-                                                                                 llm=client)),
+            [pipeline, test_case["id"], query, *contexts, PROMPT_VERSION] + variant,
+            lambda: answer_metrics(test_case, PolicyRagAgent.generate_llm_answer(query, passage_dicts, llm=client)),
             judges)
 
     return {
@@ -858,10 +858,6 @@ def run_ablation(generation: bool = True, limit: Optional[int] = None):
             label = f"RAG-2 · {spec.split(':', 1)[1]}"
             generation_results[label] = [{**evaluate_query_end_to_end(case, "RAG-2", use_llm=True, generator=spec),
                                           "pipeline": label} for case in all_cases]
-        print("--> 2E generation: RAG-2 passages, app model, complete-answer prompt ...")
-        generation_results["RAG-2 complete"] = [
-            {**evaluate_query_end_to_end(case, "RAG-2", use_llm=True, style="complete"), "pipeline": "RAG-2 complete"}
-            for case in all_cases]
         exp_2e = _by_category(generation_results)
         for group, label in (("category_c", "Category C"), ("category_e", "Category E"), ("combined", "Combined C + E")):
             print_generation_table(f"EXPERIMENT 2E: GENERATION on RAG-2's passages - ragas; judges "
