@@ -41,6 +41,22 @@ The historical baseline was 1,906 passed, 17 skipped, 6 failed. The same six fai
 - Experiment runner shell scripts pass `bash -n`; the Python report command's `--help` parses.
 - JSON files parse; whitespace, merge-marker, private-path/token and commit-attribution checks pass.
 
+## Hosted reference row `haiku55` (added 12 Nov 2026)
+
+- The merged raw file (270 rows, all `ok`, commit `a6e8557`) is row-for-row identical to the three per-variant
+  originals apart from the added `tag` field.
+- `haiku55.csv` against the merged rows: 270 of 270 variant/question pairs, 0 mismatches in status, category,
+  success, Tool F1 and tokens; latency within CSV rounding (7 rows sit exactly on the 0.05 s rounding boundary).
+- The CSV builder, applied to the other runs' raw rows, reproduces their tracked CSVs (same rows; row order differs
+  for runs with reruns).
+- `architecture_eval_haiku55.md/.json` come from `python -m evaluation.run_architecture_eval --report --no-ablation
+  --tag haiku55` on main `34259a2` (the reporter accepts a hosted row; it only reads saved rows). The same command
+  reproduces the tracked `gemma4nvfp90` JSON byte for byte (its Markdown differs only by a trailing blank line).
+  The summary JSON comes from `run_category_e_prelim.summarise`, which reproduces the tracked `q330b90` summary
+  byte for byte.
+- `verify_results.py` now includes `haiku55` and passes: 1,440 tracked rows agree with the five JSON reports.
+- Not checked: the effort level the API applied, the billed cost, and per-call prompt sizes (not recorded in the rows).
+
 ## Interpretation limits
 
 Qwen3.8 retains 132 successful rows from its original smaller context window, including 20 C rows on the auditor-on

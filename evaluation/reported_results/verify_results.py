@@ -11,7 +11,8 @@ import math
 import statistics
 
 ROOT = Path(__file__).resolve().parent
-TAGS = ('q38fp8', 'q330b90', 'gptoss90', 'gemma4nvfp90')
+TAGS = ('q38fp8', 'q330b90', 'gptoss90', 'gemma4nvfp90', 'haiku55')
+# haiku55 is the hosted reference row (Anthropic API, code a6e8557); the other four are the open-weight runs (code 23c9076).
 
 
 def require(condition, message):
@@ -81,7 +82,8 @@ def main():
             b = [r for r in rows if r['variant'] == second]
             print(f'{tag} {first} vs {second}: all {paired(a,b)}; without F {paired(a,b,True)}')
     for first, second in itertools.combinations(TAGS, 2):
-        print(f'C {first} vs {second}: {paired([r for r in all_rows[first] if r["variant"] == "C"], [r for r in all_rows[second] if r["variant"] == "C"])}')
+        same = [paired([r for r in all_rows[first] if r['variant'] == v], [r for r in all_rows[second] if r['variant'] == v]) for v in 'ABC']
+        print(f'Same variant {first} vs {second}: A {same[0]}; B {same[1]}; C {same[2]}')
     on = [r for r in all_rows['q38fp8'] if r['variant'] == 'C']
     off = load('q38fp8-noauditor')
     require(len(off) == 90 and {r['variant'] for r in off} == {'C'}, 'Expected 90 auditor-off C rows')
@@ -89,7 +91,8 @@ def main():
     off_by_id = {r['id']: r for r in off}
     deltas = [r['total_tokens']-off_by_id[r['id']]['total_tokens'] for r in on]
     print(f'Auditor extra tokens: mean {statistics.mean(deltas):.3f}; median {statistics.median(deltas):g}; upper-middle {sorted(deltas)[len(deltas)//2]}')
-    print('Verified 1,170 tracked rows and agreement with per-model JSON task counts and Tool F1.')
+    total = sum(len(rows) for rows in all_rows.values()) + len(off)
+    print(f'Verified {total:,} tracked rows and agreement with per-model JSON task counts and Tool F1.')
 
 
 if __name__ == '__main__':
