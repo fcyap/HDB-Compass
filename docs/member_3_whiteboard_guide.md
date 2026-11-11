@@ -68,27 +68,42 @@ Pacing check: about 60–70 spoken words per 20 seconds. If you run long, drop t
 - **"No rule" gate:** best cross-encoder score below -3.2 → "I couldn't find an HDB rule". Raw BM25 could not separate
   short policy questions from off-topic ones.
 
-### Evaluation (`evaluation/run_rag_ablation.py`, 15 Category C + 15 Category E questions)
+### Evaluation (`evaluation/run_rag_ablation.py`, Experiments 2A-2E, 15 Category C + 15 Category E questions)
+
+- **2A chunking strategy:** semantic table-preserving chunks break 0 tables (fixed 256 tokens: 525) and reach recall
+  0.63 vs 0.56; fixed 1024 tokens reach 0.85 recall only because chunks are huge (precision 0.35, 105 broken tables).
+- **2B chunk threshold:** 0.15-0.55 all score 0.66-0.72 recall through RAG-2; 0.35 used.
+- **2D retrieval pipelines:**
 
 | Pipeline | Cat C recall | Cat E recall | Combined recall / precision | Speed |
 |---|---|---|---|---|
 | RAG-1 dense only | 0.57 | 0.27 | 0.42 / 0.62 | 0.2 s |
 | RAG-2 hybrid + cross-encoder (the app's pipeline) | 0.81 | 0.83 | 0.82 / 0.91 | 0.4 s |
-| RAG-3 rewrite + HyDE + graph | 0.81 | 0.77 | 0.79 / 0.87 | 5.4 s |
+| RAG-3 rewrite + HyDE + graph | 0.81 | 0.75 | 0.78 / 0.87 | 4.9 s |
 
-- Stronger embedders (BGE-small, BGE-base) gave no clear gain in the full pipeline: BM25 + cross-encoder do most of the
-  work.
+- **2C embedder choice** (`evaluation/embedding_comparison.py`): BGE-small beats MiniLM on dense search alone
+  (recall 0.73 vs 0.63), but inside RAG-2 all three tie at 0.81-0.82 recall and MiniLM has the best precision (0.91)
+  and MRR (0.97) at a third of BGE-base's query time. BM25 + cross-encoder do most of the work, so the cheapest
+  embedder is enough.
 - Recall/precision here are clause-matching (is the gold clause in the retrieved text?), the RAGAS context-recall idea
-  computed without an LLM. `--llm` adds an LLM judge (Groq gpt-oss-120b, a different model family from the Gemini
-  generator) for faithfulness and relevance.
+  computed without an LLM.
+- **2E generation:** Gemini writes each answer from RAG-2's passages; LONG-CTX (all 53 pages, no retrieval) is the
+  baseline. The `ragas` library scores Faithfulness and Answer Relevancy (judge Groq gpt-oss-120b) and Context Recall /
+  Precision against the fact-sheet reference (judge gpt-oss-20b); both judges are a different model family, so no
+  model grades itself. Category C: RAG-2 faithfulness 0.86, relevancy 0.77, fact coverage 0.68; LONG-CTX 0.90, 0.78,
+  0.87. Long context is as good or better on answers because our 53 pages fit in the window; RAG-2 is kept because it
+  sends ~2,000 tokens per answer instead of ~104,000 (about 50x fewer), stays inside free-tier limits, and scales past
+  the context window. Category E relevancy is low (0.33) because those questions also ask for listings and budgets
+  that other agents answer; the policy agent rightly says they are not in its documents.
 
 ---
 
 ## 4. Questions you may get
 
-- **"Why not just put all the documents in the prompt (long context)?"** About 79,000 words fits in a large
-  context window, and the ablation has a long-context baseline (`--llm`). Retrieval keeps each answer tied to a cited
-  page, and 'lost in the middle' makes huge prompts unreliable.
+- **"Why not just put all the documents in the prompt (long context)?"** We tested it (2E LONG-CTX): at 53 pages it
+  fits, and its answers were slightly more faithful (0.90 vs 0.86 on Category C). But each answer costs ~104,000 input
+  tokens instead of ~2,000, some calls hit Gemini's tokens-per-minute limit, and it stops working once the corpus
+  outgrows the window. RAG-2 is the choice that scales; retrieval recall (0.81 of gold clauses) is what to improve.
 - **"Why not ChromaDB?"** At 1,085 chunks brute-force cosine takes 0.05 ms; an approximate index only pays off at
   hundreds of thousands of chunks. The unused Chroma copy was removed.
 - **"Is the agent agentic?"** Retrieval is a tool the policy agent calls in a capped ReAct loop (max 5 searches), with

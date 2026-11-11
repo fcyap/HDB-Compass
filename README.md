@@ -1192,16 +1192,60 @@ As specified in the **HDB-Compass Project Proposal** (Pages 5, 9, 11, 13, and 14
 - **Cross-Encoder Reranker:** Scores hybrid candidates using `cross-encoder/ms-marco-MiniLM-L-6-v2`; RAG-2 returns the top 5, while RAG-3 applies SAGE-style score-drop selection.
 - **FastMCP Tool & Agent 5:** Implements the official tool `retrieve_hdb_policy_knowledge(query, policy_domain)` on the FastMCP server, hooked into the 5-agent LangGraph workflow and standalone `PolicyRagAgent`.
 - **Ground truth from the pages:** [`evaluation/policy_fact_sheet.yaml`](evaluation/policy_fact_sheet.yaml) holds 47 verified facts, each with an exact quote from its captured page (checked by `tests/test_policy_corpus.py`). The Category C key clauses are built from it (`evaluation/build_category_c.py`); all 15 questions are answerable from the corpus.
-- **Experiment 2 Ablation Study:** `evaluation/run_rag_ablation.py` compares three pipelines: RAG-1 (naive dense), RAG-2 (BM25 + dense for the question and its corpus-vocabulary expansion, rank fusion, cross-encoder rerank) and RAG-3 (RAG-2 plus query rewriting, HyDE and entity-graph expansion). It also runs a chunking sweep. `--llm` adds LLM-judged faithfulness and relevance (judge: Groq gpt-oss-120b, a different model family from the Gemini generator) and a long-context baseline. All metrics are computed by the script's own formulas, modelled on RAGAS definitions; the `ragas` library is not called. Without `--llm`, "faithfulness" is a lexical check (each answer line's words and numbers found in the retrieved passages), so it sits near 0.96-0.98 for every pipeline and does not separate them. Results of the 10 Nov 2026 run without `--llm` (53 pages, 1,085 chunks) (`llm_mode: false` in `evaluation/rag_ablation_results.json`; 15 Category C + 15 Category E questions):
+- **Experiment 2: the policy RAG, stage by stage.** `evaluation/run_rag_ablation.py` runs five experiments in the order of the pipeline, all on the same 30 benchmark questions (15 Category C + 15 Category E). Retrieval is scored against exact clauses from the fact sheet: context recall (share of gold clauses found in the top 5), context precision (MAP@5) and MRR. Results of the 10 Nov 2026 run (53 pages, 1,085 chunks), saved to `evaluation/rag_ablation_results.json`:
 
-  | | Cat C recall | Cat E recall | Combined recall / precision | p50 latency |
+  **2A · Chunking strategy** (BM25 top-5): semantic, table-preserving chunks break no tables and beat fixed 256-token chunks on recall. Fixed 1024-token chunks find more clauses only because each chunk is huge, and their precision collapses.
+
+  | Chunking | Chunks | Broken tables | Recall | Precision |
+  |---|---|---|---|---|
+  | Fixed 256 tokens | 967 | 525 | 0.56 | 0.70 |
+  | **Semantic, table-preserving (used)** | 1,085 | **0** | 0.63 | 0.62 |
+  | Fixed 1024 tokens | 134 | 105 | 0.85 | 0.35 |
+
+  **2B · Chunk similarity threshold** (scored through RAG-2): the chunker starts a new chunk where two neighbouring sentences' MiniLM similarity falls below the threshold. 0.35 (used, chosen on Category C) gives 1,085 chunks of about 85 words; across all 30 questions the thresholds 0.15-0.55 score within 0.06 recall of each other (0.66-0.72), so the threshold matters less than keeping tables and rules whole.
+
+  **2C · Embedding model** (`evaluation/embedding_comparison.py`, also run on its own): dense search alone isolates the embedder; inside RAG-2 is what the app runs.
+
+  | Embedder | Params | Dense-only recall / MRR | RAG-2 recall / precision / MRR | Query embed (CPU) |
+  |---|---|---|---|---|
+  | **all-MiniLM-L6-v2 (used)** | 22M | 0.63 / 0.83 | **0.82 / 0.91 / 0.97** | 6 ms |
+  | bge-small-en-v1.5 | 33M | **0.73** / **0.89** | 0.81 / 0.87 / 0.90 | 12 ms |
+  | bge-base-en-v1.5 | 110M | 0.65 / 0.88 | 0.82 / 0.88 / 0.90 | 18 ms |
+
+  BGE-small is the better embedder on its own, but inside RAG-2 the gap disappears: BM25 catches exact terms and the cross-encoder re-reads every candidate, so all three tie at 0.81-0.82 recall (0.01 is about one clause) and MiniLM keeps the best precision and MRR at the lowest cost.
+
+  **2D · Retrieval pipeline**: RAG-1 naive dense; RAG-2 BM25 + dense for the question and its corpus-vocabulary expansion, rank fusion, cross-encoder rerank (the app's pipeline); RAG-3 RAG-2 plus query rewriting, HyDE and entity-graph expansion with score-drop selection.
+
+  | Pipeline | Cat C recall | Cat E recall | Combined recall / precision | p50 latency |
   |---|---|---|---|---|
   | RAG-1 naive dense | 0.57 | 0.27 | 0.42 / 0.62 | 0.2 s |
-  | RAG-2 hybrid + cross-encoder | 0.81 | 0.83 | 0.82 / 0.91 | 0.4 s |
-  | RAG-3 rewrite + HyDE + graph | 0.81 | 0.77 | 0.79 / 0.87 | 5.4 s |
+  | **RAG-2 hybrid + cross-encoder (used)** | 0.81 | 0.83 | **0.82 / 0.91** | 0.4 s |
+  | RAG-3 rewrite + HyDE + graph | 0.81 | 0.75 | 0.78 / 0.87 | 4.9 s |
 
-  Category C recall moved from 0.86 to 0.81 on 10 Nov because C3-01's ground truth changed, not because retrieval got worse: it used to be a stand-in disposal rule (2 clauses), and is now HDB's actual answer from the 2026 wait-out removal page (3 clauses: "no longer", "15-month wait-out", "55 and above"). RAG-2 ranks that page first, but the retrieved chunk is paragraph 7, which holds 1 of the 3 clauses. Every other question scored the same as on 9 Nov. Latency varies with machine load.
+  Category C recall moved from 0.86 to 0.81 on 10 Nov because C3-01's ground truth changed, not because retrieval got worse: it used to be a stand-in disposal rule (2 clauses), and is now HDB's actual answer from the 2026 wait-out removal page (3 clauses: "no longer", "15-month wait-out", "55 and above"). RAG-2 ranks that page first, but the retrieved chunk is paragraph 7, which holds 1 of the 3 clauses. Latency varies with machine load.
 
+  **2E · Generation** (always with an LLM): Gemini `gemini-3.5-flash-lite` (the active profile) writes the answer from RAG-2's top 5 passages, and from LONG-CTX, a baseline with no retrieval and all 53 pages (109k tokens) in the prompt. RAG-1 and RAG-3 are compared on retrieval in 2D only. The `ragas` library (0.4.3, `evaluation/ragas_judge.py`) scores four metrics with two Groq judges, both from a different model family than the generator so no model grades its own answers:
+  - **Faithfulness**: the share of the answer's statements the passages support. **Answer Relevancy**: how directly the answer addresses the question (one generated question per answer, `strictness=1`). Judge: `openai/gpt-oss-120b`.
+  - **Context Recall** and **Context Precision**: the retrieved passages against a reference answer built from the fact sheet. These grade retrieval, not an answer, so the judge is the smaller `openai/gpt-oss-20b`.
+
+  Code also scores fact coverage (gold clauses in the answer) and citation compliance. Answers and scores are cached in `evaluation/.cache/`: a run stopped by a quota keeps every finished score, and the next run fills only the missing ones. On Groq's free tier (200,000 tokens per model per day) the full run takes about two days; we ran it on Groq's Dev tier (11 Nov 2026; about 4M judge tokens).
+
+  | Category C, N=15 (policy questions) | Faithfulness | Answer relevancy | RAGAS ctx recall / precision | Fact coverage | Cites official page | Input tokens per answer |
+  |---|---|---|---|---|---|---|
+  | **RAG-2 (used)** | 0.86 | 0.77 | 0.72 / 0.76 | 0.68 | 0.80 | ~2,000 (median) |
+  | LONG-CTX, all 53 pages | **0.90** | 0.78 | n/a | **0.87** | **1.00** | ~104,000 |
+
+  | Category E, N=15 (multi-objective) | Faithfulness | Answer relevancy | RAGAS ctx recall / precision | Fact coverage | Cites official page |
+  |---|---|---|---|---|---|
+  | **RAG-2 (used)** | **0.71** | 0.33 | 0.63 / 0.27 | **0.40** | 0.93 |
+  | LONG-CTX | 0.69 | **0.57** | n/a | 0.32 | 0.93 |
+
+  What this shows:
+  - **On policy questions, long context answers as well as or better than RAG-2** (faithfulness 0.90 vs 0.86, fact coverage 0.87 vs 0.68). Our 53 pages fit in the model's context window, so giving it everything is a strong baseline; RAG-2's gap is mostly retrieval: its top 5 passages hold 0.81 of the gold clauses (2D) and the answer can only use what it is given.
+  - **RAG-2 is kept for cost, speed and scale, not answer quality:** about 50 times fewer input tokens per answer (~2,000 vs ~104,000), so it stays within the free tier's tokens per minute (LONG-CTX's 104k-token requests hit Gemini's 250k tokens-per-minute limit, and some calls failed until retried), and it keeps working when the corpus outgrows the context window. Each claim is also tied to one of five numbered passages.
+  - **Category E answer relevancy is low by construction:** these questions also ask for flat listings, maps and budgets, which other agents supply in the full system. The policy agent alone correctly says those are "not in the retrieved HDB documents", and ragas scores an answer that opens that way as non-committal (relevancy 0). RAGAS context precision for E (0.27) is low for a related reason: the E reference is a list of gold clauses, not a written answer, so the judge marks most passages as unhelpful; the code-scored MAP@5 in 2D (0.91) checks the clauses directly.
+
+  Retrieval metrics are our own, modelled on the RAGAS definitions: they check exact fact-sheet clauses, which is stricter, free and repeatable, where ragas's versions ask an LLM to compare against a reference answer. `--retrieval-only` runs 2A-2D without model calls (to a separate file), e.g. after a corpus change.
 - **Whiteboard Presentation Guide:** [`docs/member_3_whiteboard_guide.md`](docs/member_3_whiteboard_guide.md).
 
 | File | What it is |
@@ -1214,7 +1258,9 @@ As specified in the **HDB-Compass Project Proposal** (Pages 5, 9, 11, 13, and 14
 | `agents/policy_agent.py` | Agent 5 (Regulatory Policy RAG Specialist) with strict citation and grounding prompts |
 | `evaluation/build_category_c.py` | Curates the 15 stratified Category C golden benchmark queries |
 | `evaluation/category_c_queries.json` | 15 Category C golden queries with ground truth facts and clauses |
-| `evaluation/run_rag_ablation.py` | Experiment 2 automated ablation runner (Context Recall, Context Precision, MRR, Latency) |
+| `evaluation/run_rag_ablation.py` | Experiment 2A-2E: chunking strategy, chunk threshold, embedding model, retrieval pipeline, generation (LLM + RAGAS) |
+| `evaluation/embedding_comparison.py` | Experiment 2C: MiniLM vs BGE-small vs BGE-base, dense-only and inside RAG-2 |
+| `evaluation/ragas_judge.py` | Experiment 2E: ragas Faithfulness, Answer Relevancy, Context Recall and Context Precision with Groq judges |
 | `evaluation/rag_ablation_results.json` | Empirical ablation metrics across RAG-1, RAG-2, and RAG-3 |
 | `tests/test_policy_rag.py` | Automated test suite for chunking, BM25, dense retrieval, RRF, cross-encoder & schemas |
 | `docs/member_3_whiteboard_guide.md` | Whiteboard diagram, RRF/cross-encoder formulas, and Lesson 12 presentation notes |
@@ -1224,8 +1270,11 @@ As specified in the **HDB-Compass Project Proposal** (Pages 5, 9, 11, 13, and 14
 # 1. Run Member 3 RAG test suite
 .venv/bin/pytest tests/test_policy_rag.py -v
 
-# 2. Run Experiment 2 RAG Ablation Study
-.venv/bin/python evaluation/run_rag_ablation.py
+# 2. Run Experiment 2 (2A-2E; 2E calls Gemini and Groq: about an hour on Groq's Dev tier, about two days on its
+#    free tier, resuming from evaluation/.cache/ each time)
+.venv/bin/python -m evaluation.run_rag_ablation
+# or 2A-2D only, no model calls
+.venv/bin/python -m evaluation.run_rag_ablation --retrieval-only
 ```
 
 ---

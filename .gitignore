@@ -45,3 +45,4 @@ evaluation/results/
 # Generated analysis and traces
 evaluation/analysis/
 evaluation/traces/
+evaluation/.cache/
