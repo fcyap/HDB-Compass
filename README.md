@@ -1189,7 +1189,7 @@ As specified in the **HDB-Compass Project Proposal** (Pages 5, 9, 11, 13, and 14
 - **Regulatory Corpus Curation:** Curated official policies covering the October 2024 Standard/Plus/Prime flat classification framework, Singles & Joint Singles Schemes, private property ownership and disposal rules (a 30-month wait for subsidised purchases and HDB loans, disposal within 6 months for non-subsidised resale, and HDB's 27 July 2026 removal of the 15-month wait-out, including the earlier 55+ senior exemption for 4-room or smaller flats), August 2024 Enhanced CPF Housing Grant (EHG) updates (up to $120k for families), Family/Proximity Housing Grants, financing ceilings (MSR 30%, LTV 75%, TDSR 55%, tiered BSD), and Ethnic Integration Policy (EIP) quotas & Buyback Scheme (from HDB's 2022 press release, the only official source captured for it).
 - **SAGE-inspired Chunker:** Preserves section breadcrumbs and Markdown tables, then groups adjacent sentences using MiniLM similarity boundaries; the paper's trained segmentation classifier is not bundled. The index is rebuilt from these semantically segmented chunks.
 - **Hybrid Retrieval & RRF:** Combines `BM25Okapi` sparse keyword search (for exact acronyms like MOP, EIP, HFE, EHG) with `SentenceTransformer` dense vector search (`all-MiniLM-L6-v2`) via Reciprocal Rank Fusion (RRF, $k=60$) to retrieve top-20 candidates.
-- **Cross-Encoder Reranker:** Scores hybrid candidates using `cross-encoder/ms-marco-MiniLM-L-6-v2`; RAG-2 returns the top 5, while RAG-3 applies SAGE-style score-drop selection.
+- **Cross-Encoder Reranker:** Scores hybrid candidates using `cross-encoder/ms-marco-MiniLM-L-6-v2`; every pipeline returns the top 5.
 - **FastMCP Tool & Agent 5:** Implements the official tool `retrieve_hdb_policy_knowledge(query, policy_domain)` on the FastMCP server, hooked into the 5-agent LangGraph workflow and standalone `PolicyRagAgent`.
 - **Ground truth from the pages:** [`evaluation/policy_fact_sheet.yaml`](evaluation/policy_fact_sheet.yaml) holds 47 verified facts, each with an exact quote from its captured page (checked by `tests/test_policy_corpus.py`). The Category C key clauses are built from it (`evaluation/build_category_c.py`); all 15 questions are answerable from the corpus.
 - **Experiment 2: the policy RAG, stage by stage.** `evaluation/run_rag_ablation.py` runs five experiments in the order of the pipeline, all on the same 30 benchmark questions (15 Category C + 15 Category E). Retrieval is scored against exact clauses from the fact sheet: context recall (share of gold clauses found in the top 5), context precision (MAP@5) and MRR. Results of the 10 Nov 2026 run (53 pages, 1,085 chunks), saved to `evaluation/rag_ablation_results.json`:
@@ -1214,13 +1214,27 @@ As specified in the **HDB-Compass Project Proposal** (Pages 5, 9, 11, 13, and 14
 
   BGE-small is the better embedder on its own, but inside RAG-2 the gap disappears: BM25 catches exact terms and the cross-encoder re-reads every candidate, so all three tie at 0.81-0.82 recall (0.01 is about one clause) and MiniLM keeps the best precision and MRR at the lowest cost.
 
-  **2D · Retrieval pipeline**: RAG-1 naive dense; RAG-2 BM25 + dense for the question and its corpus-vocabulary expansion, rank fusion, cross-encoder rerank (the app's pipeline); RAG-3 RAG-2 plus query rewriting, HyDE and entity-graph expansion with score-drop selection.
+  **2D · Retrieval pipeline**: RAG-1 naive dense; RAG-2 BM25 + dense for the question and its corpus-vocabulary expansion, rank fusion, cross-encoder rerank (the app's pipeline); RAG-3 RAG-2 plus an LLM rewrite of the question and entity-graph expansion (chunks linked by shared policy entities such as MOP, EIP or CPF), with the same reranking.
 
   | Pipeline | Cat C recall | Cat E recall | Combined recall / precision | p50 latency |
   |---|---|---|---|---|
   | RAG-1 naive dense | 0.57 | 0.27 | 0.42 / 0.62 | 0.2 s |
   | **RAG-2 hybrid + cross-encoder (used)** | 0.81 | 0.83 | **0.82 / 0.91** | 0.4 s |
-  | RAG-3 rewrite + HyDE + graph | 0.81 | 0.75 | 0.78 / 0.87 | 4.9 s |
+  | RAG-3 RAG-2 + rewrite + graph | **0.86** | 0.80 | **0.83** / 0.90 | 4.3 s |
+
+  RAG-3 finds more in Category C (0.86 vs 0.81) and less in Category E, so combined recall is about the same (0.83 vs 0.82); it ranks less precisely on Category E (MRR 0.83 vs 0.97) and takes over ten times longer, because the rewrite is an LLM call. The rewrite also varies between runs: two runs on 11 Nov gave Category E recall 0.80 and 0.82 and p50 latency 4.3 s and 6.1 s. The app keeps RAG-2.
+
+  How RAG-3 got here (11 Nov): it used to also have HyDE, a 1.08 boost for the guessed policy domain and a score-drop cutoff, and scored 0.78 combined recall at 4.9 s. Adding its parts to RAG-2 one at a time showed what each did:
+
+  | Step added to RAG-2 | Cat C recall | Cat E recall | Cat E precision / MRR |
+  |---|---|---|---|
+  | RAG-2 | 0.81 | 0.83 | 0.91 / 0.97 |
+  | + query rewrite and HyDE | 0.84 | 0.75 | 0.88 / 0.93 |
+  | + entity-graph expansion | 0.86 | 0.78 | 0.83 / 0.83 |
+  | + domain boost | 0.81 | 0.78 | 0.80 / 0.80 |
+  | + score-drop cutoff (old RAG-3) | 0.81 | 0.75 | 0.80 / 0.80 |
+
+  HyDE's imagined answer narrowed multi-topic questions to one topic, and the domain boost and score-drop cutoff only removed passages for a question's secondary topics, so all three were dropped. The rewrite now keeps every topic of the question. Score-drop selection was also tried on RAG-2 and did not help (it kept 4.9 of 5 passages on average and lowered Category E recall to 0.80), so every pipeline returns a fixed 5.
 
   Category C recall moved from 0.86 to 0.81 on 10 Nov because C3-01's ground truth changed, not because retrieval got worse: it used to be a stand-in disposal rule (2 clauses), and is now HDB's actual answer from the 2026 wait-out removal page (3 clauses: "no longer", "15-month wait-out", "55 and above"). RAG-2 ranks that page first, but the retrieved chunk is paragraph 7, which holds 1 of the 3 clauses. Latency varies with machine load.
 

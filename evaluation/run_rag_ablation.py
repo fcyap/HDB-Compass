@@ -13,7 +13,7 @@ retrieval against exact clauses from the verified fact sheet (evaluation/policy_
   2D  Retrieval pipeline, top-5:
         RAG-1  naive dense search (cosine over unexpanded chunk bodies)
         RAG-2  BM25 + dense for the question and its expansion, RRF k=60 to 20 candidates, cross-encoder rerank
-        RAG-3  RAG-2 plus query rewriting, HyDE and entity-graph expansion, score-drop selection
+        RAG-3  RAG-2 plus an LLM query rewrite and entity-graph expansion
       Context recall, context precision (MAP@5), MRR, latency.
   2E  Generation: an LLM (the active profile, Gemini) writes the answer from RAG-2's passages (the pipeline the app
       runs) and, as the baseline, LONG-CTX (no retrieval, every page in the prompt). RAG-1 and RAG-3 are compared on
@@ -49,7 +49,7 @@ from mcp_server.policy_rag_tools import execute_rag_pipeline
 PIPELINE_NAMES = {
     "RAG-1": "RAG-1 (Naive Dense Vector)",
     "RAG-2": "RAG-2 (Hybrid + Cross-Encoder)",
-    "RAG-3": "RAG-3 (Rewrite + HyDE + Graph)",
+    "RAG-3": "RAG-3 (RAG-2 + Rewrite + Graph)",
     "LONG-CTX": "LONG-CTX (all docs, no RAG)",
 }
 
