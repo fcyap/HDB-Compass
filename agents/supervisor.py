@@ -29,7 +29,7 @@ from datetime import date as _date
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.types import Send
 
@@ -42,6 +42,7 @@ from agents import sanitizer, scope
 from mcp_server.policy_rag_tools import decompose_query, merge_policy_results
 from agents import research_intents as ri
 from agents.research_schemas import STATS_DIMENSIONS
+from agents.session_settings import setting   # the app chat's model choice, else the environment
 from agents.schemas import (
     TOOL_OWNER,
     LLMExtractedConstraints,
@@ -836,6 +837,12 @@ def rule_based_extract(query: str) -> ExtractedConstraints:
         m = re.search(r"\bBTO (?:project|launch)\s+(?:called\s+|named\s+)?([A-Z][\w']*(?:\s+[A-Z][\w']*)*)", query)
         if m and m.group(1).upper() not in HDB_TOWNS:
             base["bto_project_name"] = m.group(1)
+    if isinstance(base.get("trend_years"), int) and base["trend_years"] > 30:
+        # "over the last 35 years" (the review, 6 Nov): the schema holds at most 30, and the reading failing here
+        # stopped the whole turn with a ValidationError; the trend tools cover far less than that anyway
+        base["trend_years"] = 30
+        base["assumptions"] = list(base.get("assumptions") or []) + [
+            "Trends go back at most 30 years here; the period was shortened to the last 30 years."]
     return ExtractedConstraints(**base)
 
 
@@ -917,6 +924,8 @@ _PARTNER = r"(?:husband|wife|spouse|partner|fianc[eé]e?|hubby|girlfriend|boyfri
 # "my husband is 34", "husband's 52", "wife 31", "hubby: 40"; never "husband 50,000 in CPF"
 _PARTNER_AGE = re.compile(rf"\b(?:{_PARTNER}|he|she)(?:\s+is|'s|\s+aged|\s*[:,(-]?)\s*(?:aged\s+)?(\d{{2}})\b" + _AGE_END, re.I)
 # "me 33", "myself: 38", "I (34)"
+_YEARS_OLD = re.compile(r"\b(\d{2})[\s-]*(?:years?|yrs?)[\s-]*old\b", re.I)
+_NOT_PERSON_AGE = re.compile(r"\b(?:flats?|blocks?|blks?|units?|leases?|buildings?|homes?|houses?|apartments?|cars?)\b", re.I)
 _SELF_AGE = re.compile(r"\b(?:me|myself)\s*[:,-]?\s*(\d{2})\b" + _AGE_END + r"|\bI\s*\(\s*(\d{2})\s*\)", re.I)
 # "SC couple, 32 and 30", "Both SC, 45 and 47", "wife and I 27/28"
 _PAIR_AGES = re.compile(rf"\b(?:couple|SCs?|singaporeans?|citizens?|both|married|{_PARTNER}\s+and\s+i)\b[^.\d$]{{0,15}}?"
@@ -975,6 +984,13 @@ def buyer_ages(text: str, couple: Optional[bool] = None) -> List[int]:
             age = int(next(g for g in m.groups() if g))
             if age not in ages and not _NOT_BUYER.search(_phrase_before(t, m.start())):
                 ages.append(age)
+    if not ages:
+        # "I am a single Singapore citizen, 34 years old, ...": the speaker's own age (L-X-03, live on Claude 11 Nov:
+        # code asked for "the age of each buyer" after it was given); never a flat's, a lease's or a relative's
+        for m in _YEARS_OLD.finditer(t):
+            before = _phrase_before(t, m.start())
+            if not _NOT_BUYER.search(before) and not _NOT_PERSON_AGE.search(before):
+                ages.append(int(m.group(1)))
     ages = [a for a in ages if 18 <= a <= 99]
     if both and len(ages) == 1:
         ages = ages * 2                                    # "we are both 30"
@@ -1157,6 +1173,13 @@ _SC_COUPLE = re.compile(
     # the other order: "We are first-timer Singapore citizens." (live 5 Nov: the next turn still asked for citizenship)
     r"|\bwe(?:'re| are)\s+(?:both\s+)?(?:married\s+)?(?:first[- ]?timers?|first[- ]?time(?: buyers?)?)\s+(?:singapore(?:an)?\s+)?"
     r"(?:citizens|singaporeans|SCs)\b", re.I)
+# the same with a comma or "and" between, as a whole sentence of its own: "We're first-time buyers, Singaporean
+# citizens." (live 6 Nov). Read on the message itself (_citizen_view drops a trailing clause such as "my friend and I"),
+# and only when the sentence ends there: not "citizens of Malaysia", "except my wife", "next year", "divorced".
+_FIRST_TIMER_CITIZENS = re.compile(
+    rf"(?:^|[.!?;]\s+)\W*(?:we(?:'re| are)|(?:my\s+)?{_PARTNER}\s+and\s+i\s+are|i\s+and\s+my\s+{_PARTNER}\s+are|both of us are)\s+"
+    r"(?:both\s+)?(?:married\s+)?(?:first[- ]?timers?(?:\s+buyers)?|first[- ]?time\s+(?:home\s+)?buyers)"
+    r"(?:\s*,\s*(?:and\s+)?|\s+and\s+)(?:both\s+)?(?:singapore(?:an)?\s+)?(?:citizens|singaporeans|SCs)\s*(?:[.!;](?![.!;])|$)", re.I)
 # buying with someone who is not a spouse: not the couple schemes
 _NOT_A_COUPLE = re.compile(r"\bjoint singles?\b|\btwo singles\b|\bwith (?:my|a) (?:friend|sister|brother|sibling|cousin|colleague)\b"
                            r"|\b(?:me|i) and my (?:friend|sister|brother|sibling|cousin|colleague)\b", re.I)
@@ -1201,7 +1224,8 @@ def citizenship_stated(text: str) -> Optional[str]:
     if re.search(r"\bsingle\b", v, re.I) and citizen and \
             not re.search(rf"\b(?:{_PARTNER}|couple|engaged)\b|(?<!not )(?<!un)\bmarried\b", text or "", re.I):
         return "SC_Single"
-    if _SC_COUPLE.search(v) and not re.search(r"\bone\s+(?:singapore(?:an)?\s+)?(?:citizen|SC)\b", v, re.I):
+    if (_SC_COUPLE.search(v) or _FIRST_TIMER_CITIZENS.search(text or "")) \
+            and not re.search(r"\bone\s+(?:singapore(?:an)?\s+)?(?:citizen|SC)\b", v, re.I):
         return "SC_SC"
     return None
 
@@ -2055,34 +2079,137 @@ def capped(llm: Any, max_tokens: int) -> Any:
     return llm
 
 
-def read_constraints_with_model(llm: Any, messages: List[Any],
-                                used: Optional[List[str]] = None) -> Tuple[Optional[ExtractedConstraints], List[str]]:
+_BLOCK_IN_TOWN = re.compile(r"^\s*(?:blk\.?\s*|block\s+)?(\d{1,4}[A-Z]?)\s+(?:in\s+|at\s+)?([A-Za-z][A-Za-z/ ]+?)\s*$", re.I)
+
+
+def complete_block_address(address: str) -> str:
+    """A block number with a town and no street ("458 Tampines", "Blk 458 TAMPINES") as the full address of the only
+    block with that number in the town ("Blk 458 TAMPINES ST 42"). The place search calls such a match ambiguous, as a
+    town is not a street, even when it has just the one candidate, and a comparison of "458 tampines and 216 ang mo
+    kio" then asked which block was meant (live on Claude, 6 Nov). Anything else is returned unchanged."""
+    m = _BLOCK_IN_TOWN.match(address or "")
+    towns = named_towns(m.group(2), any_case_short=True) if m else []
+    if not m or len(towns) != 1 or m.group(2).strip().upper() not in (towns[0], *[a for a, t in TOWN_ALIASES.items() if t == towns[0]]):
+        return address
+    try:
+        from mcp_server.location_tools import resolve_place
+        found = resolve_place(address)
+    except Exception:  # noqa: BLE001 — no index: the address goes on as it was
+        return address
+    blocks = [c for c in found.get("candidates") or [] if c.get("kind") == "hdb_block"
+              and str(c.get("block", "")).upper() == m.group(1).upper() and str(c.get("town", "")).upper() == towns[0]]
+    return blocks[0]["name"] if len(blocks) == 1 and blocks[0].get("name") else address
+
+
+def trust_model_reading() -> bool:
+    """HDB_TRUST_MODEL_READING=1: the model's reading of a message stands as the model wrote it. Code still fills what
+    the model left empty, but does not replace the model's assumptions and questions or drop what it read through the
+    grounding checks (_finalize_constraints / _verify_extraction with from_model), and the model says itself whether
+    the user wants their own money figures worked out (TrustedModelReading). Off by default: those checks were built
+    because the cluster model misread often; the switch is for testing whether a stronger model (the claude profile,
+    cluster/demo_start.sh --claude) does better without them. Experiment 1 runs with it off."""
+    return (setting("HDB_TRUST_MODEL_READING") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+# A block the app named in an answer: "- Blk 216 ANG MO KIO AVE 1 (ANG MO KIO) — median ...", "Near Blk 458 TAMPINES ST 42"
+_ANSWER_BLOCK = re.compile(r"\bBlk\s+(\d{1,4}[A-Z]?)\s+([A-Z][A-Z0-9'/.\- ]*?[A-Z0-9])(?=\s*[(—:,|*]|\s*$)", re.M)
+READING_CONTEXT_TURNS = 6
+READING_CONTEXT_CHARS = 3000
+CONTEXT_RULE = (" The user's earlier turns are given before the latest message. Read the constraints of the LATEST message "
+                "only. Use the earlier turns only to resolve what the latest message refers to: 'the Ang Mo Kio one I "
+                "mentioned earlier' becomes that block's full address (block number and street) in addresses, and 'these "
+                "2 flats' or 'both of them' becomes both full addresses. Do not repeat earlier limits the latest message "
+                "does not mention.")
+
+
+def reading_context(state: HDBCompassState, max_turns: int = READING_CONTEXT_TURNS,
+                    max_chars: int = READING_CONTEXT_CHARS) -> Tuple[str, int]:
+    """The earlier turns of this conversation for the model's reading (HDB_TRUST_MODEL_READING): each user message as
+    written, and for each answer only the blocks it named (an answer can list 100). The last max_turns turns, at most
+    max_chars in all, the oldest cut first. Returns (text, turns given); ("", 0) when there is no earlier turn."""
+    msgs = [m for m in (state.get("messages") or []) if isinstance(m, dict)]
+    earlier = msgs[:-1] if msgs and msgs[-1].get("role") == "user" else msgs
+    turns: List[List[str]] = []
+    for m in earlier:
+        content = str(m.get("content") or "")
+        if m.get("role") == "user":
+            turns.append([f"User: {content[:500]}"])
+        elif turns:
+            names = list(dict.fromkeys(f"Blk {b} {st.strip()}" for b, st in _ANSWER_BLOCK.findall(content)))
+            if names:
+                more = f" (and {len(names) - 5} more)" if len(names) > 5 else ""
+                turns[-1].append(f"Assistant named: {', '.join(names[:5])}{more}")
+    turns = turns[-max_turns:]
+    while turns and len("\n".join(line for t in turns for line in t)) > max_chars:
+        turns.pop(0)
+    return "\n".join(line for t in turns for line in t), len(turns)
+
+
+def reading_context_on() -> bool:
+    """HDB_READING_CONTEXT=1 (and always under HDB_TRUST_MODEL_READING): the model reads the latest message with the
+    earlier turns (reading_context) and says itself whether the user wants their own money figures worked out
+    (TrustedModelReading). Code's grounding checks on the reading still run unless HDB_TRUST_MODEL_READING is on: the
+    full Claude run of 6 Nov found 69 of 91 worse QA turns came from switching those checks off, while the context and
+    Claude's own judgement gave the turns it did better. cluster/demo_start.sh --claude turns this on."""
+    return trust_model_reading() or (setting("HDB_READING_CONTEXT") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+class TrustedModelReading(LLMExtractedConstraints):
+    """The model's reading with one judgement code otherwise makes from the wording alone (_MONEY_AMOUNT_ASK)."""
+    wants_money_figures: bool = Field(False, description=(
+        "True when the user asks to have their OWN figures worked out: their grants, loan, maximum budget, what they "
+        "can afford, stamp duty or upfront cash, in any wording ('help me calculate my grant', 'how much grant will I "
+        "get'). False for a question about the rules in general ('who qualifies for the PHG?') or a flat search."))
+
+    def to_constraints(self) -> "ExtractedConstraints":
+        data = self.model_dump(exclude={"amenity_radii_meters", "wants_money_figures"})
+        data["amenity_radii_meters"] = {k: v for k, v in self.amenity_radii_meters.model_dump().items() if v}
+        return ExtractedConstraints(**data)
+
+
+def read_constraints_with_model(llm: Any, messages: List[Any], used: Optional[List[str]] = None,
+                                schema: Any = None, judged: Optional[Dict[str, Any]] = None
+                                ) -> Tuple[Optional[ExtractedConstraints], List[str]]:
     """Structured constraint reading that degrades gracefully: invalid fields are dropped one by one
     (lenient_constraints), and a reply that is not JSON at all gets one repair turn showing the model its own output
-    and the error. Returns (constraints or None, notes for the errors list)."""
+    and the error. Returns (constraints or None, notes for the errors list). schema: TrustedModelReading under
+    HDB_TRUST_MODEL_READING; its wants_money_figures goes into `judged`."""
     notes: List[str] = []
+    schema = schema or LLMExtractedConstraints
+    judged = judged if judged is not None else {}
     # LLMExtractedConstraints types amenity_radii_meters as fixed fields: strict JSON-schema providers (Groq, OpenAI)
     # reject the open-ended dict of ExtractedConstraints. function_calling is the last resort for providers without
     # JSON modes. json_mode needs the schema in the prompt itself.
-    for method in ("json_schema", "json_mode", "function_calling"):
+    # Claude (the claude profile): its structured outputs allow at most 16 union-type fields per schema and this one has
+    # about 70, so json_schema is refused as "Schema is too complex" (json_mode is json_schema in langchain-anthropic);
+    # a forced tool call has no such limit, so it goes first and alone
+    methods = ("function_calling",) if str(getattr(llm, "_llm_type", "")).startswith("anthropic") \
+        else ("json_schema", "json_mode", "function_calling")
+    for method in methods:
         call = messages
         if method == "json_mode" and messages:
             call = [sys_msg(f"{messages[0].content} Reply with one JSON object for this schema: "
-                            f"{json.dumps(LLMExtractedConstraints.model_json_schema())}")] + list(messages[1:])
+                            f"{json.dumps(schema.model_json_schema())}")] + list(messages[1:])
         try:
-            res = llm.with_structured_output(LLMExtractedConstraints, method=method, include_raw=True).invoke(call)
+            res = llm.with_structured_output(schema, method=method, include_raw=True).invoke(call)
         except Exception as e:  # noqa: BLE001
             notes.append(f"extract_constraints[{method}] failed: {type(e).__name__}: {str(e)[:120]}")
             continue
         parsed = res.get("parsed") if isinstance(res, dict) else None
         if parsed is not None:
+            if hasattr(parsed, "wants_money_figures"):
+                judged["wants_money_figures"] = bool(parsed.wants_money_figures)
             if used is not None:
                 used.append(method)   # recorded as extraction_source "llm:<method>"
             return (parsed.to_constraints() if hasattr(parsed, "to_constraints") else parsed), notes
         raw = res.get("raw")
         text = raw.content if isinstance(getattr(raw, "content", None), str) else str(raw or "")
+        tool_args = next((tc.get("args") for tc in (getattr(raw, "tool_calls", None) or [])
+                          if isinstance(tc, dict) and isinstance(tc.get("args"), dict)), None)
         try:
-            data = _json_object(text)
+            # a forced tool call carries its reading in the call's arguments, not the text (the claude profile's only
+            # method): one invalid field there is dropped below like any other, not the whole reading thrown away
+            data = tool_args if tool_args is not None else _json_object(text)
         except Exception as e:  # noqa: BLE001
             try:
                 fix = llm.invoke(messages + [AIMessage(content=text[:4000]), HumanMessage(content=(
@@ -2093,6 +2220,9 @@ def read_constraints_with_model(llm: Any, messages: List[Any],
             except Exception as e2:  # noqa: BLE001
                 notes.append(f"extract_constraints[{method}] failed after one repair: {type(e2).__name__}: {str(e2)[:120]}")
                 continue
+        data = dict(data)
+        if "wants_money_figures" in data:
+            judged["wants_money_figures"] = bool(data.pop("wants_money_figures"))
         if isinstance(data.get("amenity_radii_meters"), dict):   # the typed schema sends null for unstated radii
             data["amenity_radii_meters"] = {k: v for k, v in data["amenity_radii_meters"].items() if v}
         extracted, dropped = lenient_constraints(data)
@@ -2149,6 +2279,13 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
                    f"{json.dumps((prior or {}).get('financial_inputs') or {}, default=str)}. Leave everything else empty.")
     if llm is not None:
         messages = [sys_msg(system), HumanMessage(content=query)]
+        context, context_turns = reading_context(state) if reading_context_on() else ("", 0)
+        if context:
+            # HDB_TRUST_MODEL_READING: the model reads the latest message with the turns before it, so "the Ang Mo Kio
+            # one I mentioned earlier" can be resolved (live on Claude, 6 Nov: it asked which block, four turns on)
+            messages = [sys_msg(system + CONTEXT_RULE), HumanMessage(content=f"Earlier in this conversation:\n{context}"),
+                        HumanMessage(content=f"Latest message (read this one):\n{query}")]
+            errors.append(f"extract_constraints: earlier turns given to the model ({context_turns} turns)")
         # HDB_EXTRACTION_REASONING=1 switches it on for one run without editing the config (A/B testing)
         if os.getenv("HDB_EXTRACTION_REASONING") == "1" or load_config().get("architecture", {}).get("extraction_reasoning", False):
             # Guided JSON output leaves the model no room to think, so an optional first pass lists, in plain
@@ -2156,13 +2293,17 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
             try:
                 think = llm.invoke([sys_msg("List, as short bullet points, every housing-search constraint and every money "
                                             "or household fact this buyer states, quoting their words. Add nothing they did "
-                                            "not say."), HumanMessage(content=query)])
+                                            "not say."), *messages[1:]])   # with the earlier turns when given
                 notes_text = strip_think(think.content if isinstance(think.content, str) else str(think.content))
                 messages.append(HumanMessage(content=f"Facts the buyer stated (from a first read):\n{notes_text[:3000]}"))
             except Exception as e:  # noqa: BLE001
                 errors.append(f"extract_constraints[reasoning] failed: {type(e).__name__}")
         used: List[str] = []
-        extracted, notes = read_constraints_with_model(llm, messages, used)
+        trusted = trust_model_reading()
+        judged: Dict[str, Any] = {}
+        extracted, notes = read_constraints_with_model(llm, messages, used,
+                                                       schema=TrustedModelReading if reading_context_on() else None,
+                                                       judged=judged)
         errors += notes
         if extracted is not None:
             source = f"llm:{used[-1]}" if used else "llm"
@@ -2179,6 +2320,8 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
             # Assumptions and questions are printed as they stand in the facts section code writes, so they are
             # code's own (the research reading of this message), never the model's free text.
             for k in MODEL_FREE_TEXT_FIELDS:
+                if trusted:
+                    break                      # HDB_TRUST_MODEL_READING: the model's own (code's fill empty ones above)
                 if merged.get(k) != rb.get(k):
                     errors.append(f"extract_constraints: model-written {k} replaced by code's")
                 merged[k] = rb.get(k) or []
@@ -2190,8 +2333,14 @@ def extract_constraints_node(state: HDBCompassState) -> Dict[str, Any]:
     constraints = extracted.model_dump()
     if extracted.financial_inputs is not None:
         constraints["financial_inputs"] = extracted.financial_inputs.model_dump(exclude_unset=True)
-    constraints = _finalize_constraints(constraints, query, state, errors, from_model=source != "regex",
+    trusted = trust_model_reading() and source != "regex"
+    if trusted:
+        errors.append("extract_constraints: model reading trusted (HDB_TRUST_MODEL_READING=1): code's grounding checks skipped")
+    if reading_context_on() and source != "regex":
+        constraints["model_money_intent"] = bool(judged.get("wants_money_figures"))
+    constraints = _finalize_constraints(constraints, query, state, errors, from_model=source != "regex" and not trusted,
                                         model_policy=model_policy)
+    constraints.pop("model_money_intent", None)
     constraints["extraction_source"] = source
     return {"user_constraints": constraints, "errors": errors, "model_constraints": model_reading}
 
@@ -2209,7 +2358,19 @@ _MONEY_AMOUNT_ASK = re.compile(
     r"\bhow much\b.{0,30}\b(?:borrow|loan|grants?|afford|budget|stamp duty|bsd|cash|cpf|downpayment|down payment|"
     r"instalments?|installments?|monthly)\b|\bwhat(?:'s| is| are)?\s+(?:our|my)\s+(?:max(?:imum)?\s+)?(?:budget|loan|grants?)\b"
     r"|\b(?:max(?:imum)?|how big a?)\s+(?:hdb\s+|bank\s+|housing\s+)?(?:loan|budget)\b"
-    r"|\b(?:stamp duty|bsd)\b.{0,25}\b(?:on|for|of)\b.{0,15}\d|\bcan (?:we|i) afford\b|\bhow much can (?:we|i) (?:get|borrow)\b", re.I)
+    r"|\b(?:stamp duty|bsd)\b.{0,25}\b(?:on|for|of)\b.{0,15}\d|\bcan (?:we|i) afford\b|\bhow much can (?:we|i) (?:get|borrow)\b"
+    # the buyer's own grant amount in other words: "Help me check the amount of grant i will get" (live on Claude,
+    # 6 Nov: after a search it re-listed the blocks and asked for nothing). "What grants can I get?" stays the policy
+    # question it is routed as (tests/test_scope_routing.py): no amount word, and the verb comes before "I"
+    r"|\b(?:amount|value|size|total|sum)\s+of\s+(?:the\s+|my\s+|our\s+|any\s+)?(?:housing\s+|cpf\s+|hdb\s+)?grants?\b"
+    r"|\b(?:my|our)\s+(?:housing\s+|cpf\s+|hdb\s+)?grants?\s+(?:amount|figure|total|estimate|entitlement|sum)\b"
+    r"|\b(?:check|calculate|work out|estimate|compute|find out|tell (?:me|us))\s+(?:how much|what)\s+(?:housing\s+|cpf\s+|hdb\s+)?grants?\b"
+    r"|\bgrants?\s+(?:i|we)(?:'ll|'d|\s+(?:will|would|can|could|may|might|am going to|are going to|stand to))\s+(?:get|receive)\b"
+    # and the general shape, a request to work out the buyer's own grant: "Help me calculate my grant based on my
+    # financials" (live on Claude, 6 Nov: the same search again), "check our grants", "estimate the grant for us"
+    r"|\b(?:calculate|check|work out|estimate|compute|find out|figure out|determine|assess|know|see|show|tell)\b[^.?!]{0,30}?"
+    r"\b(?:my|our)\s+(?:own\s+)?(?:housing\s+|cpf\s+|hdb\s+)?grants?\b"
+    r"|\b(?:calculate|compute|estimate|work out|figure out)\s+(?:the\s+|any\s+)?(?:housing\s+|cpf\s+|hdb\s+)?grants?\b", re.I)
 
 
 _DUTY_WORDS = re.compile(r"\b(?:stamp )?dut(?:y|ies)\b|\bbsd\b", re.I)
@@ -2944,6 +3105,12 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
             errors.append(f"extract_constraints: places not in the conversation were dropped: "
                           f"{[a for a in constraints['addresses'] if a not in kept]}")
             constraints["addresses"] = kept
+    if constraints.get("addresses"):
+        done = [complete_block_address(a) for a in constraints["addresses"]]
+        if done != list(constraints["addresses"]):
+            errors.append("extract_constraints: block addresses completed (the only such block in the town): "
+                          + ", ".join(f"{a} -> {b}" for a, b in zip(constraints["addresses"], done) if a != b))
+            constraints["addresses"] = done
     for flag in ("wants_area_affordability", "wants_flat_affordability"):
         if from_model and constraints.get(flag) and not _AFFORD_WORDS.search(query) and not getattr(said_here, flag, False):
             # "4-room below 750k" is a price limit on the search, not "can we afford a flat there?": the live model's
@@ -3142,9 +3309,12 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     if grants.get("proximity_eligibility_confirmed") is False and grants.get("proximity") in ("near", "with"):
         # the calculator refuses every grant while a PHG is unconfirmed; the other grants do not depend on it
         grants["proximity"] = "none"
+        grants["near_parents_4km"] = False   # else the calculator sees "near" and "none" together and gives no grant (L-M-19)
         grants.pop("proximity_eligibility_confirmed", None)
         constraints["assumptions"] = list(constraints.get("assumptions") or []) + [
             "The Proximity Housing Grant is left out because your eligibility for it is not confirmed."]
+    _assume_grant_conditions(constraints, users)
+    _assume_loan_conditions(constraints)
     if grants.get("youngest_core_member_age") is not None and grants.get("citizenship_pair") == "SC_Single" \
             and single_buying_alone(users) and SINGLE_ALONE_NOTE not in (constraints.get("assumptions") or []):
         # the core member's age code took from the buyer's own (stated_financial_inputs), said so: the grants and
@@ -3201,7 +3371,8 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         constraints["min_price_sgd"] = rng[0]
         constraints["assumptions"] = list(constraints.get("assumptions") or []) + [
             f"Showing blocks whose median price is between ${rng[0]:,.0f} and ${rng[1]:,.0f}."]
-    constraints["money_intent"] = bool(_MONEY_AMOUNT_ASK.search(query)) and inst is None   # an instalment is code's
+    constraints["money_intent"] = bool(_MONEY_AMOUNT_ASK.search(query) or fresh_constraints.get("model_money_intent")) \
+        and inst is None   # an instalment is code's; model_money_intent: the model's own judgement (HDB_TRUST_MODEL_READING)
     own = _OWN_GRANT_ASK.search(query)
     if own and own.group(0).lower().endswith(" we") and not calculator_facts(constraints) and inst is None:
         # "What grants can we get?" with no household facts: the calculators ask for them (CLARIFY-03: the policy
@@ -3221,6 +3392,14 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
                       query, re.I)
     constraints["asked_price"] = None   # this message's own question only
     constraints["budget_asked"] = bool(_BUDGET_ASK.search(asked_part(query)))
+    price_q = town_price_question(query)
+    if price_q and constraints.get("towns") and not constraints.get("addresses") and not constraints.get("block_keys") \
+            and not calculator_facts(constraints):
+        # "is 600k too much for 4 room in AMK": a price to judge against the town's recent median, not a budget to
+        # list blocks under (L-M-14, live on Claude 11 Nov: 86 blocks and "every limit you set")
+        constraints["asked_town_price"] = price_q
+        constraints["wants_market_snapshot"] = True
+        constraints["max_budget_sgd"] = None
     if m:
         num, unit = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
         price = _money(f"{num}{unit or ''}")
@@ -3279,6 +3458,10 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
         constraints.update(wants_market_snapshot=True, towns=list(prior.get("towns") or []),
                            flat_types=list(prior.get("flat_types") or []), snapshot_rank=rank,
                            clarifications=[], menu_options=None)
+    constraints["turn_focus"] = turn_focus(constraints, fresh_constraints, prior, pending, query) \
+        if answer_style() != "template" and with_history else None
+    if constraints["turn_focus"] == "other":
+        constraints["assumptions"] = [a for a in constraints.get("assumptions") or [] if a != UNCHANGED_NOTE]
     # a data question no specific intent recognised goes to the market agent's analysis tools instead of the menu
     constraints["analysis_mode"] = False
     if (with_history and not pending and inst is None and not constraints.get("clarifications") and not constraints.get("place_options")
@@ -3304,6 +3487,11 @@ def _finalize_constraints(constraints: Dict[str, Any], query: str, state: HDBCom
     constraints["unresolved_workplaces"] = unknown
     if unknown:
         constraints["work_destinations"] = [w for w in work if w not in unknown]
+    work = constraints.get("work_destinations") or []
+    if len(work) == 1 and constraints.get("max_commute_minutes") and _SAME_WORKPLACE.search(query):
+        # "We work at Changi Airport": both buyers commute there, so the two-workplace check times that place for both
+        # (L-F-33, live on Claude 11 Nov: it asked for "the second workplace")
+        constraints["work_destinations"] = [work[0], work[0]]
     found = len(constraints.get("work_destinations") or [])
     if unknown and constraints.get("max_commute_minutes") and found < 2 <= found + len(unknown) \
             and not constraints.get("clarifications") and not constraints.get("about_results"):
@@ -3594,8 +3782,112 @@ def _add_area_purchase(c: Dict[str, Any]) -> None:
     _assume_flat_basics(c)
 
 
-FOUR_ROOM_GRANT_NOTE = ("Grants were worked out for a 4-room flat (a 5-room or larger flat gets a smaller Family Grant); "
+FOUR_ROOM_GRANT_NOTE = ("Grants assume a 4-room flat (a 5-room or larger flat gets a smaller Family Grant); "
                         "name a flat type to change this.")
+
+# Grant facts a household rarely states and the grant calculator will not guess. Asking for them left most grant
+# questions without a figure (live on Claude, 11 Nov: about 20 turns, e.g. L-F45, L-X-05, L-FX1-01 asked "whether your
+# grant eligibility is confirmed", which only an HFE letter can confirm). Code assumes the usual case once the key
+# facts are known, says so, and a stated fact always wins.
+GRANT_CONDITIONS_NOTE = ("The grants assume you meet HDB's usual conditions for them (for example, no private property "
+                         "owned or sold in the last 30 months); only an HFE letter confirms your eligibility.")
+GRANT_EMPLOYMENT_NOTE = ("The Enhanced CPF Housing Grant assumes at least one of you has worked continuously for the "
+                         "past 12 months; without that it is $0.")
+GRANT_EMPLOYMENT_NOTE_SINGLE = ("The Enhanced CPF Housing Grant assumes you have worked continuously for the past "
+                                "12 months; without that it is $0.")
+NO_PHG_NOTE = ("The Proximity Housing Grant is not included; tell me if you are buying with or within 4 km of your "
+               "parents or child.")
+BUYERS_ONLY_NOTE = ("Only the buyers are taken to live in the flat; tell me if a child or another family member will "
+                    "live with you.")
+SINGLE_UNDER_35_NOTE = ("A single Singapore Citizen must be at least 35 to buy a resale flat under the Single "
+                        "Singapore Citizen scheme, so no grant or budget is worked out for you yet.")
+
+
+def _assume_grant_conditions(c: Dict[str, Any], users: str) -> None:
+    """Fill the grant facts people seldom state, once citizenship, first-timer status, income and the youngest
+    buyer's age are known: the usual conditions met, 12 months' work, no Proximity Housing Grant and, with no one else
+    named, only the buyers living in the flat. Each assumption is disclosed. A fact the user stated (including a "not
+    confirmed") is kept as it is."""
+    grants = (c.get("financial_inputs") or {}).get("grants")
+    if not grants or c.get("pr_couple") or grants.get("first_timer_status") is not True:
+        return
+    if not all(grants.get(k) is not None for k in ("citizenship_pair", "monthly_income", "youngest_buyer_age")):
+        return
+    notes: List[str] = []
+    single = grants.get("citizenship_pair") == "SC_Single"
+    if single and grants.get("flat_category", "resale") == "resale" and grants["youngest_buyer_age"] < 35:
+        c["single_under_35"] = True
+        if SINGLE_UNDER_35_NOTE not in (c.get("assumptions") or []):
+            c["assumptions"] = list(c.get("assumptions") or []) + [SINGLE_UNDER_35_NOTE]
+        return   # no grant applies, so nothing else is assumed for one
+    if grants.get("youngest_core_member_age") is None:
+        s = statements(users)
+        if not _KID_WORDS.search(re.sub(_NO_KIDS, " ", s, flags=re.I)) and not _OTHER_OCCUPANT.search(s):
+            grants["youngest_core_member_age"] = grants["youngest_buyer_age"]
+            if not single:
+                notes.append(BUYERS_ONLY_NOTE)
+    if grants.get("eligibility_confirmed") is None:
+        grants["eligibility_confirmed"] = True
+        notes.append(GRANT_CONDITIONS_NOTE)
+    if grants.get("continuous_employment_12_months") is None:
+        grants["continuous_employment_12_months"] = True
+        notes.append(GRANT_EMPLOYMENT_NOTE_SINGLE if single else GRANT_EMPLOYMENT_NOTE)
+    if grants.get("proximity") is None and not grants.get("near_parents_4km"):
+        grants["proximity"] = "none"
+        notes.append(NO_PHG_NOTE)
+    have = c.get("assumptions") or []
+    c["assumptions"] = list(have) + [n for n in notes if n not in have]
+
+
+HDB_LOAN_NOTE = ("The budget assumes you qualify for an HDB loan (for example, no outstanding housing loan); only the "
+                 "HFE letter confirms the loan amount.")
+
+
+def _assume_loan_conditions(c: Dict[str, Any]) -> None:
+    """An HDB-loan budget with the household's money facts known: HDB loan eligibility is assumed and said so, instead
+    of being asked ("whether your HDB loan eligibility is confirmed", which only the HFE letter answers: L-FT-SC t2,
+    L-F08 t3, live on Claude 11 Nov). A bank loan keeps asking for its in-principle approval; a stated "not confirmed"
+    is kept."""
+    aff = (c.get("financial_inputs") or {}).get("affordability")
+    if not aff or aff.get("loan_type", "hdb") != "hdb" or aff.get("loan_eligibility_confirmed") is not None:
+        return
+    if aff.get("monthly_income") is None or not any(aff.get(k) is not None for k in ("cpf_oa_balance", "cash_savings")):
+        return
+    aff["loan_eligibility_confirmed"] = True
+    if HDB_LOAN_NOTE not in (c.get("assumptions") or []):
+        c["assumptions"] = list(c.get("assumptions") or []) + [HDB_LOAN_NOTE]
+
+
+def _ASSUMABLE_OK(state: Dict[str, Any]) -> bool:
+    """Whether the facts _assume_grant_conditions fills may be left out of the "more information needed" lines: not
+    for a bank loan (its approval is asked for) or when the user said a grant fact is not confirmed."""
+    fin_in = (state.get("user_constraints") or {}).get("financial_inputs") or {}
+    bank = (fin_in.get("affordability") or {}).get("loan_type") == "bank"
+    return not bank and (fin_in.get("grants") or {}).get("eligibility_confirmed") is not False
+
+
+def _hidden_budget_gap(state: Dict[str, Any]) -> int:
+    """1 when the budget calculator still needs facts in a grants-only conversation: that gap is neither listed nor
+    asked about (financial_lines, clarification_needed), so the opening does not mention it either."""
+    fin = state.get("financial_breakdown") or {}
+    aff = fin.get("calculate_maximum_affordability") or {}
+    return int(aff.get("status") == "needs_information" and "calculate_cpf_housing_grants" in fin
+               and not budget_in_conversation(state))
+
+
+def budget_in_conversation(state: Dict[str, Any]) -> bool:
+    """Whether any message in the conversation asked for a budget, a price ceiling or affordability. A grants-only
+    question ("How much grant can we get?") is not asked for CPF, cash and debts it does not need (L-F56 t1, L-F45 t2,
+    live on Claude 11 Nov)."""
+    c = state.get("user_constraints") or {}
+    if any(c.get(k) for k in ("budget_asked", "asked_price", "wants_area_affordability", "wants_flat_affordability",
+                              "flat_purchase")):
+        return True
+    users = [m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user"]
+    if not users:
+        return True   # no conversation to read: every fact is asked for, as before
+    # any mention, not only the question sentence: "Map the matches and tell us our grants and maximum budget." (E1-07)
+    return any(_BUDGET_ASK.search(u) for u in users)
 
 
 # The affordability calculator models buyers below 55 only (CPF withdrawal limits and the loan tenure to age 65 change
@@ -3684,6 +3976,59 @@ def mentioned_amenities(text: str) -> set:
     """The amenity keys a message mentions in any words, plus any the regex reading gives a distance to."""
     found = {k for k, pat in _AMENITY_MENTION.items() if re.search(pat, text, re.I)}
     return found | set((rule_based_extract(text).amenity_radii_meters or {}).keys())
+
+
+_NAMED_STATION_WORDS = re.compile(r"\b(?:near|close to|next to|beside|around|by|at|from|to)\s+(?:the\s+)?"
+                                  r"((?:[A-Z][\w'’-]*\s+){1,3})(?:MRT|LRT)\b")
+_NOT_A_STATION_NAME = {"AN", "A", "THE", "ANY", "NEAREST", "NEARBY", "AN", "SOME", "ONE", "MY", "OUR", "THIS", "THAT"}
+
+
+_ZERO_BUDGET = re.compile(r"\b(?:under|below|budget(?: of| is)?|max(?:imum)?|up to|at most)\s*S?\$\s?0(?![\d.,]*\d)\b", re.I)
+_SAME_WORKPLACE = re.compile(r"\b(?:we|both of us|my (?:wife|husband|spouse|partner) and i)\s+(?:both\s+)?"
+                             r"(?:work|are working)\s+(?:at|in|near)\b|\bwe both work\b|\bboth of us work\b", re.I)
+_TOWN_PRICE_Q = re.compile(r"\b(?:is|are|would|will)\b[^?.]{0,30}?(?:S?\$\s?)?(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand)?\b[^?.]{0,25}?"
+                           r"\b(?:too (?:much|high|expensive|pricey|steep)|(?:over|under)\s*priced|expensive|cheap|fair|"
+                           r"reasonable|a good (?:price|deal)|worth it)\b", re.I)
+
+
+def town_price_question(query: str) -> Optional[float]:
+    """The price in "is 600k too much for a 4-room in AMK?" (600000.0); None when the message asks no such thing."""
+    m = _TOWN_PRICE_Q.search(query or "")
+    if not m:
+        return None
+    value = float(m.group(1).replace(",", ""))
+    unit = (m.group(2) or "").lower()
+    value *= 1000 if unit in ("k", "thousand") else 1_000_000 if unit == "m" else 1
+    return value if 50_000 <= value <= 3_000_000 else None
+
+
+def town_price_opening(state: Dict[str, Any]) -> Optional[str]:
+    """The answer to "is 600k too much for 4 room in AMK?" in one sentence, from the town's row of the market
+    snapshot: "No: $600,000 is about 3% below ..." (L-M-14)."""
+    asked = (state.get("user_constraints") or {}).get("asked_town_price")
+    snap = (state.get("sql_market_results") or {}).get("get_market_snapshot") or {}
+    rows = [r for r in snap.get("rows") or [] if r.get("town") != "ALL TOWNS" and r.get("median_price")]
+    if not asked or len(rows) != 1:
+        return None
+    r = rows[0]
+    diff = (asked - r["median_price"]) / r["median_price"] * 100
+    # no figures in an opening (keep_supported_sentences): the facts line below gives the price, median and gap
+    where = "in line with" if abs(diff) <= 3 else "below" if diff < 0 else "above"
+    lead = "No" if diff <= 3 else "Yes"
+    return (f"{lead}: that price is {where} the latest quarter's median for {r['flat_type'].lower().replace(' room', '-room')} flats in "
+            f"{r['town'].title()}, as shown below.")
+
+
+def unknown_station_named(query: str) -> Optional[str]:
+    """A capitalised station name the user gave that is not in the station index ("near Fake Street MRT" ->
+    "Fake Street"); None for a known station or no name ("near an MRT", "near Novena MRT")."""
+    if ri.named_mrt_station(query or ""):
+        return None
+    for m in _NAMED_STATION_WORDS.finditer(query or ""):
+        words = [w for w in m.group(1).split() if w.upper() not in _NOT_A_STATION_NAME]
+        if words and not any(w.isdigit() for w in words):
+            return " ".join(words)
+    return None
 
 
 def _station_key(name: Any) -> str:
@@ -3825,6 +4170,22 @@ def _verify_extraction(c: Dict[str, Any], query: str, errors: List[str], from_mo
         c["school_name"] = None
         (c.get("amenity_radii_meters") or {}).pop("school", None)
         c["clarifications"] = list(dict.fromkeys((c.get("clarifications") or []) + [ri.SCHOOL_CLARIFICATION]))
+    if _ZERO_BUDGET.search(query):
+        # "4 room in Tampines under $0": no flat costs nothing; the search said "no blocks with recent sales", as if
+        # the town had none (L-M-28, live on Claude 11 Nov)
+        c["max_budget_sgd"] = None
+        c["clarifications"] = list(dict.fromkeys((c.get("clarifications") or []) + [
+            "A budget of $0 can't match any flat. What budget should I search with?"]))
+    unknown = unknown_station_named(query)
+    if unknown and not c.get("mrt_station"):
+        # "near Fake Street MRT": no such station, so the search measured every block to whichever station is nearest
+        # and the opening claimed every limit was met over 2,177 blocks (L-F-24, live on Claude 11 Nov). Said, asked
+        # about, and the opening says only some limits could be checked (partly_checked)
+        c["clarifications"] = list(dict.fromkeys((c.get("clarifications") or []) + [
+            f"I couldn't find an MRT or LRT station called {unknown} in my data. Which station did you mean?"]))
+        c["assumptions"] = list(dict.fromkeys((c.get("assumptions") or []) + [
+            f"I can't measure distances to {unknown} MRT: no station by that name is in my data, so any MRT distance "
+            "below is to the nearest station."]))
     # Distance phrases ("200m of a hawker centre") are constraints, not places; nor is a kind of school ("Show flats near
     # a good primary school": the place lookup then said no place matches "a good primary school", SEM-30)
     c["addresses"] = [a for a in c.get("addresses") or [] if a.strip() and not re.match(r"\s*\d+(?:\.\d+)?\s*k?m\b", a, re.I)
@@ -3844,6 +4205,31 @@ def calculator_facts(c: Dict[str, Any]) -> bool:
                if k not in _WEAK_FINANCIAL_FACTS)
 
 
+_TURN_STATS_KEYS = ("wants_area_statistics", "wants_group_stats", "wants_market_snapshot", "wants_town_ranking",
+                    "wants_price_trend", "stats_group_by", "wants_data_catalog")
+
+
+def turn_focus(c: Dict[str, Any], fresh: Dict[str, Any], prior: Optional[Dict[str, Any]],
+               pending: Optional[Dict[str, Any]], query: str) -> str:
+    """"search" or "other" (HDB_ANSWER_STYLE focused or conversational): whether this message is about the flat search
+    or asks something else while the search is only context. "other" only when the message has its own non-search
+    question (money, a rule, named blocks to compare or check, statistics) and changed no search limit; anything unclear
+    is "search", today's behaviour. On "other" the carried search is not run or listed again: "Help me check the amount of
+    grant i will get" after a Woodlands search had re-listed 381 blocks above the grant questions (live on Claude, 6 Nov)."""
+    if not prior or (pending and pending.get("kind", "financial") != "financial"):
+        return "search"
+    if c.get("search_stated") or _NEW_SEARCH.match(query or "") or any(
+            c.get(k) for k in ("wants_area_affordability", "wants_flat_affordability", "listed_pick", "about_results")):
+        return "search"
+    if any((c.get(k) or None) != (prior.get(k) or None) for k in SEARCH_KEYS):
+        return "search"            # a refinement ("within 300m", "what about 5-room") changed the search
+    named = bool(fresh.get("addresses")) and any(c.get(k) for k in ("wants_option_comparison", "wants_block_history",
+                                                                        "wants_price_assessment"))
+    own = (c.get("money_intent") or (pending or {}).get("kind") == "financial" or fresh.get("policy_question") or named
+           or any(fresh.get(k) for k in _TURN_STATS_KEYS))
+    return "other" if own else "search"
+
+
 def decide_routing(c: Dict[str, Any], pending: Optional[Dict[str, Any]] = None) -> List[str]:
     """pending: the open follow-up question, if any. While the user is answering a financial question, the weak facts
     they give (citizenship, first-timer status) still go to the calculators, which ask for the rest."""
@@ -3854,12 +4240,16 @@ def decide_routing(c: Dict[str, Any], pending: Optional[Dict[str, Any]] = None) 
     if c.get("nearby_schools"):
         return ["spatial"]
     active: List[str] = []
-    if c.get("comparable_resale") or ((c.get("towns") or c.get("islandwide")) and (c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or c.get("flat_types")
-                           or c.get("wants_price_trend") or c.get("wants_bto_comparison"))):
+    other = c.get("turn_focus") == "other"   # the carried search is context only this turn (turn_focus)
+    if c.get("comparable_resale") or ((c.get("towns") or c.get("islandwide")) and (
+            (not other and (c.get("max_budget_sgd") or c.get("min_remaining_lease_years") or c.get("flat_types")))
+            or c.get("wants_price_trend") or c.get("wants_bto_comparison"))):
         active.append("market_sql")
     # a commute check times the blocks of a search: two workplaces with no town or block would time the whole island
     # (QA sweep, 3 Nov: a long message mentioning where a couple works listed 1,832 blocks)
-    if c.get("amenity_radii_meters") or c.get("school_name") or (
+    if other:
+        pass                                 # the carried distance, school and commute limits belong to the search
+    elif c.get("amenity_radii_meters") or c.get("school_name") or (
             len(c.get("work_destinations") or []) >= 2 and not c.get("commute_unlimited") and (
                 c.get("towns") or c.get("addresses") or c.get("flat_types") or c.get("max_budget_sgd")
                 or c.get("min_remaining_lease_years") or not c.get("policy_question"))):
@@ -3878,7 +4268,7 @@ def decide_routing(c: Dict[str, Any], pending: Optional[Dict[str, Any]] = None) 
         active.append("policy_rag")
     if not active and (c.get("addresses") or c.get("map_pin")):
         pass  # a place with no recognised question: route_node asks instead of guessing a search or policy query
-    elif not active and c.get("towns"):
+    elif not active and c.get("towns") and not other:
         active.append("market_sql")
     elif not active and c.get("analysis_mode"):
         active.append("market_sql")
@@ -4220,7 +4610,7 @@ def needed_for_task(name: str, c: Dict[str, Any], query: str = "") -> bool:
     return asked_for(name, c, query) and TASK_TOOLS.get(name, lambda _: True)(c)
 
 
-CODE_ONLY_KEYS = ("requested_tools",)
+CODE_ONLY_KEYS = ("requested_tools", "turn_focus")
 
 
 def constraints_for_model(c: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -4318,7 +4708,8 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
     if agent == "market_sql":
         if c.get("comparable_resale") and asked_for("query_comparable_resale_transactions", c, query):
             plan.append(("query_comparable_resale_transactions", c["comparable_resale"]))
-        if (towns or c.get("islandwide")) and ri.is_block_search(c, query) and not area_statistics_only(c):
+        if (towns or c.get("islandwide")) and ri.is_block_search(c, query) and not area_statistics_only(c) \
+                and c.get("turn_focus") != "other":
             plan.append(("query_resale_blocks_by_criteria", dict(
                 towns=towns, flat_types=c.get("flat_types") or ["4 ROOM"],
                 max_price=c.get("max_budget_sgd") or NO_PRICE_LIMIT, min_lease_years=c.get("min_remaining_lease_years") or 0)))
@@ -4338,12 +4729,12 @@ def deterministic_plan(agent: str, c: Dict[str, Any], query: str,
         if c.get("nearby_schools"):
             return addons.plan(agent, c, query)   # schools near an address: that lookup alone (schools pack)
         radii = {k: v for k, v in (c.get("amenity_radii_meters") or {}).items() if k != "school"}
-        if radii:
+        if radii and c.get("turn_focus") != "other":
             # the tool limits any rail kind to the named station ("within 300m of Sumang LRT" is read as "lrt")
             station = c.get("mrt_station") if set(radii) & {"mrt", "lrt", "mrt_only"} else None
             plan.append(("filter_blocks_by_amenity_proximity",
                          dict(towns=towns, amenity_constraints=radii, **({"mrt_station": station} if station else {}))))
-        if c.get("school_name"):
+        if c.get("school_name") and c.get("turn_focus") != "other":
             r = (c.get("amenity_radii_meters") or {}).get("school", 1000)
             bracket = "1-2km" if re.search(r"\b1\s*[-–]\s*2\s*km\b", query, re.I) else ("1km" if r <= 1000 else "2km")
             plan.append(("verify_primary_school_distance", dict(school_name=c["school_name"], bracket=bracket)))
@@ -4667,8 +5058,20 @@ def run_financial_sequence(runners, constraints, query):
     upfront_name = "calculate_bsd_and_upfront_outlay"
     # A stamp-duty / upfront-cost question that states no grant or budget fact runs only the upfront calculator: the
     # grant and affordability calculators would only answer with a long list of facts nobody asked about.
+    asked = asked_part(query)
     upfront_only = (upfront_name in runners and asked_for(upfront_name, constraints, query)
-                    and upfront_args.get("purchase_price") and not grant_args and not aff_args)
+                    and upfront_args.get("purchase_price")
+                    and ((not grant_args and not aff_args)
+                         # "How much cash do we need upfront?" with the CPF, cash and loan given: those facts are the
+                         # upfront costs', not a budget question (L-M-37/38, live on Claude 11 Nov: it asked for income
+                         # and ages)
+                         or (upfront_args.get("loan_amount") and not _BUDGET_ASK.search(asked)
+                             and not re.search(r"\bgrants?\b", asked, re.I)
+                             and set(aff_args) <= {"cpf_oa_balance", "cash_savings", "loan_type", "total_grants"}
+                             and set(grant_args) <= {"flat_type", "flat_category", "remaining_lease_years"})))
+    if upfront_args.get("loan_type", "hdb") == "hdb" and upfront_args.get("loan_amount") is not None:
+        # an HDB loan's limit is 75% (the calculator accepts no other HDB figure), so it is never asked for as "ltv ratio"
+        upfront_args.setdefault("ltv_ratio", 0.75)
     # no grants at all ("Assume zero housing grants.", two PRs): the grant calculator would only ask its facts again
     # (HOUSE-04)
     grants_known = aff_args.get("total_grants") == 0 or constraints.get("pr_couple")
@@ -5564,7 +5967,13 @@ def template_response(state: HDBCompassState) -> str:
             for b in blocks[:LISTED_BLOCKS]:
                 price = f" — median ${b['median_resale_price']:,.0f}" if b.get("median_resale_price") else ""
                 lease = f", {b['median_remaining_lease_years']:.0f} yrs lease" if b.get("median_remaining_lease_years") else ""
-                dist = ", ".join(_distance_label(k, v) for k, v in (b.get("distances") or {}).items())
+                shown = dict(b.get("distances") or {})
+                work = (state.get("user_constraints") or {}).get("work_destinations") or []
+                if len(work) == 2 and work[0] == work[1] and "commute_a_mins" in shown:
+                    shown.pop("commute_b_mins", None)   # both buyers work at the same place: one commute time
+                dist = ", ".join(_distance_label(k, v) for k, v in shown.items())
+                if len(work) == 2 and work[0] == work[1]:
+                    dist = dist.replace("commute to workplace 1:", f"commute to {work[0]}:")
                 kind = f" {b['flat_type']}" if b.get("flat_type") and len({x.get("flat_type") for x in blocks}) > 1 else ""
                 town = f" ({b['town']})" if b.get("town") else ""
                 lines.append(f"- Blk {b['block']} {b['street']}{town}{kind}{price}{lease}{(' — ' + dist) if dist else ''}")
@@ -5668,17 +6077,35 @@ def template_response(state: HDBCompassState) -> str:
                                  "this estimate does not model.")
                     continue
                 if value.get("status") in ("needs_information", "unsupported") and name != "calculate_bsd_and_upfront_outlay" \
+                        and uc.get("single_under_35"):
+                    # no fact would give a single under 35 a resale grant or budget: none is listed (L-X-03, 11 Nov)
+                    lines.append(f"- {label}: not worked out — a single Singapore Citizen must be at least 35 to buy a "
+                                 "resale flat under the Single Singapore Citizen scheme.")
+                    continue
+                if value.get("status") in ("needs_information", "unsupported") and name != "calculate_bsd_and_upfront_outlay" \
                         and uc.get("senior_buyer"):
                     # only the loan model stops at 55; the grants were not asked about, so their facts are not either
                     lines.append(f"- {label}: not worked out — " + (
                         f"this estimate covers buyers below {SENIOR_BUYER_AGE} only." if name == "calculate_maximum_affordability"
                         else "ask me for a grant estimate if you'd like one."))
                     continue
-                if value.get("status") == "needs_information" and name == "calculate_cpf_housing_grants" and grants_unconfirmed:
+                if value.get("status") in ("needs_information", "unsupported") and name == "calculate_cpf_housing_grants" \
+                        and grants_unconfirmed:
                     lines.append(f"- {label}: not worked out — your grant eligibility is not confirmed yet (HDB confirms "
                                  "it in the HFE letter).")
                     continue
-                detail = ", ".join(field.replace("_", " ") for field in value.get("missing_inputs", [])) or "; ".join(value.get("notes", []))
+                if name == "calculate_maximum_affordability" and value.get("status") == "needs_information" \
+                        and "calculate_cpf_housing_grants" in fin and not budget_in_conversation(state):
+                    continue   # a grants-only conversation: no budget was asked for, so its missing facts are not listed
+                # plain words, not field names ("cpf oa balance", "total grants": live on Claude, 11 Nov); the grant
+                # total is worked out by the grant calculator, so it is never listed as a fact to give
+                # facts code will assume once the key ones are in (_assume_grant_conditions) are not listed as needed
+                assumable = {"eligibility_confirmed", "continuous_employment_12_months", "proximity",
+                             "loan_eligibility_confirmed"} if _ASSUMABLE_OK(state) else set()
+                missing_words = [FACT_WORDS.get(f, f.replace("_", " ")) for f in value.get("missing_inputs", [])
+                                 if not (f == "total_grants" and "calculate_cpf_housing_grants" in fin)
+                                 and f not in assumable]
+                detail = ", ".join(dict.fromkeys(missing_words)) or "; ".join(value.get("notes", []))
                 status = "more information needed" if value.get("status") == "needs_information" else "scenario unavailable"
                 lines.append(f"- {label}: {status} — {detail}")
                 if name == "calculate_bsd_and_upfront_outlay" and value.get("buyer_stamp_duty") is not None:
@@ -5974,8 +6401,11 @@ def school_unchecked(state: HDBCompassState) -> bool:
         return False
     searched = (state.get("candidate_blocks_intersection") or _sql_blocks(state) is not None
                 or state.get("spatial_block_candidates") is not None)
+    # "near a (good) primary school" asks which school (research_intents.SCHOOL_CLARIFICATION) while the search runs:
+    # the school limit is not applied yet (L-F-61, L-F36, live on Claude 11 Nov: "every limit you set" was claimed)
+    asking = ri.SCHOOL_CLARIFICATION in ((state.get("user_constraints") or {}).get("clarifications") or [])
     # the guard with "no school named" says whether the words ask for a distance to a school (school_queries)
-    return bool(searched) and guard_school_request(last_user_query(state), lambda q: False) == SCHOOL_NAME_QUESTION
+    return bool(searched) and (asking or guard_school_request(last_user_query(state), lambda q: False) == SCHOOL_NAME_QUESTION)
 
 
 def commute_unchecked(state: HDBCompassState) -> bool:
@@ -6003,6 +6433,8 @@ def partly_checked(state: HDBCompassState) -> bool:
 
 
 def not_checked_lines(state: HDBCompassState) -> List[str]:
+    if (state.get("user_constraints") or {}).get("turn_focus") == "other" and _sql_blocks(state) is None:
+        return []   # the carried commute or school limits were not this turn's question (turn_focus)
     lines = [f"- {NOT_CHECKED[t]} could not be checked: that tool is unavailable right now." for t in unavailable_tools(state)]
     lines += [unchecked_commute_line(state)] if commute_unchecked(state) else []
     return lines + ([UNCHECKED_SCHOOL] if school_unchecked(state) else [])
@@ -6094,6 +6526,8 @@ def clarification_needed(state: HDBCompassState) -> Optional[Dict[str, Any]]:
         return None   # the lease ends before the youngest buyer turns 95: no fact asked for could give an estimate (SEM-21)
     if c.get("senior_buyer"):
         return None   # a buyer aged 55 or over: the calculators give no loan or ceiling whatever else is told (HOUSE-09)
+    if c.get("single_under_35"):
+        return None   # a single below 35 cannot buy resale on their own: no fact asked for would give a grant (L-X-03)
     grants_unconfirmed = ((c.get("financial_inputs") or {}).get("grants") or {}).get("eligibility_confirmed") is False
     if c.get("pr_couple") or grants_unconfirmed:
         # no grant can be worked out (two PRs; grant eligibility not confirmed: "HDB has not confirmed our grant
@@ -6101,16 +6535,47 @@ def clarification_needed(state: HDBCompassState) -> Optional[Dict[str, Any]]:
         grant_only = set(((fin.get("calculate_cpf_housing_grants") or {}).get("missing_inputs") or [])) - \
             set(((fin.get("calculate_maximum_affordability") or {}).get("missing_inputs") or []))
         needed = [n for n in needed if n not in grant_only and (n != "citizenship_pair" or not c.get("pr_couple"))]
+    if "calculate_cpf_housing_grants" in fin and not budget_in_conversation(state):
+        # a grants-only conversation: the budget's own facts (CPF, cash, debts) were not asked about
+        aff_only = set(((fin.get("calculate_maximum_affordability") or {}).get("missing_inputs") or [])) - \
+            set(((fin.get("calculate_cpf_housing_grants") or {}).get("missing_inputs") or []))
+        needed = [n for n in needed if n not in aff_only]
     needed = list(dict.fromkeys(needed))
     if not c.get("flat_purchase"):
         needed = [n for n in needed if n != "remaining_lease_years"]   # assumed from the buyers' ages (_assume_flat_basics)
     if not needed:
         return None
     bank = ((c.get("financial_inputs") or {}).get("affordability") or {}).get("loan_type") == "bank"
+    # facts code assumes once the key facts are in (_assume_grant_conditions, _assume_loan_conditions) are not asked
+    # for; "needed" keeps them, so a user who states one is still read
+    users = " ".join(m.get("content", "") for m in state.get("messages", []) if isinstance(m, dict) and m.get("role") == "user")
+    assumed = {"eligibility_confirmed", "continuous_employment_12_months", "proximity"} | (
+        set() if bank else {"loan_eligibility_confirmed"})
+    s = statements(users)
+    if not _KID_WORDS.search(re.sub(_NO_KIDS, " ", s, flags=re.I)) and not _OTHER_OCCUPANT.search(s):
+        assumed.add("youngest_core_member_age")
+    to_ask = [n for n in needed if n not in assumed] or needed
     words = {**FACT_WORDS, **(BANK_FACT_WORDS if bank else {})}
-    phrases = list(dict.fromkeys(words.get(n, n.replace("_", " ")) for n in needed))
+    phrases = list(dict.fromkeys(words.get(n, n.replace("_", " ")) for n in to_ask))
     listed = phrases[0] if len(phrases) == 1 else ", ".join(phrases[:-1]) + " and " + phrases[-1]
-    return {"kind": "financial", "needed": needed, "question": f"To finish your grant and budget estimate, please tell me {listed}."}
+    if answer_style() != "template":
+        # a few facts at a time, the most important first (HDB_ANSWER_STYLE): the calculators' full list ran to 13
+        # questions at once. "needed" stays complete, so facts the user gives beyond these are still read
+        # (parse_clarification_answer); the page's form shows "asked" (backend chip_clarification)
+        budget = bool(c.get("budget_asked") or c.get("asked_price") or c.get("wants_area_affordability")
+                      or c.get("wants_flat_affordability"))
+        key = [n for n in KEY_GRANT_FACTS if n in to_ask]
+        grant_missing = [n for n in ((fin.get("calculate_cpf_housing_grants") or {}).get("missing_inputs") or []) if n in to_ask]
+        asked = list(dict.fromkeys(key + [n for n in grant_missing if n not in key]))[:3] or to_ask[:3]
+        if budget:
+            asked = list(dict.fromkeys(asked + [n for n in ("cpf_oa_balance", "cash_savings") if n in to_ask]))[:5]
+        short = list(dict.fromkeys(words.get(n, n.replace("_", " ")) for n in asked))
+        aim = "your grant and budget" if budget else "your grant"
+        return {"kind": "financial", "needed": needed, "asked": asked, "form": len(asked) >= 3,
+                "question": f"To work out {aim}, could you tell me {_join_words(short)}?"}
+    aim = "grant and budget estimate" if budget_in_conversation(state) or "calculate_cpf_housing_grants" not in fin \
+        else "grant estimate"
+    return {"kind": "financial", "needed": needed, "question": f"To finish your {aim}, please tell me {listed}."}
 
 
 def user_request(state: HDBCompassState) -> str:
@@ -6449,7 +6914,7 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
         if clar:
             follows += (f"; {'the rest of y' if done else 'y'}our grant and budget estimate needs a few more facts, "
                         "asked for at the end")
-        elif len(fin_ok) < len(fin):
+        elif len(fin_ok) < len(fin) - _hidden_budget_gap(state):
             follows += f"; {'part of y' if done else 'y'}our estimate could not be worked out, as said below"
         if c and not stated_limits(checked):   # (a state with no constraints at all is test data, not a real run)
             # nothing was asked of the blocks, so "they meet every limit you set" would promise a check that never happened
@@ -6484,6 +6949,9 @@ def code_opening_parts(state: HDBCompassState, facts: str) -> Tuple[List[str], s
         ranked = snapshot_rank_sentence(state)
         if ranked:
             sentences.append(ranked)
+        verdict = town_price_opening(state)
+        if verdict:
+            sentences.append(verdict)
         forced = forced_opening(state)[0]
         if forced:
             sentences.append(forced)
@@ -6606,7 +7074,10 @@ _RANK_HIGH = (r"highest|priciest|dearest|most expensive|most costly|top(?=\s+(?:
               r"(?:rose|risen|grew|increased|gained|climbed|went up)\s+(?:the\s+)?most")
 _RANK_LOW = (r"lowest|cheapest|least expensive|most affordable|least costly|at the bottom|"
              r"(?:fell|fallen|dropped|decreased|declined|went down)\s+(?:the\s+)?most|rose\s+(?:the\s+)?least")
-_RANKS_A_SET = re.compile(rf"\b(?:{_RANK_HIGH}|{_RANK_LOW}|biggest|smallest|largest|fastest|slowest)\b", re.I)
+# a place in the middle of the whole set is a ranking too: "Queenstown and Bukit Merah offer mid-range prices" of a
+# cut-off table where they were 2nd and 3rd of 26 (live 6 Nov, "Group it by town instead.")
+_RANK_MID = r"mid[- ]?range|mid[- ]?priced|middle of the (?:range|pack|market)|moderately priced"
+_RANKS_A_SET = re.compile(rf"\b(?:{_RANK_HIGH}|{_RANK_LOW}|{_RANK_MID}|biggest|smallest|largest|fastest|slowest)\b", re.I)
 _RANKS_HIGH = re.compile(rf"\b(?:{_RANK_HIGH})\b", re.I)
 _RANKS_LOW = re.compile(rf"\b(?:{_RANK_LOW})\b", re.I)
 _OF_THE_SHOWN = re.compile(
@@ -6628,7 +7099,7 @@ def ranks_part_table(sentence: str, facts: str) -> bool:
         same_way = _RANKS_HIGH if head.group(2) == "highest" else _RANKS_LOW
         other_way = _RANKS_LOW if head.group(2) == "highest" else _RANKS_HIGH
         rest = re.sub(re.escape(head.group(1).strip()), " ", sentence, flags=re.I)
-        if same_way.search(sentence) and not other_way.search(rest):
+        if same_way.search(sentence) and not other_way.search(rest) and not re.search(rf"\b(?:{_RANK_MID})\b", rest, re.I):
             return False   # the headline's group and direction, with no other group ranked in the same sentence
     return True
 
@@ -6825,11 +7296,18 @@ def unsupported_proximity(sentence: str, facts: str) -> bool:
 # (DEMO-12 t2), "The available options depend on the specific blocks and their details" above a budget (HOUSE-04 t2).
 _BLOCK_FILLER = re.compile(r"\bprice and convenience\b|\b(?:depends?|depending|based|rests?) on (?:the |your )?(?:specific |available |"
                            r"individual |particular |actual )*(?:blocks?|options?|flats?|listings?|units?)\b", re.I)
+# "The choice between different blocks would depend on ..., but specific details on blocks are not yet available." in a
+# grants answer (live 6 Nov). Not a rule about choosing blocks ("When choosing among blocks, check the SPR quota").
+_BLOCK_CHOICE_FILLER = re.compile(r"\b(?:choice|choosing|deciding|picking)\s+(?:between|among|from)\s+(?:the\s+)?(?:different\s+|"
+                                  r"specific\s+|available\s+|these\s+|those\s+)?blocks\b"
+                                  r"|\bdetails\s+(?:on|about|of|for)\s+(?:the\s+|specific\s+|any\s+)?blocks\s+(?:are|is)\s+not\b", re.I)
+_BLOCK_RULE = re.compile(r"\b(?:quotas?|eip|spr|ethnic\w*|integration|eligib\w*|rules?|polic\w*|allowed|permitted)\b", re.I)
 
 
 def block_filler(sentence: str, facts: str) -> bool:
     """A sentence about choosing among blocks when the facts list no block."""
-    return not re.search(r"\bBlk\s+\d", facts or "") and bool(_BLOCK_FILLER.search(sentence))
+    return not re.search(r"\bBlk\s+\d", facts or "") and bool(
+        _BLOCK_FILLER.search(sentence) or (_BLOCK_CHOICE_FILLER.search(sentence) and not _BLOCK_RULE.search(sentence)))
 
 
 def check_model_opening(text: str, state: HDBCompassState, facts: str,
@@ -6909,6 +7387,32 @@ def check_model_opening(text: str, state: HDBCompassState, facts: str,
 # the trade-off: in a block-search answer code's own sentence on whether the blocks meet the limits goes first.
 OPENING_EXAMPLE = ('"Blk 101 is cheaper, while Blk 202 has more lease left and is nearer the MRT station, so the choice '
                    'is between price and convenience."')
+
+
+ANSWER_STYLES = ("template", "focused", "conversational")
+
+
+# Errors that mean a model step really failed (a crash or timeout), as opposed to code doing a step on purpose ("no
+# valid tool call from model; deterministic plan used" when there was nothing to calculate): the conversational app
+# shows its fallback footer only for these (backend/main.py)
+_REAL_FAILURE = re.compile(r"\bLLM failed\b|\bLLM loop failed\b|model extraction failed|composed reply not written|"
+                           r"\b(?:Timeout|APIConnectionError|APITimeoutError|RateLimitError|InternalServerError|APIStatusError)\b")
+
+
+def real_model_failure(errors: List[Any]) -> bool:
+    return any(_REAL_FAILURE.search(str(e)) for e in errors or [])
+
+
+def answer_style() -> str:
+    """HDB_ANSWER_STYLE: how the app answers (6 Nov plan: chat like a normal assistant, app on Claude only).
+    template (default): as measured in Experiment 1. focused: each turn answers what this message asks (turn_focus) and
+    asks a few household facts at a time. conversational: focused, and Claude writes the reply from code's checked facts
+    (agents/reply_composer.py). cluster/demo_start.sh --claude sets conversational; the evaluation refuses anything
+    but template. Any other value is refused rather than guessed, like HDB_CODE_WRITTEN_FACTS."""
+    style = (setting("HDB_ANSWER_STYLE") or "template").strip().lower()
+    if style not in ANSWER_STYLES:
+        raise ValueError(f"HDB_ANSWER_STYLE must be one of {', '.join(ANSWER_STYLES)}, not {style!r}")
+    return style
 
 
 def code_written_facts_on() -> bool:
@@ -7086,7 +7590,8 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     # a rule question that found no rule ("it may affect your eligibility...") and an instalment finished from a reply
     # to code's question ("There are no specific block options provided to compare...")
     fallback_only = (c.get("policy_fallback") and state.get("policy_no_match")) or c.get("instalment_from_reply")
-    llm = get_llm() if not only_asking and not c.get("about_results") and not fallback_only \
+    refused_composed = state.get("answer_style") == "composed" and verdict and not verdict.get("passed", True)
+    llm = get_llm() if not only_asking and not c.get("about_results") and not fallback_only and not refused_composed \
         and (c.get("extraction_source") != FAST_PATH_SOURCE or policy) else None
     # code's own opening (code_opening_parts). In a block-search answer its answer sentence always goes first and the
     # model's checked sentences follow; otherwise it is used when none of the model's survives, or there is no model.
@@ -7095,6 +7600,31 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
     blocks_listed = blocks[:LISTED_BLOCKS]
     code_answers = bool(answer) and (bool(blocks) or _sql_blocks(state) is not None
                                      or state.get("spatial_block_candidates") is not None)
+    style = "template"
+    # HDB_ANSWER_STYLE=conversational (the app on Claude): the model writes the reply from the checked facts, checked
+    # line by line (agents/reply_composer.py), with the facts kept under it as Details. Not for a refusal or disclosure
+    # code must lead with, a turn that only asks, a fallback-only answer, or a composed reply the auditor refused (that
+    # turn shows today's answer, so a rejection never deletes the reply).
+    if refused_composed and facts and answer_style() == "conversational":
+        # the auditor's judge refused some sentences of the composed reply: those are removed and the rest kept, when it
+        # still passes every check. Dropping the whole reply left only the passage list (live on Claude, 11 Nov: "how
+        # long must I stay in my BTO" lost its correct "5 years" over three added sentences the judge could not ground)
+        from agents import reply_composer as rc
+        before = str(state.get("draft_response") or "").split(rc.DETAILS_SEP)[0]
+        kept = rc.drop_claims(before, verdict.get("ungrounded_claims") or []) if rc.DETAILS_SEP in str(
+            state.get("draft_response") or "") else ""
+        if kept and kept != before.strip() and not rc.verify_reply(kept, state, facts, clar, policy):
+            text, model_text, style = kept + rc.DETAILS_SEP + facts, kept, "composed"
+            errors.append("synthesize: sentences the auditor could not ground were removed from the composed reply")
+    if not text and facts and answer_style() == "conversational" and not only_asking and not c.get("about_results") \
+            and not fallback_only and not refused_composed and not forced_opening(state)[0]:
+        composer = get_llm()
+        if composer is not None:
+            from agents import reply_composer as rc
+            reply, notes = rc.compose(composer, state, facts, evidence, clar, policy, " ".join(answer))
+            errors += notes
+            if reply:
+                text, model_text, style, llm = reply + rc.DETAILS_SEP + facts, reply, "composed", None
     if llm is not None:
         try:
             if facts:
@@ -7218,10 +7748,17 @@ def synthesize_node(state: HDBCompassState) -> Dict[str, Any]:
             text += HFE_DISCLAIMER
     if clar and clar["question"] not in text:
         text = text.rstrip() + "\n\n" + clar["question"]
+    fallback = ""
+    if style == "composed":   # today's answer for this turn, in case the auditor refuses the composed one (audit_node)
+        fallback = (lead + "\n\n" + facts if lead else facts)
+        if (state.get("financial_breakdown") or state.get("rag_policy_passages")) and "HFE" not in fallback:
+            fallback += HFE_DISCLAIMER
+        if clar and clar["question"] not in fallback:
+            fallback = fallback.rstrip() + "\n\n" + clar["question"]
     return {"draft_response": text, "model_opening": model_text, "map_ui_payload": payload, "tool_call_log": log,
-            "errors": errors,
+            "errors": errors, "answer_style": style, "fallback_draft": fallback,
             # drill-down chips first, then radius chips (both are whole questions, not answers to a pending question)
-            "clarification": clar, "suggestions": [] if clar else _merge_chips(ri.drilldown_suggestions(state), ri.comparison_chips(state), ri.price_check_chips(state), ri.radius_chips(c))}
+            "clarification": clar, "suggestions": [] if clar else _merge_chips(ri.drilldown_suggestions(state), ri.comparison_chips(state), ri.price_check_chips(state), ri.radius_chips(c))[:2 if answer_style() == "conversational" else None]}
 
 
 # ---------------------------------------------------------------------------
@@ -7353,7 +7890,14 @@ def guardrail_gate(state: HDBCompassState) -> str:
 
 def audit_node(state: HDBCompassState) -> Dict[str, Any]:
     if _AUDITOR is not None:
-        return _AUDITOR(state)
+        out = _AUDITOR(state)
+        if state.get("answer_style") == "composed" and "draft_response" in out:
+            # the auditor took sentences out of a composed reply (its last rejection): today's answer for the turn
+            # instead, never a reply with its sentences cut out (HDB_ANSWER_STYLE=conversational)
+            out = {**out, "draft_response": state.get("fallback_draft") or out["draft_response"], "model_opening": "",
+                   "answer_style": "template",
+                   "errors": list(out.get("errors") or []) + ["synthesize: composed reply refused by the auditor; checked facts used"]}
+        return out
     prev = state.get("auditor_verdict") or {}
     critique = "auditor failed to load (pass-through)" if HOOK_LOAD_PROBLEMS else "auditor not installed (pass-through)"
     update: Dict[str, Any] = {"auditor_verdict": AuditorVerdict(passed=True, critique=critique,

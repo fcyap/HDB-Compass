@@ -52,7 +52,10 @@ def test_reply_keeps_the_earlier_request():
                                        "clarification": {"needed": ["cash_savings"], "question": "?"}})
     c = sv.extract_constraints_node(state)["user_constraints"]
     assert c["towns"] == ["TOA PAYOH"] and c["max_budget_sgd"] == 750000.0
-    assert c["financial_inputs"]["affordability"] == {"monthly_income": 7800.0, "cpf_oa_balance": 80000.0, "cash_savings": 25000.0}
+    # HDB loan eligibility is assumed once the money facts are in, and said so (live on Claude, 11 Nov)
+    assert c["financial_inputs"]["affordability"] == {"monthly_income": 7800.0, "cpf_oa_balance": 80000.0,
+                                                      "cash_savings": 25000.0, "loan_eligibility_confirmed": True}
+    assert sv.HDB_LOAN_NOTE in c["assumptions"]
     assert len(state["messages"]) == 2
 
 

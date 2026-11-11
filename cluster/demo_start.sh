@@ -3,6 +3,10 @@
 #
 #   bash cluster/demo_start.sh             # cluster model (VPN + shared session needed)
 #   bash cluster/demo_start.sh --offline   # no model: real tools and graph, template answers, starts in seconds
+#   bash cluster/demo_start.sh --claude    # Anthropic's Claude (LLM_PROFILE=claude, a paid API) instead of the cluster:
+#                                          # no VPN, login or GPU job; needs ANTHROPIC_API_KEY in .env. Claude reads
+#                                          # each message with the earlier turns (HDB_READING_CONTEXT=1); code's checks
+#                                          # on its reading stay on (HDB_TRUST_MODEL_READING=1 switches them off)
 #   bash cluster/demo_start.sh --preview   # serve a production build of the frontend instead of the dev server
 #   bash cluster/demo_start.sh --keep-job  # Ctrl-C leaves the GPU job running (e.g. between two demo slots)
 #   bash cluster/demo_start.sh --dry-run   # checks this laptop and prints the plan; starts nothing, no ssh
@@ -27,6 +31,7 @@ DRY_RUN=0
 for a in "$@"; do
   case "$a" in
     --offline) MODE=offline ;;
+    --claude) MODE=claude ;;
     --keep-job) KEEP_JOB=1 ;;
     --preview) PREVIEW=1 ;;
     --dry-run) DRY_RUN=1 ;;
@@ -102,6 +107,18 @@ if [[ "$MODE" == cluster ]]; then
   [[ -n "$LOGIN" ]] || blocked "Set CLUSTER_LOGIN=<your-cluster-id>@<cluster-address> in .env"
 fi
 
+if [[ "$MODE" == claude ]]; then
+  # read the way the app reads it (python-dotenv, then agents.llm), and never into a shell variable, so not even
+  # bash -x shows the key; the profile's own error names what is missing without any credential in it
+  .venv/bin/python -c 'import langchain_anthropic' 2>/dev/null \
+    || blocked "langchain-anthropic is not installed. Install: .venv/bin/pip install -r requirements.txt"
+  CLAUDE_PROBLEM="$(LLM_PROFILE=claude .venv/bin/python -c 'from agents.llm import active_profile; active_profile()' 2>&1 \
+    | grep -o 'ModelConfigurationError: .*' | head -1)"
+  if [[ -n "$CLAUDE_PROBLEM" ]]; then
+    blocked "${CLAUDE_PROBLEM#ModelConfigurationError: }" "(the key goes in .env as ANTHROPIC_API_KEY=<your key from console.anthropic.com>)"
+  fi
+fi
+
 if [[ "$DRY_RUN" == 1 ]]; then
   echo
   echo "== dry run: nothing started, no ssh. A real start would:"
@@ -112,6 +129,8 @@ if [[ "$DRY_RUN" == 1 ]]; then
     echo "   check the shared session: ssh -o BatchMode=yes -S $SOCK -O check ${LOGIN:-<CLUSTER_LOGIN>}"
     echo "   start or reuse the hdb-vllm GPU job, open the tunnel and smoke-test the model"
     echo "   run the backend with LLM_PROFILE=vllm LLM_TIMEOUT_S=$TIMEOUT_S LLM_MAX_RETRIES=${LLM_MAX_RETRIES:-0}"
+  elif [[ "$MODE" == claude ]]; then
+    echo "   smoke-test Claude, then run the backend with LLM_PROFILE=claude LLM_TIMEOUT_S=${LLM_TIMEOUT_S:-60} LLM_MAX_RETRIES=${LLM_MAX_RETRIES:-1} HDB_TRUST_MODEL_READING=${HDB_TRUST_MODEL_READING:-0} HDB_READING_CONTEXT=${HDB_READING_CONTEXT:-1} HDB_ANSWER_STYLE=${HDB_ANSWER_STYLE:-conversational}"
   else
     echo "   run the backend with LLM_PROFILE=none (no model)"
   fi
@@ -199,6 +218,23 @@ if [[ "$MODE" == cluster ]]; then
   LLM_TIMEOUT_S=60 .venv/bin/python cluster/smoke_test.py > "$LOGS/smoke.log" 2>&1
   grep -q "OK: well-formed" "$LOGS/smoke.log" || { tail -5 "$LOGS/smoke.log"; echo "Smoke test failed (log: $LOGS/smoke.log). Use --offline."; exit 1; }
   echo "== model ready ($(grep -o 'latency=[0-9.]*s' "$LOGS/smoke.log"); answers time out after ${LLM_TIMEOUT_S} s)"
+elif [[ "$MODE" == claude ]]; then
+  # a hosted API answers in seconds and does not stall like a lost tunnel, so the cluster's 25 s / no-retry is not needed
+  export LLM_PROFILE=claude LLM_TIMEOUT_S="${LLM_TIMEOUT_S:-60}" LLM_MAX_RETRIES="${LLM_MAX_RETRIES:-1}"
+  # Claude reads each message with the earlier turns and judges grant questions itself (HDB_READING_CONTEXT); code's
+  # checks on its reading stay on (the 6 Nov full run: switching them off made 69 QA turns worse).
+  # HDB_TRUST_MODEL_READING=1 bash cluster/demo_start.sh --claude switches the checks off again for a test.
+  export HDB_TRUST_MODEL_READING="${HDB_TRUST_MODEL_READING:-0}" HDB_READING_CONTEXT="${HDB_READING_CONTEXT:-1}"
+  # how the app answers on Claude (agents/supervisor.py answer_style): focused answers what each message asks and asks a
+  # few facts at a time; conversational also lets Claude write the reply from code's checked facts
+  export HDB_ANSWER_STYLE="${HDB_ANSWER_STYLE:-conversational}"
+  # a hosted model now and then answers the test question in text instead of calling the tool: one more try
+  for _ in 1 2; do
+    .venv/bin/python cluster/smoke_test.py > "$LOGS/smoke.log" 2>&1
+    grep -q "OK: well-formed" "$LOGS/smoke.log" && break
+  done
+  grep -q "OK: well-formed" "$LOGS/smoke.log" || { tail -5 "$LOGS/smoke.log"; echo "Claude smoke test failed (log: $LOGS/smoke.log). Check ANTHROPIC_API_KEY, or use --offline."; exit 1; }
+  echo "== Claude ready ($(grep -o 'latency=[0-9.]*s' "$LOGS/smoke.log"); model: $(.venv/bin/python -c 'from agents.llm import active_profile as a; print(a()["model"])' 2>/dev/null); earlier turns read: $([[ "$HDB_READING_CONTEXT" =~ ^(1|true|yes|on)$ ]] && echo yes || echo no); code's checks: $([[ "$HDB_TRUST_MODEL_READING" =~ ^(1|true|yes|on)$ ]] && echo off || echo on); answer style: $HDB_ANSWER_STYLE)"
 else
   export LLM_PROFILE=none
 fi
@@ -222,6 +258,7 @@ open http://localhost:3000 2>/dev/null || true
 echo
 echo "HDB-Compass is running at http://localhost:3000  (mode: $MODE). Ctrl-C to stop."
 [[ "$MODE" == cluster ]] && echo "If a model warning appears: Ctrl-C, then  bash cluster/demo_start.sh --offline"
+[[ "$MODE" == claude ]] && echo "Each answer is billed to your Anthropic account. If Claude fails: Ctrl-C, then  bash cluster/demo_start.sh --offline"
 
 while true; do
   nap 30

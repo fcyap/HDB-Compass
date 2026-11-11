@@ -1125,6 +1125,19 @@ def research_lines(state: Dict[str, Any]) -> List[str]:
                          f"vs prior quarter {_pct(r['qoq_change_pct'])}, 1 yr {_pct(r['yoy_change_pct'])}, "
                          f"3 yrs {_pct(r['change_3y_pct'])}, 5 yrs {_pct(r['change_5y_pct'])}")
         lines.extend(_cheaper_town_lines(snap["rows"]))
+        asked = c.get("asked_town_price")
+        for r in snap["rows"] if asked else []:
+            if r["town"] == "ALL TOWNS" or not r.get("median_price"):
+                continue
+            # "is 600k too much for 4 room in AMK": the price against that town's median (L-M-14, live 11 Nov)
+            diff = (asked - r["median_price"]) / r["median_price"] * 100
+            where = "in line with" if abs(diff) <= 3 else f"{abs(diff):.0f}% {'below' if diff < 0 else 'above'}"
+            verdict = ("so it is not more than recent buyers typically paid" if diff <= 3
+                       else "so it is more than recent buyers typically paid")
+            lines.append(f"- **{_m(asked)} is {where} the {snap['latest_complete_quarter']} median of "
+                         f"{_m(r['median_price'])} for {r['flat_type']} flats in {r['town'].title()}** "
+                         f"({r['transaction_count']} sales), {verdict}. A block's own price depends on its lease, floor "
+                         f"and location.")
 
     bto = sql.get("compare_bto_launch_vs_resale")
     if bto and "error" not in bto and bto.get("status") in ("not_found", "flat_type_not_offered"):

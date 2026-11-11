@@ -142,6 +142,10 @@ def test_financial_clarification_and_policy_leads():
         ("Here are your housing grants and maximum purchase price, worked out from the facts you gave.", [])
     needs = {"status": "needs_information", "missing_inputs": ["cash_savings"]}
     s["financial_breakdown"] = {"calculate_cpf_housing_grants": grants, "calculate_maximum_affordability": needs}
+    # a grants-only question is not told about the budget's missing facts (live on Claude, 11 Nov)
+    assert sv.code_opening(s, sv.template_response(s))[0] == \
+        "Here are your housing grants, worked out from the facts you gave."
+    s["messages"] = [{"role": "user", "content": "What grants can we get, and what is our budget?"}]
     assert sv.code_opening(s, sv.template_response(s))[0] == (
         "Here are your housing grants, worked out from the facts you gave. The rest of your grant and budget estimate "
         "needs a few more facts, asked for at the end.")
@@ -223,10 +227,15 @@ def test_the_lead_says_only_what_was_worked_out_follows_the_list():
         "Both blocks below meet every limit you set, and your housing grants follow the list; the rest of your grant "
         "and budget estimate needs a few more facts, asked for at the end.")
     meets = "Both blocks below meet every limit you set"
-    assert answer_of(search_with(financial_breakdown={"calculate_cpf_housing_grants": GRANTS,
-                                                      "calculate_maximum_affordability": NEEDS})) == (
+    assert answer_of({**search_with(financial_breakdown={"calculate_cpf_housing_grants": GRANTS,
+                                                         "calculate_maximum_affordability": NEEDS}),
+                      "messages": [{"role": "user", "content": "What is our budget?"}]}) == (
         meets + ", and your housing grants follow the list; the rest of your grant and budget estimate needs a few "
         "more facts, asked for at the end.")
+    # no budget asked about: its missing facts are not mentioned (live on Claude, 11 Nov)
+    assert answer_of(search_with(financial_breakdown={"calculate_cpf_housing_grants": GRANTS,
+                                                      "calculate_maximum_affordability": NEEDS})) == \
+        meets + ", and your housing grants follow the list."
     assert answer_of(search_with(financial_breakdown={"calculate_maximum_affordability": BUDGET})) == \
         meets + ", and your maximum purchase price follows the list."
     assert answer_of(search_with(financial_breakdown={"calculate_cpf_housing_grants": GRANTS,

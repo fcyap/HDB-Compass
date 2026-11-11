@@ -210,7 +210,11 @@ PROBE_PAUSE_S = 1.0   # between the two tries, so a single dropped packet does n
 
 
 def server_answers(profile: Dict[str, Any], timeout: Optional[float] = None) -> Tuple[bool, str]:
-    """One GET <base_url>/models, no retries. True when the server answers 2xx; otherwise False and why."""
+    """One GET <base_url>/models, no retries. True when the server answers 2xx; otherwise False and why. Anthropic's
+    API (the claude profile, HDB_EVAL_ALLOW_HOSTED) is asked through its own Models API instead."""
+    if (profile.get("provider") or "").strip().lower() == "anthropic":
+        from agents.llm import _probe_anthropic
+        return _probe_anthropic(profile)
     import urllib.error
     import urllib.request
     url = (profile.get("base_url") or "").rstrip("/") + "/models"
@@ -270,6 +274,9 @@ def run_settings(profile: Dict[str, Any]) -> Dict[str, Any]:
         "mocked_tools": sorted(t for t, v in cfg.get("tools", {}).get("use_mock", {}).items() if v == "mock"),
         "input_guardrail_installed": sv._INPUT_GUARDRAIL is not None,
         "runtime_auditor_installed": sv._AUDITOR is not None,
+        "trust_model_reading": sv.trust_model_reading(),     # HDB_TRUST_MODEL_READING: code's checks on the reading off
+        "reading_context": sv.reading_context_on(),          # HDB_READING_CONTEXT: earlier turns given to the reading
+        "answer_style": sv.answer_style(),                   # HDB_ANSWER_STYLE: the app's answer style (template here)
         "llm_timeout_s": os.getenv("LLM_TIMEOUT_S") or (cfg.get("llm", {}).get("profiles", {}).get(profile.get("name") or "", {}) or {}).get("timeout_s"),
     }
     if sv.HOOK_LOAD_PROBLEMS:
@@ -473,8 +480,16 @@ OPEN_MODEL_PROFILES = ("none", "ollama", "vllm")
 
 
 def require_open_model_profile() -> str:
-    """The requested model profile, or SystemExit naming the ones the evaluation runs on."""
+    """The requested model profile, or SystemExit naming the ones the evaluation runs on. HDB_EVAL_ALLOW_HOSTED=claude
+    lets that one hosted profile run too, for a comparison outside Experiment 1 (6 Nov: does Claude improve the app?):
+    its results files are named after the profile (prelim_claude_<model>_<tag>), so they never mix with the open
+    model's, and a notice says so."""
     name = (os.getenv("LLM_PROFILE") or str(load_config()["llm"].get("active") or "")).strip().lower()
+    allowed = {x.strip().lower() for x in os.getenv("HDB_EVAL_ALLOW_HOSTED", "").split(",") if x.strip()}
+    if name in allowed and name != "auto":
+        print(f"NOTICE: LLM_PROFILE={name} is a hosted, paid model (HDB_EVAL_ALLOW_HOSTED). These results are not "
+              f"Experiment 1, which runs on our own open model only.", flush=True)
+        return name
     if name not in OPEN_MODEL_PROFILES:
         raise SystemExit(f"LLM_PROFILE={name!r} is a hosted or automatic profile. The evaluation runs only on our own "
                          f"open model: {', '.join(OPEN_MODEL_PROFILES)} (the cluster is vllm).")
@@ -485,6 +500,10 @@ def _main(args: Optional[argparse.Namespace] = None) -> None:
     args = args or build_parser().parse_args()
 
     require_open_model_profile()
+    from agents import supervisor as sv
+    if sv.answer_style() != "template":
+        raise SystemExit(f"HDB_ANSWER_STYLE={sv.answer_style()} is the app's answer style; the evaluation measures the "
+                         "template answers only (unset HDB_ANSWER_STYLE).")
     profile = active_profile()
     queries = dataset_path(args.dataset)
     global RUN_SETTINGS, DATASET_NAME, DATASET_SHA

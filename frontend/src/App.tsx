@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { SplitScreenLayout } from './components/SplitScreenLayout';
-import { AgentChat, ChatMessage, LogMessage, ModelInfo } from './components/AgentChat';
+import { AgentChat, ChatMessage, LogMessage, ModelInfo, ModelOption } from './components/AgentChat';
 import { InteractiveMap, MapViewport, loadSavedRadius } from './components/InteractiveMap';
 
 // One id per page load: the backend keeps this page's conversation under it, so a dropped WebSocket that reconnects
@@ -31,6 +31,16 @@ export function App() {
   const [agentStatus, setAgentStatus] = useState<string>('READY');
   const [wsConnected, setWsConnected] = useState<boolean>(false);
   const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
+  // The model dropdown: the choices the backend can answer with now, and this browser's pick (sent with each question)
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
+  // the pick is remembered with the model the app was started with: started in another mode (the cluster demo after a
+  // Claude session), the app's own model is the starting choice again, so a demo never silently answers on another model
+  const savedPick = (): { pick: string; startedWith: string } => {
+    try { return JSON.parse(localStorage.getItem('hdb-model') || '{}'); } catch { return { pick: '', startedWith: '' }; }
+  };
+  const [selectedModel, setSelectedModel] = useState<string>(() => savedPick().pick || '');
+  const startedWithRef = useRef<string>('');
+  const selectedModelRef = useRef<string>(selectedModel);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingResetRef = useRef(false);
   const currentMsgIdRef = useRef<string | null>(null);
@@ -60,7 +70,19 @@ export function App() {
       ws.onopen = () => {
         setWsConnected(true);
         setAgentStatus('READY');
-        fetch('/api/model/status')
+        fetch('/api/models')
+          .then((response) => response.ok ? response.json() : Promise.reject())
+          .then((data: { options: ModelOption[]; default: string }) => {
+            setModelOptions(data.options || []);
+            // keep this browser's pick when it can still answer; otherwise the model the app was started with
+            const usable = (id: string) => (data.options || []).some((o) => o.id === id && o.available);
+            startedWithRef.current = data.default;
+            const saved = savedPick();
+            const pick = saved.startedWith === data.default && usable(saved.pick) ? saved.pick : data.default;
+            selectedModelRef.current = pick;
+            setSelectedModel(pick);
+            return fetch(`/api/model/status?model=${encodeURIComponent(pick)}`);
+          })
           .then((response) => response.ok ? response.json() : Promise.reject())
           .then(setModelInfo)
           .catch(() => setModelInfo({ status: 'unavailable', message: 'Could not read model configuration.' }));
@@ -79,7 +101,8 @@ export function App() {
           if (payload.request_id && payload.request_id !== activeRequestIdRef.current) {
             return;
           }
-          if (!activeRequestIdRef.current && (payload.type === 'STEP_UPDATE' || payload.type === 'AGENT_FINISHED' || payload.type === 'ERROR')) {
+          if (!activeRequestIdRef.current && (payload.type === 'STEP_UPDATE' || payload.type === 'AGENT_FINISHED' || payload.type === 'ERROR'
+              || payload.type === 'REPLY_DELTA' || payload.type === 'REPLY_RESET')) {
             return;
           }
 
@@ -162,6 +185,7 @@ export function App() {
                             school_lookup: payload.school_lookup,
                             clarification: payload.clarification,
                             flat_type: payload.flat_type,
+                            candidate_cards: payload.candidate_cards,
                           },
                         }
                       : m
@@ -169,6 +193,22 @@ export function App() {
                 );
               }
               break;
+
+            case 'REPLY_DELTA':
+            case 'REPLY_RESET': {
+              // the composed reply streaming in (conversational style); the final summary replaces it
+              const streamId = currentMsgIdRef.current;
+              if (streamId) {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === streamId && !m.structuredData
+                      ? { ...m, streamText: payload.type === 'REPLY_RESET' ? '' : (m.streamText || '') + (payload.text || '') }
+                      : m
+                  )
+                );
+              }
+              break;
+            }
 
             case 'AGENT_FINISHED':
               setAgentStatus('READY');
@@ -279,9 +319,21 @@ export function App() {
         request_id: reqId,
         query: queryText,
         radius_meters: radiusMeters,
+        ...(selectedModelRef.current ? { model: selectedModelRef.current } : {}),
         ...(pinnedRef.current ? { lat: pinnedRef.current.lat, lng: pinnedRef.current.lng } : {}),
       })
     );
+  };
+
+  const handleSelectModel = (id: string) => {
+    selectedModelRef.current = id;
+    setSelectedModel(id);
+    try { localStorage.setItem('hdb-model', JSON.stringify({ pick: id, startedWith: startedWithRef.current })); }
+    catch { /* private mode: the pick lasts this page only */ }
+    fetch(`/api/model/status?model=${encodeURIComponent(id)}`)
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then(setModelInfo)
+      .catch(() => setModelInfo({ status: 'unavailable', message: 'Could not read model configuration.' }));
   };
 
   const [selectedBlockHighlight, setSelectedBlockHighlight] = useState<string | null>(null);
@@ -314,6 +366,9 @@ export function App() {
           agentStatus={agentStatus}
           wsConnected={wsConnected}
           modelInfo={modelInfo}
+          modelOptions={modelOptions}
+          selectedModel={selectedModel}
+          onSelectModel={handleSelectModel}
           onSendQuery={handleSendQuery}
           onClear={handleClear}
           onSelectBlock={(blockName) => setSelectedBlockHighlight(blockName)}

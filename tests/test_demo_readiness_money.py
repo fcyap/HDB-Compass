@@ -190,7 +190,8 @@ def test_house_01_grants_after_the_employment_answer():
         "CPF OA $100k, cash $50k, no debts. Grant and HDB loan eligibility confirmed. We are not buying near our parents. "
         "What grants and max budget for a 4-room resale with 70 years left?",
         "We have not worked continuously for the past twelve months.")
-    assert "monthly income" not in question(t1) and "employed continuously" in question(t1)
+    # 12 months' work is assumed and said so instead of asked (live on Claude, 11 Nov); the stated "No" then drops the EHG
+    assert not t1.get("clarification") and t1["financial_breakdown"]["calculate_cpf_housing_grants"]["total_grants"] > 80000
     assert t2["financial_breakdown"]["calculate_cpf_housing_grants"]["total_grants"] == 80000
     assert not t2.get("clarification")
 
@@ -211,7 +212,8 @@ def test_house_06_unconfirmed_grants_drop_the_grant_questions():
     assert "citizenship" not in question(t1)
     asked = question(t2)
     assert "youngest person" not in asked and "employed continuously" not in asked and "parents" not in asked
-    assert "debt" in asked and "Housing grants: not worked out — your grant eligibility is not confirmed" in t2["draft_response"]
+    # a grants-only conversation ("Help with grants.") is not asked for the budget's facts (live on Claude, 11 Nov)
+    assert "debt" not in asked and "Housing grants: not worked out — your grant eligibility is not confirmed" in t2["draft_response"]
 
 
 def test_house_07_grants_with_loan_eligibility_not_confirmed():
