@@ -1,33 +1,32 @@
 """
-RAG Retrieval & Generation Pipeline Ablation Study Runner (evaluation/run_rag_ablation.py)
+Experiment 2: the policy RAG, from chunking to generation (evaluation/run_rag_ablation.py).
 Proposal Section 6.2 (Experiment 2, Page 11), Section 6.3 (Pages 11-12) & File Structure (Page 14).
 Owned by Member 3: Advanced RAG & Regulatory Knowledge Base (Categories C & E).
 
-Compares three retrieval + generation configurations across the 30 Golden Benchmark queries
-(15 Category C Regulatory queries + 15 Category E Multi-Objective queries):
-  1. RAG-1: Naive Dense Vector Search (top-5 cosine similarity over unexpanded body chunks)
-  2. RAG-2: Hybrid Search (BM25 + dense, RRF k=60, top-20) + Cross-Encoder Reranking to top-5
-  3. RAG-3: Query Rewriting + HyDE + Local Entity-Graph Expansion, then the same Cross-Encoder Reranking
-  (--llm only) LONG-CTX: no retrieval; every policy document goes into the prompt (Topic 8 §2 baseline)
-Both RAG-2 and RAG-3 rerank with the cross-encoder alone (config policy_rag.rerank_mode). Variants measured during
-development and dropped from the default run to keep the comparison simple: a blended rerank score (Category E recall
-0.55 vs 0.83) and per-sub-question decomposition (no gain over RAG-2); see the git history of this file.
+All parts use the same 30 benchmark questions (15 Category C regulatory + 15 Category E multi-objective) and score
+retrieval against exact clauses from the verified fact sheet (evaluation/policy_fact_sheet.yaml):
+  2A  Chunking strategy: fixed 256-token vs semantic table-preserving (the store) vs fixed 1024-token chunks, BM25
+      top-5. Context recall, context precision, broken tables.
+  2B  Chunk similarity threshold: the semantic chunker rebuilt at 0.15-0.55, scored through RAG-2.
+  2C  Embedding model: all-MiniLM-L6-v2 vs bge-small-en-v1.5 vs bge-base-en-v1.5, dense-only and inside RAG-2
+      (evaluation/embedding_comparison.py).
+  2D  Retrieval pipeline, top-5:
+        RAG-1  naive dense search (cosine over unexpanded chunk bodies)
+        RAG-2  BM25 + dense for the question and its expansion, RRF k=60 to 20 candidates, cross-encoder rerank
+        RAG-3  RAG-2 plus an LLM query rewrite and entity-graph expansion
+      Context recall, context precision (MAP@5), MRR, latency.
+  2E  Generation: an LLM (the active profile, Gemini) writes the answer from RAG-2's passages (the pipeline the app
+      runs) and, as the baseline, LONG-CTX (no retrieval, every page in the prompt). RAG-1 and RAG-3 are compared on
+      retrieval in 2D only: Groq's free tier allows each judge model 200,000 tokens a day, about 30 judged answers. The `ragas` library scores Faithfulness and Answer Relevancy, judged
+      by a model from another family (Groq gpt-oss-120b), and RAGAS Context Recall and Context Precision against the
+      fact-sheet reference (Groq gpt-oss-20b); see evaluation/ragas_judge.py. Fact coverage (gold clauses in the answer)
+      and citation compliance are scored by code. Answers and scores are cached in evaluation/.cache/: a run stopped by a
+      daily quota leaves the missing scores empty, and the next run fills only those.
+Variants measured during development and dropped to keep the comparison simple: a blended rerank score (Category E
+recall 0.55 vs 0.83) and per-sub-question decomposition (no gain over RAG-2); see the git history of this file.
 
-Evaluates BOTH Retrieval and Generation (Agent 5 End-to-End) using formal RAGAS formulation:
-  [Retrieval Metrics]
-  - Context Recall (RAGAS): % of ground-truth gold policy clauses retrieved in top-5 (Target > 0.88)
-  - Context Precision (RAGAS): Rank-weighted Mean Average Precision (MAP@5) over retrieved chunks (Target > 0.88)
-  - Mean Reciprocal Rank (MRR): 1 / rank of first relevant passage
-  [Generation Metrics — PolicyRagAgent (Agent 5)]
-  - Answer Faithfulness (lexical): fraction of answer lines whose words appear in the retrieved context. It scores the
-    extractive synthesize_grounded_answer, which copies passage lines, so it is ~1.0 by construction; it is a sanity
-    check, not RAGAS faithfulness. Run with --llm for the RAGAS-style scores below.
-  - [--llm] LLM-judge Faithfulness: the LLM answer users see is split into claims and a judge model marks each as
-    supported or not by the context (RAGAS faithfulness); LLM-judge Answer Relevance (0-1); LLM Answer Fact Coverage
-  - Answer Fact Coverage (Accuracy): Fraction of gold policy facts/clauses accurately synthesized in the final answer
-  - Citation Compliance Rate: % of answers containing verified official inline URLs
-  [Chunk Window Ablation (Experiment 2B)]
-  - Fixed 256-token vs Hierarchical 512-token (Table-Preserving) vs Fixed 1024-token chunks
+    .venv/bin/python -m evaluation.run_rag_ablation                    # 2A-2E -> evaluation/rag_ablation_results.json
+    .venv/bin/python -m evaluation.run_rag_ablation --retrieval-only   # 2A-2D only, no model calls
 """
 from __future__ import annotations
 
@@ -38,7 +37,7 @@ import statistics
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -50,7 +49,7 @@ from mcp_server.policy_rag_tools import execute_rag_pipeline
 PIPELINE_NAMES = {
     "RAG-1": "RAG-1 (Naive Dense Vector)",
     "RAG-2": "RAG-2 (Hybrid + Cross-Encoder)",
-    "RAG-3": "RAG-3 (Rewrite + HyDE + Graph)",
+    "RAG-3": "RAG-3 (RAG-2 + Rewrite + Graph)",
     "LONG-CTX": "LONG-CTX (all docs, no RAG)",
 }
 
@@ -294,75 +293,43 @@ def is_clause_in_passage(clause: Any, p_text_clean: str, p_sec_clean: str = "") 
     return False
 
 
-def evaluate_answer_faithfulness(answer: str, passages_clean: List[Tuple[str, str]]) -> float:
-    """
-    Proposal §6.3 (Page 12) & RAGAS formulation: Fraction of generated claims supported directly by
-    retrieved HDB policy context.
-    Splits generated answer into factual claim statements (excluding headers/disclaimers)
-    and verifies lexical/numerical grounding against retrieved passages.
-    """
-    combined_context = " ".join(f"{sec} {txt}" for txt, sec in passages_clean)
-    context_tokens = set(re.findall(r"\b[a-z0-9]+\b", combined_context))
-
-    lines = [
-        ln.strip() for ln in answer.splitlines()
-        if ln.strip()
-        and not ln.strip().startswith("#")
-        and not ln.strip().startswith("*Regulatory Notice:")
-    ]
-    if not lines:
-        return 0.0
-
-    supported = 0
-    for ln in lines:
-        # Strip citation markdown link before checking claim tokens
-        ln_no_url = re.sub(r"\(\[Official Source\]\(https?://[^\)]+\)\)", "", ln)
-        claim_tokens = [
-            w for w in re.findall(r"\b[a-z0-9]+\b", ln_no_url.lower())
-            if len(w) > 2 and w not in {"the", "and", "for", "are", "with", "that", "from", "under", "official", "source"}
-        ]
-        if not claim_tokens:
-            supported += 1
-            continue
-        overlap_ratio = sum(1 for w in claim_tokens if w in context_tokens) / len(claim_tokens)
-        if overlap_ratio >= 0.80:
-            supported += 1
-
-    return supported / len(lines)
-
-
-JUDGE_SYSTEM = (
-    "You grade answers from a Singapore HDB policy assistant. You are given CONTEXT, a QUESTION and an ANSWER. "
-    "1. Split the ANSWER into its atomic factual claims (figures, conditions, eligibility rules, periods). Ignore "
-    "citations, greetings and statements that something is not in the documents. 2. Mark each claim supported=true "
-    "only if the CONTEXT states it (paraphrase is fine; a figure must match exactly). 3. Rate relevance from 0 to 1: "
-    "how directly and completely the ANSWER addresses the QUESTION. Reply with JSON only: "
-    '{"claims": [{"claim": "...", "supported": true}], "relevance": 0.0}'
-)
-
-
-def judge_llm():
-    """(client, "profile:model") for the judge. LLM_JUDGE_PROFILE (default groq) names a profile from another model
-    family than the generator, so the judge does not grade its own model's answers; when that profile cannot be built
-    (no key), the active profile judges and the label says so."""
+def _judge(profile_env: str, model_env: str, default_model: Optional[str]) -> Tuple[Any, str]:
+    """(client, "profile:model") for a ragas judge: a Groq profile by default, so the judge is from another model family
+    than the generator (Gemini) and never grades its own answers. When that profile cannot be built (no key), the
+    active profile judges and the label says so."""
     from agents.llm import ModelConfigurationError, _configured_profile, active_profile, get_llm
-    name = os.getenv("LLM_JUDGE_PROFILE", "groq").strip()
-    model = (os.getenv("LLM_JUDGE_MODEL") or "").strip() or None   # e.g. openai/gpt-oss-120b; the app's model is untouched
+    name = os.getenv(profile_env, "groq").strip()
+    model = (os.getenv(model_env) or "").strip() or default_model
     try:
         prof = _configured_profile(name)
-        return (get_llm(profile=name, model=model, temperature=0, max_tokens=2000),
-                f"{name}:{model or prof['model']}")
+        # gpt-oss is a reasoning model: at 2,000 tokens its reasoning used the budget and ragas's statement lists were
+        # cut off (LLMDidNotFinishException), so the judge reasons briefly and has room to finish
+        extra: Dict[str, Any] = {"reasoning_effort": "low"} if prof.get("provider") == "groq" else {}
+        # LLM_JUDGE_API_KEY: a key of its own for the judge profile, so judging has its own free-tier quota
+        if (os.getenv("LLM_JUDGE_API_KEY") or "").strip():
+            extra["api_key"] = os.getenv("LLM_JUDGE_API_KEY", "").strip()
+        llm = get_llm(profile=name, model=model, temperature=0, max_tokens=4096, **extra)
+        # LLM_JUDGE_PAID_TIER: the judge's account is on a paid tier, so the app's free-tier limiter (config) is not
+        # applied to the judges; the provider's own limits still answer 429, which ragas_judge waits out and retries
+        if os.getenv("LLM_JUDGE_PAID_TIER", "").strip().lower() in ("1", "true", "yes"):
+            from agents.rate_limit import RateLimitCallback
+            llm.callbacks = [cb for cb in (llm.callbacks or []) if not isinstance(cb, RateLimitCallback)]
+        return llm, f"{name}:{model or prof['model']}"
     except ModelConfigurationError as exc:
         print(f"    [judge] profile {name!r} unavailable ({exc}); the active profile judges")
-        prof = active_profile()
-        return get_llm(temperature=0, max_tokens=2000), f"{prof['name']}:{prof.get('model')} (same as generator)"
+        return _fallback_judge()
 
 
-_JUDGE: Optional[Tuple[Any, str]] = None
+_JUDGE: Optional[Tuple[Any, str]] = None             # generation: faithfulness, answer relevancy
+_RETRIEVAL_JUDGE: Optional[Tuple[Any, str]] = None   # retrieval: ragas context recall / precision
 _FALLBACK_JUDGE: Optional[Tuple[Any, str]] = None
-# Groq's free tier allows 8,000 tokens per minute, so one request cannot be larger; the long-context baseline's
-# judge request (the whole corpus) is judged by the generator's model instead, and the row records which judge it was.
-JUDGE_MAX_PROMPT_TOKENS = int(os.getenv("LLM_JUDGE_MAX_PROMPT_TOKENS", "5500"))
+# On a paid tier (LLM_JUDGE_PAID_TIER) set LLM_JUDGE_MAX_PROMPT_TOKENS near the model's context window (gpt-oss: 131,072)
+# so LONG-CTX is judged by the Groq judge as well.
+# Groq's free tier allows 8,000 tokens per minute, so one request cannot be larger (the reserved output does not
+# count: a 5,883-token prompt with max_tokens 4,096 was accepted). 6,500 (characters / 4) leaves room for ragas's own
+# prompt text and keeps all but about one RAG context on the Groq judge; the long-context baseline's request (the whole
+# corpus) is judged by the generator's model instead, and the row records which judge it was.
+JUDGE_MAX_PROMPT_TOKENS = int(os.getenv("LLM_JUDGE_MAX_PROMPT_TOKENS", "6500"))
 
 
 def _fallback_judge() -> Tuple[Any, str]:
@@ -370,37 +337,111 @@ def _fallback_judge() -> Tuple[Any, str]:
     if _FALLBACK_JUDGE is None:
         from agents.llm import active_profile, get_llm
         prof = active_profile()
-        _FALLBACK_JUDGE = (get_llm(temperature=0, max_tokens=2000), f"{prof['name']}:{prof.get('model')} (same as generator)")
+        _FALLBACK_JUDGE = (get_llm(temperature=0, max_tokens=4096), f"{prof['name']}:{prof.get('model')} (same as generator)")
     return _FALLBACK_JUDGE
 
 
-def llm_judge(question: str, answer: str, context: str) -> Dict[str, Optional[float]]:
-    """RAGAS-style faithfulness (supported claims / claims) and answer relevance from a judge model.
-    None when no model is configured or its reply cannot be read, so a failed judge never scores as 0 or 1."""
+def _too_big(*texts: Any) -> bool:
+    return sum(len(t) if isinstance(t, str) else sum(len(x) for x in t) for t in texts) // 4 > JUDGE_MAX_PROMPT_TOKENS
+
+
+def _generation_judge(*texts: Any) -> Tuple[Any, str]:
+    """The judge for faithfulness and answer relevancy (LLM_JUDGE_PROFILE / LLM_JUDGE_MODEL, default Groq
+    openai/gpt-oss-120b). A request too large for Groq's free tier (the LONG-CTX corpus) goes to the fallback judge."""
     global _JUDGE
-    from langchain_core.messages import HumanMessage, SystemMessage
     if _JUDGE is None:
-        _JUDGE = judge_llm()
-    llm, label = _JUDGE
-    if (len(context) + len(answer) + len(question)) // 4 > JUDGE_MAX_PROMPT_TOKENS:
-        llm, label = _fallback_judge()
-    if llm is None or not answer.strip():
-        return {"llm_faithfulness": None, "llm_answer_relevance": None, "claims": None, "judge": None}
-    try:
-        reply = llm.invoke([SystemMessage(content=JUDGE_SYSTEM), HumanMessage(
-            content=f"CONTEXT:\n{context}\n\nQUESTION:\n{question}\n\nANSWER:\n{answer}")]).content
-        if isinstance(reply, list):
-            reply = " ".join(str(x.get("text", "")) for x in reply if isinstance(x, dict))
-        data = json.loads(re.search(r"\{.*\}", str(reply), re.S).group(0))
-        claims = data.get("claims") or []
-        supported = sum(1 for c in claims if c.get("supported") is True)
-        relevance = data.get("relevance")
-        return {"llm_faithfulness": round(supported / len(claims), 4) if claims else None,
-                "llm_answer_relevance": round(float(relevance), 4) if relevance is not None else None,
-                "claims": len(claims), "judge": label}
-    except Exception as exc:  # noqa: BLE001
-        print(f"    [judge] {label}: unreadable reply ({type(exc).__name__}: {str(exc)[:120]}); scored as missing")
-        return {"llm_faithfulness": None, "llm_answer_relevance": None, "claims": None, "judge": label}
+        _JUDGE = _judge("LLM_JUDGE_PROFILE", "LLM_JUDGE_MODEL", "openai/gpt-oss-120b")
+    return _fallback_judge() if _JUDGE[1].startswith("groq:") and _too_big(*texts) else _JUDGE
+
+
+def _context_judge(*texts: Any) -> Tuple[Any, str]:
+    """The judge for context recall and precision (LLM_RETRIEVAL_JUDGE_PROFILE / LLM_RETRIEVAL_JUDGE_MODEL, default
+    Groq openai/gpt-oss-20b). These grade the retrieved passages, not a model's answer, so a smaller judge is enough."""
+    global _RETRIEVAL_JUDGE
+    if _RETRIEVAL_JUDGE is None:
+        _RETRIEVAL_JUDGE = _judge("LLM_RETRIEVAL_JUDGE_PROFILE", "LLM_RETRIEVAL_JUDGE_MODEL", "openai/gpt-oss-20b")
+    return _fallback_judge() if _RETRIEVAL_JUDGE[1].startswith("groq:") and _too_big(*texts) else _RETRIEVAL_JUDGE
+
+
+def llm_judge(question: str, answer: str, contexts: List[str]) -> Dict[str, Optional[float]]:
+    """RAGAS Faithfulness and Answer Relevancy (evaluation/ragas_judge.py)."""
+    from evaluation.ragas_judge import generation_scores
+    llm, label = _generation_judge(question, answer, contexts)
+    return generation_scores(llm, label, question, answer, contexts)
+
+
+def retrieval_judge(question: str, contexts: List[str], reference: str) -> Dict[str, Optional[float]]:
+    """RAGAS Context Recall and Context Precision against the fact-sheet reference."""
+    from evaluation.ragas_judge import retrieval_scores
+    llm, label = _context_judge(question, reference, contexts)
+    return retrieval_scores(llm, label, question, contexts, reference)
+
+
+_FACTS: Optional[Dict[str, str]] = None
+
+
+def reference_answer(test_case: Dict[str, Any]) -> str:
+    """The reference answer ragas's context metrics compare against: the fact-sheet facts the question points to
+    (Category C), else its gold clauses as a list (Category E, whose ground truth is clauses only)."""
+    global _FACTS
+    if _FACTS is None:
+        import yaml
+        sheet = yaml.safe_load((PROJECT_ROOT / "evaluation" / "policy_fact_sheet.yaml").read_text(encoding="utf-8"))
+        _FACTS = {f["id"]: f["fact"] for f in sheet.get("facts", []) if f.get("id") and f.get("fact")}
+    gt = test_case.get("ground_truth_facts", {})
+    facts = [_FACTS[i] for i in gt.get("fact_ids", []) if i in _FACTS]
+    if facts:
+        return " ".join(facts)
+    clauses = [" ".join(c) if isinstance(c, (list, tuple)) else str(c) for c in gt.get("key_clauses", [])]
+    return "; ".join(clauses)
+
+
+# Model calls are cached per (pipeline, question, passages), so a run interrupted by a free-tier quota or a closed
+# session resumes where it stopped instead of paying for every answer again. Delete the file to regenerate.
+CACHE_FILE = PROJECT_ROOT / "evaluation" / ".cache" / "experiment_2e.json"
+_CACHE: Optional[Dict[str, Any]] = None
+
+
+# 2E judges RAG-2 (what the app runs) against LONG-CTX; set LLM_E2E_PIPELINES=RAG-1,RAG-2,RAG-3 for all three when the
+# judge quota allows (each pipeline is another 30 answers on Groq's 200,000-tokens-a-day free tier)
+GENERATION_PIPELINES = [p.strip() for p in os.getenv("LLM_E2E_PIPELINES", "RAG-2").split(",") if p.strip()]
+
+SCORE_GROUPS = {"generation": ("llm_faithfulness", "llm_answer_relevance"),
+                "retrieval": ("ragas_context_recall", "ragas_context_precision")}
+JUDGE_LABEL_FIELD = {"generation": "judge", "retrieval": "retrieval_judge"}
+Judge = Tuple[Callable[[Dict[str, Any]], str], Callable[[Dict[str, Any]], Dict[str, Any]]]
+
+
+def _cached(key_parts: List[str], answer: Callable[[], Dict[str, Any]], judges: Dict[str, Judge]) -> Dict[str, Any]:
+    """The cached row for these key parts. The answer is generated once; each judge group (generation, retrieval) is
+    run again while one of its scores is missing or was given by another judge model than the one configured now, so
+    a resumed run never pays for an answer twice and every row of a table has the same judge. Scores replaced because
+    the judge changed are kept under "<group>_previous_judges" for comparing judges."""
+    import hashlib
+    global _CACHE
+    if _CACHE is None:
+        _CACHE = json.loads(CACHE_FILE.read_text()) if CACHE_FILE.exists() else {}
+    key = hashlib.sha1("\x1f".join(key_parts).encode()).hexdigest()
+    row = dict(_CACHE.get(key) or {})
+    changed = False
+    if not row.get("llm_answer"):
+        row = answer()
+        changed = True
+    for group, (expected_label, judge) in judges.items():
+        fields, label_field = SCORE_GROUPS[group], JUDGE_LABEL_FIELD[group]
+        current = f"ragas + {expected_label(row)}"
+        stale = row.get(label_field) not in (None, current)
+        if stale and all(row.get(f) is not None for f in fields):
+            previous = row.setdefault(f"{group}_previous_judges", [])
+            previous.append({label_field: row[label_field], **{f: row[f] for f in fields}})
+        if stale or any(row.get(f) is None for f in fields):
+            row.update(judge(row))
+            changed = True
+    if changed:
+        _CACHE[key] = row
+        CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CACHE_FILE.write_text(json.dumps(_CACHE, indent=1))
+    return row
 
 
 def full_corpus_context() -> str:
@@ -408,32 +449,35 @@ def full_corpus_context() -> str:
     return "\n\n".join(f"=== {f.name} ===\n{f.read_text(encoding='utf-8')}" for f in sorted(DOCS_DIR.glob("*.md")))
 
 
-def answer_metrics(test_case: Dict[str, Any], answer: str, context: str) -> Dict[str, Any]:
-    """Generation metrics for an LLM answer: judge faithfulness/relevance plus gold-clause coverage."""
+def answer_metrics(test_case: Dict[str, Any], answer: str) -> Dict[str, Any]:
+    """Code-scored answer metrics: gold clauses found in the answer, and whether it cites an official page."""
     raw_clauses = test_case.get("ground_truth_facts", {}).get("key_clauses", [])
-    ans_clean = clean_text(answer)
-    matched = sum(1 for clause in raw_clauses if is_clause_in_passage(clause, ans_clean))
-    judged = llm_judge(test_case["query"], answer, context)
+    matched = sum(1 for clause in raw_clauses if is_clause_in_passage(clause, clean_text(answer or "")))
     return {
-        **judged,
         "llm_answer_fact_coverage": round(matched / max(1, len(raw_clauses)), 4),
-        "llm_citation_compliance": 1.0 if re.search(r"https://www\.(hdb|cpf)\.gov\.sg", answer) else 0.0,
+        "llm_citation_compliance": 1.0 if re.search(r"https://www\.(hdb|cpf)\.gov\.sg", answer or "") else 0.0,
+        "llm_answer": answer,
     }
 
 
 def evaluate_long_context(test_case: Dict[str, Any], corpus: str) -> Dict[str, Any]:
     """LONG-CTX baseline: no retrieval, the whole corpus in the prompt. Retrieval metrics do not apply (None)."""
-    t0 = time.perf_counter()
-    answer = PolicyRagAgent.generate_llm_answer(test_case["query"], [], context_override=corpus)
-    latency_ms = (time.perf_counter() - t0) * 1000.0
+    def answer() -> Dict[str, Any]:
+        t0 = time.perf_counter()
+        text = PolicyRagAgent.generate_llm_answer(test_case["query"], [], context_override=corpus)
+        return {"generation_latency_ms": round((time.perf_counter() - t0) * 1000.0, 2),
+                **answer_metrics(test_case, text)}
+
+    generated = _cached(["LONG-CTX", test_case["id"], test_case["query"], str(len(corpus))], answer,
+                        {"generation": (lambda row: _generation_judge(test_case["query"], row["llm_answer"] or "", [corpus])[1],
+                                        lambda row: llm_judge(test_case["query"], row["llm_answer"] or "", [corpus]))})
     return {
         "id": test_case["id"], "category": test_case.get("category", "C"),
         "sub_use_case": test_case.get("sub_use_case", ""), "pipeline": "LONG-CTX",
-        "latency_ms": round(latency_ms, 2),
+        "latency_ms": generated["generation_latency_ms"],
         "context_recall": None, "context_precision": None, "mrr": None,
-        "answer_faithfulness": None, "answer_fact_coverage": None, "citation_compliance": None,
         "context_tokens_approx": int(len(corpus.split()) * 1.3),
-        **answer_metrics(test_case, answer, corpus),
+        **generated,
     }
 
 
@@ -442,7 +486,8 @@ def evaluate_query_end_to_end(
     pipeline: str,
     use_llm: bool = False,
 ) -> Dict[str, Any]:
-    """Runs a single query under a specific RAG pipeline and computes both Retrieval & Generation metrics."""
+    """One question through one pipeline: retrieval metrics (2D) and, with use_llm, the LLM answer and the four ragas
+    metrics (2E)."""
     query = test_case["query"]
     gt = test_case.get("ground_truth_facts", {})
     raw_clauses = gt.get("key_clauses", [])
@@ -450,67 +495,37 @@ def evaluate_query_end_to_end(
 
     t0 = time.perf_counter()
     passages = execute_rag_pipeline(query=query, pipeline=pipeline, top_k=5).passages
-    passage_dicts = [p.model_dump() for p in passages]
-    answer = PolicyRagAgent.synthesize_grounded_answer(query, passage_dicts)
     latency_ms = (time.perf_counter() - t0) * 1000.0
+    passage_dicts = [p.model_dump() for p in passages]
+    cleaned_passages = [(clean_text(p.text), clean_text(p.section)) for p in passages]
 
-    # Pre-clean passages once
-    cleaned_passages = [
-        (clean_text(p.text), clean_text(p.section))
-        for p in passages
-    ]
-
-    # 1. Context Recall (RAGAS formulation): fraction of gold clauses captured in top-5 retrieved passages
-    matched_clauses = 0
-    for clause in raw_clauses:
-        if any(is_clause_in_passage(clause, p_txt, p_sec) for p_txt, p_sec in cleaned_passages):
-            matched_clauses += 1
+    # Context recall: share of the gold clauses found in the top-5 passages
+    matched_clauses = sum(1 for clause in raw_clauses
+                          if any(is_clause_in_passage(clause, t, sec) for t, sec in cleaned_passages))
     context_recall = matched_clauses / max(1, len(raw_clauses))
 
-    # 2. Context Precision (RAGAS rank-weighted MAP@5 formula)
-    relevance_vector = []
-    first_relevant_rank = None
-
-    for rank_idx, (p_txt, p_sec) in enumerate(cleaned_passages, start=1):
-        is_relevant = (
-            any(is_clause_in_passage(c, p_txt, p_sec) for c in raw_clauses) or
-            any(s in p_sec for s in target_sections)
-        )
-        relevance_vector.append(1 if is_relevant else 0)
-        if is_relevant and first_relevant_rank is None:
-            first_relevant_rank = rank_idx
-
-    total_relevant = sum(relevance_vector)
-    if total_relevant == 0:
-        context_precision = 0.0
-    else:
-        cum_precisions = []
-        rel_so_far = 0
-        for k, rel in enumerate(relevance_vector, start=1):
-            if rel == 1:
-                rel_so_far += 1
-                cum_precisions.append(rel_so_far / k)
-        context_precision = sum(cum_precisions) / max(1, len(cum_precisions))
-
-    # 3. MRR (Retrieval)
-    mrr = (1.0 / first_relevant_rank) if first_relevant_rank else 0.0
-
-    # 4. Answer Faithfulness (Generation — RAGAS formulation): fraction of generated claims grounded in retrieved context
-    answer_faithfulness = evaluate_answer_faithfulness(answer, cleaned_passages)
-
-    # 5. Answer Fact Coverage / Accuracy (Generation): fraction of gold clauses present in synthesized answer
-    ans_clean = clean_text(answer)
-    ans_matched_clauses = sum(1 for clause in raw_clauses if is_clause_in_passage(clause, ans_clean))
-    answer_fact_coverage = ans_matched_clauses / max(1, len(raw_clauses))
-
-    # 6. Citation Compliance (Generation): verifies inline official HDB/CPF URL citation
-    has_valid_citation = 1.0 if re.search(r"https://www\.(hdb|cpf)\.gov\.sg", answer) else 0.0
+    # Context precision (MAP@5): a passage is relevant when it holds a gold clause or comes from a target section
+    relevance = [1 if (any(is_clause_in_passage(c, t, sec) for c in raw_clauses) or any(x in sec for x in target_sections))
+                 else 0 for t, sec in cleaned_passages]
+    hits, cum = 0, []
+    for k, rel in enumerate(relevance, start=1):
+        if rel:
+            hits += 1
+            cum.append(hits / k)
+    context_precision = sum(cum) / len(cum) if cum else 0.0
+    mrr = next((1.0 / k for k, rel in enumerate(relevance, start=1) if rel), 0.0)
 
     extra: Dict[str, Any] = {}
     if use_llm:
-        llm_answer = PolicyRagAgent.generate_llm_answer(query, passage_dicts)
-        context = "\n\n".join(f"(Source: {p['source_url']}) {p['text']}" for p in passage_dicts)
-        extra.update(answer_metrics(test_case, llm_answer, context))
+        contexts = [f"(Source: {p['source_url']}) {p['text']}" for p in passage_dicts]
+
+        extra = _cached(
+            [pipeline, test_case["id"], query, *contexts],
+            lambda: answer_metrics(test_case, PolicyRagAgent.generate_llm_answer(query, passage_dicts)),
+            {"generation": (lambda row: _generation_judge(query, row["llm_answer"] or "", contexts)[1],
+                            lambda row: llm_judge(query, row["llm_answer"] or "", contexts)),
+             "retrieval": (lambda row: _context_judge(query, reference_answer(test_case), contexts)[1],
+                           lambda row: retrieval_judge(query, contexts, reference_answer(test_case)))})
 
     return {
         **extra,
@@ -522,11 +537,7 @@ def evaluate_query_end_to_end(
         "context_recall": round(context_recall, 4),
         "context_precision": round(context_precision, 4),
         "mrr": round(mrr, 4),
-        "answer_faithfulness": round(answer_faithfulness, 4),
-        "answer_fact_coverage": round(answer_fact_coverage, 4),
-        "citation_compliance": round(has_valid_citation, 4),
         "matched_clauses": f"{matched_clauses}/{len(raw_clauses)}",
-        "answer_matched_clauses": f"{ans_matched_clauses}/{len(raw_clauses)}",
         "top_passage_section": passages[0].section if passages else "",
         "top_score": passages[0].rerank_score if passages else 0.0,
     }
@@ -686,13 +697,10 @@ def compute_group_summary(results: List[Dict[str, Any]]) -> Dict[str, Optional[f
         "mean_context_recall": _mean(results, "context_recall"),
         "mean_context_precision": _mean(results, "context_precision"),
         "mean_mrr": _mean(results, "mrr"),
-        "mean_answer_faithfulness": _mean(results, "answer_faithfulness"),
-        "mean_answer_fact_coverage": _mean(results, "answer_fact_coverage"),
-        "citation_compliance_rate": _mean(results, "citation_compliance"),
         "p50_latency_ms": round(latencies_sorted[p50_idx], 2),
         "p95_latency_ms": round(latencies_sorted[p95_idx], 2),
     }
-    for key in ("llm_faithfulness",
+    for key in ("llm_faithfulness", "ragas_context_recall", "ragas_context_precision",
                 "llm_answer_relevance", "llm_answer_fact_coverage", "llm_citation_compliance"):
         if any(r.get(key) is not None for r in results):
             summary[f"mean_{key}"] = _mean(results, key)
@@ -703,41 +711,8 @@ def _fmt(value: Optional[float], width: int) -> str:
     return f"{value:<{width}.4f}" if value is not None else f"{'n/a':<{width}}"
 
 
-def print_table(title: str, summary: Dict[str, Dict[str, Optional[float]]]) -> None:
-    llm = any("mean_llm_faithfulness" in s for s in summary.values())
-    width = 160 if llm else 130
-    print("\n" + "=" * width)
-    print(f" {title} ")
-    print("=" * width)
-    header = (
-        f"{'Pipeline Configuration':<32} | {'Ctx Recall':<10} | {'Ctx Prec':<9} | {'MRR':<7} | "
-        f"{'Lex Faith':<9} | {'Ans Fact Acc':<12} | {'P50 (ms)':<9}"
-    )
-    if llm:
-        header += f" | {'LLM Faith':<9} | {'Relevance':<9} | {'LLM Facts':<9}"
-    print(header)
-    print("-" * width)
-    for p, stats in summary.items():
-        row = (
-            f"{PIPELINE_NAMES.get(p, p):<32} | {_fmt(stats['mean_context_recall'], 10)} | "
-            f"{_fmt(stats['mean_context_precision'], 9)} | {_fmt(stats['mean_mrr'], 7)} | "
-            f"{_fmt(stats['mean_answer_faithfulness'], 9)} | {_fmt(stats['mean_answer_fact_coverage'], 12)} | "
-            f"{stats['p50_latency_ms']:<9.2f}"
-        )
-        if llm:
-            row += (f" | {_fmt(stats.get('mean_llm_faithfulness'), 9)} | {_fmt(stats.get('mean_llm_answer_relevance'), 9)}"
-                    f" | {_fmt(stats.get('mean_llm_answer_fact_coverage'), 9)}")
-        print(row)
-    print("=" * width)
-
-
-def run_ablation(use_llm: bool = False, limit: Optional[int] = None):
-    print("=" * 96)
-    print(" HDB-Compass: Experiment 2 — End-to-End RAG Retrieval & Generation Ablation Study ")
-    print(" Owned by Member 3 (Advanced RAG & Regulatory Knowledge Base — Categories C & E) ")
-    print(" Framework: Formal RAGAS Formulation (Context Recall, Context Precision MAP@5, Faithfulness) ")
-    print("=" * 96)
-
+def load_benchmark_cases() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[str]]:
+    """(Category C answerable cases, Category E cases with policy ground truth, unanswerable C ids) for Experiment 2."""
     # 1. Build and load Category C golden queries (15 queries)
     from evaluation.build_category_c import build
     build()
@@ -765,102 +740,177 @@ def run_ablation(use_llm: bool = False, limit: Optional[int] = None):
             "key_clauses": [["5-year MOP"], ["30%", "MSR"], ["75%", "LTV"]],
         })
         cat_e_cases.append(case)
+    return cat_c_cases, cat_e_cases, unanswerable
 
+
+def _bar(width: int = 120) -> None:
+    print("=" * width)
+
+
+def print_retrieval_table(title: str, summary: Dict[str, Dict[str, Optional[float]]]) -> None:
+    _bar()
+    print(f" {title}")
+    _bar()
+    print(f"{'Pipeline':<32} | {'Ctx Recall':<10} | {'Ctx Precision':<13} | {'MRR':<7} | {'P50 (ms)':<9} | {'P95 (ms)':<9}")
+    print("-" * 120)
+    for p, st in summary.items():
+        print(f"{PIPELINE_NAMES.get(p, p):<32} | {_fmt(st['mean_context_recall'], 10)} | "
+              f"{_fmt(st['mean_context_precision'], 13)} | {_fmt(st['mean_mrr'], 7)} | "
+              f"{st['p50_latency_ms']:<9.2f} | {st['p95_latency_ms']:<9.2f}")
+    _bar()
+
+
+def print_generation_table(title: str, summary: Dict[str, Dict[str, Optional[float]]]) -> None:
+    _bar()
+    print(f" {title}")
+    _bar()
+    print(f"{'Pipeline':<32} | {'Faithfulness':<12} | {'Ans Relevancy':<13} | {'Ctx Recall':<10} | "
+          f"{'Ctx Precision':<13} | {'Fact Coverage':<13} | {'Citations':<9}")
+    print("-" * 120)
+    for p, st in summary.items():
+        print(f"{PIPELINE_NAMES.get(p, p):<32} | {_fmt(st.get('mean_llm_faithfulness'), 12)} | "
+              f"{_fmt(st.get('mean_llm_answer_relevance'), 13)} | {_fmt(st.get('mean_ragas_context_recall'), 10)} | "
+              f"{_fmt(st.get('mean_ragas_context_precision'), 13)} | {_fmt(st.get('mean_llm_answer_fact_coverage'), 13)} | "
+              f"{_fmt(st.get('mean_llm_citation_compliance'), 9)}")
+    _bar()
+
+
+def _by_category(results: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Dict[str, Dict[str, Optional[float]]]]:
+    return {group: {p: compute_group_summary([r for r in rows if not cat or r["category"] == cat])
+                    for p, rows in results.items()}
+            for group, cat in (("category_c", "C"), ("category_e", "E"), ("combined", ""))}
+
+
+def run_ablation(generation: bool = True, limit: Optional[int] = None):
+    """Experiment 2, in the order of the pipeline: 2A chunking strategy, 2B chunk threshold, 2C embedding model,
+    2D retrieval pipeline, 2E generation (an LLM writes each answer, the ragas library judges it)."""
+    _bar(96)
+    print(" HDB-Compass: Experiment 2 - Policy RAG, from chunking to generation (Member 3)")
+    print(" 2A chunking strategy | 2B chunk threshold | 2C embedding | 2D retrieval | 2E generation (LLM + RAGAS)")
+    _bar(96)
+
+    cat_c_cases, cat_e_cases, unanswerable = load_benchmark_cases()
     if limit:
-        # a sample of each category (the --llm run makes two model calls per query and pipeline)
         cat_c_cases, cat_e_cases = cat_c_cases[:limit], cat_e_cases[:limit]
     all_cases = cat_c_cases + cat_e_cases
+    n = len(all_cases)
+    print(f"\n{len(cat_c_cases)} Category C + {len(cat_e_cases)} Category E = {n} questions\n")
 
-    # Warm up models once before timing P50/P95
-    execute_rag_pipeline(query="Warmup query MOP Prime", pipeline="RAG-3", top_k=5)
-    execute_rag_pipeline(query="Warmup query MOP Prime", pipeline="RAG-1", top_k=5)
-
-    pipelines = ["RAG-1", "RAG-2", "RAG-3"] + (["LONG-CTX"] if use_llm else [])
-    all_results: Dict[str, List[Dict[str, Any]]] = {p: [] for p in pipelines}
-    corpus = full_corpus_context() if use_llm else ""
-
-    print(f"\nBenchmarking {len(cat_c_cases)} Category C + {len(cat_e_cases)} Category E = {len(all_cases)} total queries across {pipelines}\n")
-
-    for p in pipelines:
-        print(f"--> Running Configuration: {p} (Retrieval + Agent 5 Synthesis) ...")
-        for case in all_cases:
-            res = (evaluate_long_context(case, corpus) if p == "LONG-CTX"
-                   else evaluate_query_end_to_end(case, pipeline=p, use_llm=use_llm))
-            all_results[p].append(res)
-        print(f"    Completed {len(all_cases)} queries for {p}.")
-
-    # Summary Statistics Aggregation by Group
-    cat_c_summary: Dict[str, Dict[str, float]] = {}
-    cat_e_summary: Dict[str, Dict[str, float]] = {}
-    combined_summary: Dict[str, Dict[str, float]] = {}
-
-    for p in pipelines:
-        cat_c_res = [r for r in all_results[p] if r["category"] == "C"]
-        cat_e_res = [r for r in all_results[p] if r["category"] == "E"]
-
-        cat_c_summary[p] = compute_group_summary(cat_c_res)
-        cat_e_summary[p] = compute_group_summary(cat_e_res)
-        combined_summary[p] = compute_group_summary(all_results[p])
-
-    # Chunk Window Sensitivity Study over all 30 benchmark queries
-    chunk_window_study = evaluate_chunk_window_ablation(all_cases)
-
-    # Print Breakdown Tables
-    print_table(f"EXPERIMENT 2A: RETRIEVAL & GENERATION ABLATION — Category C: Regulatory Rules (N={len(cat_c_cases)})", cat_c_summary)
-    print_table(f"EXPERIMENT 2A: RETRIEVAL & GENERATION ABLATION — Category E: Multi-Objective Rules (N={len(cat_e_cases)})", cat_e_summary)
-    print_table(f"EXPERIMENT 2A: RETRIEVAL & GENERATION ABLATION — Combined Benchmark (Categories C + E, N={len(all_cases)})", combined_summary)
-
-    # Print Chunk Window Sensitivity Table
-    print("\n" + "=" * 96)
-    print(" EXPERIMENT 2B: CHUNK WINDOW & TABLE-PRESERVATION SENSITIVITY STUDY (N=30)")
-    print("=" * 96)
+    # --- 2A: chunking strategy ------------------------------------------------------------------------------------
+    print("--> 2A chunking strategy ...")
+    exp_2a = evaluate_chunk_window_ablation(all_cases)
+    _bar(96)
+    print(f" EXPERIMENT 2A: CHUNKING STRATEGY - fixed-size vs semantic, table-preserving (BM25 top-5, N={n})")
+    _bar(96)
     print(f"{'Chunking Strategy':<36} | {'Total Chunks':<12} | {'Broken Tables':<13} | {'Ctx Recall':<11} | {'Ctx Precision':<13}")
     print("-" * 96)
-    for c_name, c_stats in chunk_window_study.items():
-        print(
-            f"{c_name:<36} | {c_stats['num_chunks']:<12} | {c_stats['broken_table_chunks']:<13} | "
-            f"{c_stats['mean_context_recall']:<11.4f} | {c_stats['mean_context_precision']:<13.4f}"
-        )
-    print("=" * 96)
+    for name, st in exp_2a.items():
+        print(f"{name:<36} | {st['num_chunks']:<12} | {st['broken_table_chunks']:<13} | "
+              f"{st['mean_context_recall']:<11.4f} | {st['mean_context_precision']:<13.4f}")
+    _bar(96)
 
-    threshold_sweep = evaluate_chunk_threshold_sweep(all_cases, thresholds=(0.15, 0.25, 0.35, 0.45, 0.55))
-    print("\n" + "=" * 96)
-    print(f" EXPERIMENT 2C: SEMANTIC-CHUNK THRESHOLD SWEEP THROUGH RAG-2 (N={len(all_cases)})")
-    print("=" * 96)
+    # --- 2B: chunk threshold ----------------------------------------------------------------------------------------
+    print("--> 2B chunk similarity threshold ...")
+    exp_2b = evaluate_chunk_threshold_sweep(all_cases, thresholds=(0.15, 0.25, 0.35, 0.45, 0.55))
+    _bar(96)
+    print(f" EXPERIMENT 2B: SEMANTIC-CHUNK SIMILARITY THRESHOLD, scored through RAG-2 (N={n})")
+    _bar(96)
     print(f"{'Similarity threshold':<24} | {'Chunks':<7} | {'Mean words':<10} | {'Ctx Recall':<11} | {'Ctx Precision':<13}")
     print("-" * 96)
-    for name, row in threshold_sweep.items():
+    for name, row in exp_2b.items():
         print(f"{name:<24} | {row['num_chunks']:<7} | {row['mean_words']:<10} | "
               f"{row['mean_context_recall']:<11.4f} | {row['mean_context_precision']:<13.4f}")
-    print("=" * 96)
+    _bar(96)
 
-    # Save to JSON (backward-compatible summary key + group breakdowns)
-    output_payload = {
-        "summary": combined_summary,
-        "category_c_summary": cat_c_summary,
-        "category_e_summary": cat_e_summary,
-        "combined_summary": combined_summary,
-        "chunk_window_ablation": chunk_window_study,
-        "chunk_threshold_sweep": threshold_sweep,
+    # --- 2C: embedding model ----------------------------------------------------------------------------------------
+    print("--> 2C embedding model ...")
+    from evaluation.embedding_comparison import MODELS, evaluate as evaluate_embedder, print_table as print_embedders
+    from mcp_server.policy_rag_tools import _load_store
+    store = _load_store()
+    exp_2c = {m["name"]: evaluate_embedder(m, store, all_cases) for m in MODELS}
+    print_embedders(exp_2c, len(store["chunks"]), n)
+
+    # --- 2D: retrieval pipeline -------------------------------------------------------------------------------------
+    print("--> 2D retrieval pipelines ...")
+    execute_rag_pipeline(query="Warmup query MOP Prime", pipeline="RAG-3", top_k=5)   # warm the models before timing
+    execute_rag_pipeline(query="Warmup query MOP Prime", pipeline="RAG-1", top_k=5)
+    retrieval = {p: [evaluate_query_end_to_end(case, pipeline=p, use_llm=generation and p in GENERATION_PIPELINES)
+                     for case in all_cases]
+                 for p in ("RAG-1", "RAG-2", "RAG-3")}
+    exp_2d = _by_category(retrieval)
+    for group, label in (("category_c", "Category C: regulatory rules"), ("category_e", "Category E: multi-objective"),
+                         ("combined", "Combined C + E")):
+        print_retrieval_table(f"EXPERIMENT 2D: RETRIEVAL PIPELINES, top-5 - {label}", exp_2d[group])
+
+    # --- 2E: generation -----------------------------------------------------------------------------------------
+    exp_2e = None
+    generation_results: Dict[str, List[Dict[str, Any]]] = {}
+    if generation:
+        print("--> 2E generation: long-context baseline ...")
+        corpus = full_corpus_context()
+        generation_results = {**{p: retrieval[p] for p in GENERATION_PIPELINES},
+                              "LONG-CTX": [evaluate_long_context(case, corpus) for case in all_cases]}
+        exp_2e = _by_category(generation_results)
+        for group, label in (("category_c", "Category C"), ("category_e", "Category E"), ("combined", "Combined C + E")):
+            print_generation_table(f"EXPERIMENT 2E: GENERATION - ragas; writer {_generator_label()}, judges "
+                                   f"{_JUDGE[1] if _JUDGE else '-'} / {_RETRIEVAL_JUDGE[1] if _RETRIEVAL_JUDGE else '-'} "
+                                   f"({label})",
+                                   exp_2e[group])
+
+    payload = {
+        "questions": n,
         "unanswerable_category_c": unanswerable,
-        "queries_evaluated": len(all_cases),
-        "llm_mode": use_llm,
+        "experiment_2a_chunking_strategy": exp_2a,
+        "experiment_2b_chunk_threshold": exp_2b,
+        "experiment_2c_embedding_model": {k: {kk: vv for kk, vv in v.items() if kk != "per_question"}
+                                          for k, v in exp_2c.items()},
+        "experiment_2d_retrieval": exp_2d,
+        "experiment_2e_generation": exp_2e,
+        "generator": _generator_label() if generation else None,
         "judge_model": _JUDGE[1] if _JUDGE else None,
-        "detailed_results": all_results,
+        "retrieval_judge_model": _RETRIEVAL_JUDGE[1] if _RETRIEVAL_JUDGE else None,
+        "judge_token_usage": _judge_usage() if generation else None,
+        "judges_out_of_daily_quota": _judge_exhausted() if generation else None,
+        "detailed_results": generation_results or retrieval,
     }
-    # a sampled or LLM-judged run gets its own file, so it never overwrites the full deterministic results
-    suffix = ("_llm" if use_llm else "") + (f"_limit{limit}" if limit else "")
+    suffix = ("" if generation else "_retrieval_only") + (f"_limit{limit}" if limit else "")
     out_path = RESULTS_JSON.with_name(RESULTS_JSON.stem + suffix + RESULTS_JSON.suffix)
     with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(output_payload, f, indent=2)
-    print(f"\nDetailed retrieval + generation ablation results saved to: {out_path}\n")
+        json.dump(payload, f, indent=2)
+    print(f"\nResults saved to: {out_path}\n")
+    if generation:
+        missing = [(p, r["id"]) for p, rows in generation_results.items() for r in rows
+                   if r.get("llm_faithfulness") is None or r.get("llm_answer_relevance") is None
+                   or (p != "LONG-CTX" and (r.get("ragas_context_recall") is None
+                                            or r.get("ragas_context_precision") is None))]
+        print(f"Judge tokens used this run: {_judge_usage()}")
+        if missing:
+            print(f"{len(missing)} answers still have a missing score {_judge_exhausted() and '(daily quota reached)'}; "
+                  "run the same command again later and only those are judged.")
+
+
+def _judge_usage() -> Dict[str, Any]:
+    from evaluation.ragas_judge import token_usage
+    return token_usage()
+
+
+def _judge_exhausted() -> Dict[str, str]:
+    from evaluation.ragas_judge import exhausted_judges
+    return exhausted_judges()
+
+
+def _generator_label() -> str:
+    from agents.llm import active_profile
+    prof = active_profile()
+    return f"{prof['name']}:{prof.get('model')}"
 
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Experiment 2: RAG retrieval & generation ablation")
-    parser.add_argument("--llm", action="store_true",
-                        help="also score the LLM answers with an LLM judge and add the LONG-CTX baseline (model calls)")
-    parser.add_argument("--limit", type=int, default=None, help="only the first N queries of each category")
+    parser = argparse.ArgumentParser(description="Experiment 2 (2A-2E): policy RAG from chunking to generation")
+    parser.add_argument("--retrieval-only", action="store_true",
+                        help="skip 2E (no model calls), e.g. to re-check retrieval after a corpus change without "
+                             "spending the free-tier quota; the results go to a separate file")
+    parser.add_argument("--limit", type=int, default=None, help="only the first N questions of each category")
     args = parser.parse_args()
-    run_ablation(use_llm=args.llm, limit=args.limit)
+    run_ablation(generation=not args.retrieval_only, limit=args.limit)

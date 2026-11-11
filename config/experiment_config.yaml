@@ -109,7 +109,7 @@ policy_rag:
   # The pipeline the app's policy search uses (read by policy_rag_tools.configured_pipeline). RAG-2 was the most
   # accurate on the 30 benchmark questions (recall 0.84 vs 0.81 for RAG-3) and about 5x faster (0.4 s vs 2.2 s, no
   # model calls); RAG-3 stays available by name.
-  active_pipeline: "RAG-2"  # RAG-1 (dense) | RAG-2 (hybrid + rerank) | RAG-3 (query rewrite + HyDE + graph expansion)
+  active_pipeline: "RAG-2"  # RAG-1 (dense) | RAG-2 (hybrid + rerank) | RAG-3 (RAG-2 + query rewrite + graph expansion)
 
 architecture:
   auditor_max_retries: 2            # proposal §5 risk 2

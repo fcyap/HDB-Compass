@@ -16,11 +16,11 @@ Architecture:
    - Fuses rank positions with standard RRF formula (k=60) to retrieve top-20 candidate chunks
 3. Cross-Encoder Reranking:
    - Passes top-20 candidate pairs into a cross-encoder to compute query-passage relevance
-   - RAG-2 returns top-5; RAG-3 uses a score-drop cutoff with a minimum of two passages
+   - every pipeline returns the top 5
 4. Supports Ablation Study Pipelines:
    - RAG-1: Naive Dense Vector Search (top-5)
    - RAG-2: Hybrid Search + Cross-Encoder Reranking (top-20 -> top-5)
-   - RAG-3: Advanced RAG (query rewriting + HyDE + graph expansion + reranking)
+   - RAG-3: RAG-2 + LLM query rewriting + entity-graph expansion, same reranking (top-30 -> top-5)
 """
 from __future__ import annotations
 
@@ -357,35 +357,31 @@ def rerank_cross_encoder(
 # ---------------------------------------------------------------------------
 # 6. Advanced retrieval helpers (RAG-3)
 # ---------------------------------------------------------------------------
-def _rewrite_and_hypothesize(query: str) -> Tuple[str, str]:
-    """Return a search rewrite and hypothetical passage. HyDE text is retrieval-only, never evidence."""
+def _rewrite_query(query: str) -> str:
+    """A keyword-rich search rewrite of the question (one LLM call); the question itself when no model is available."""
     try:
         from agents.llm import get_llm
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        llm = get_llm(temperature=0, max_tokens=500)
+        llm = get_llm(temperature=0, max_tokens=200)
         if llm is None:
-            return query, ""
+            return query
         response = llm.invoke([
             SystemMessage(content=(
-                "Prepare search inputs for a Singapore HDB policy retrieval system. "
-                "Return exactly two lines: REWRITE: a concise keyword-rich version of the question; "
-                "HYDE: a short hypothetical policy passage likely to answer it. "
-                "Do not invent specific legal figures when uncertain."
+                "Rewrite the user's question as a concise, keyword-rich search query for a Singapore HDB and CPF "
+                "housing-policy search engine. Keep every topic the question asks about; expand acronyms; do not add "
+                "facts or figures. Return only the query on one line."
             )),
             HumanMessage(content=query),
         ])
         content = response.content
         if isinstance(content, list):
             content = " ".join(str(x.get("text", "")) for x in content if isinstance(x, dict))
-        content = str(content or "")
-        rewrite = re.search(r"(?im)^\s*REWRITE:\s*(.+)$", content)
-        hyde = re.search(r"(?im)^\s*HYDE:\s*(.+(?:\n(?!\w+:).+)*)", content)
-        return (rewrite.group(1).strip() if rewrite else query,
-                hyde.group(1).strip() if hyde else "")
+        rewrite = str(content or "").strip().splitlines()
+        return rewrite[0].strip() if rewrite and rewrite[0].strip() else query
     except Exception as exc:
-        print(f"[Notice] RAG-3 query augmentation unavailable; using original query ({exc}).")
-        return query, ""
+        print(f"[Notice] RAG-3 query rewriting unavailable; using the original query ({exc}).")
+        return query
 
 
 def _graph_expand_candidates(seed_results: List[Tuple[int, float]], store: Dict[str, Any], top_n: int = 30,
@@ -415,23 +411,6 @@ def _graph_expand_candidates(seed_results: List[Tuple[int, float]], store: Dict[
             if graph_weight:
                 scores[other] = max(scores.get(other, 0.0), float(score) * graph_weight)
     return sorted(scores.items(), key=lambda item: item[1], reverse=True)[:top_n]
-
-
-def _sage_gradient_select(
-    ranked: List[Tuple[int, float]], min_k: int = 2, drop_ratio: float = 0.30
-) -> List[Tuple[int, float]]:
-    """Keep the leading reranked chunks until a sharp relevance-score drop (SAGE selection step)."""
-    if not ranked:
-        return []
-    ranked = sorted(ranked, key=lambda item: item[1], reverse=True)
-    keep = min(max(1, min_k), len(ranked))
-    for i in range(keep, len(ranked)):
-        previous = max(float(ranked[i - 1][1]), 1e-8)
-        current = max(float(ranked[i][1]), 0.0)
-        if current / previous < drop_ratio:
-            break
-        keep += 1
-    return ranked[:keep]
 
 
 def _policy_rag_config() -> Dict[str, Any]:
@@ -499,10 +478,9 @@ def execute_rag_pipeline(
     rerank_mode = rerank_mode or configured_rerank_mode()
     chunks = store["chunks"]
 
-    domain = infer_domain(query, policy_domain)
     # An explicit, valid policy_domain scopes the search to that source document. This is what lets the agent
     # decompose a multi-topic question into one retrieval per domain; without it every sub-call would return the same
-    # top chunks. An inferred domain only boosts (RAG-3), since a guess must not hide the right chunk.
+    # top chunks. An inferred domain is not used to filter or boost: a guess must not hide the right chunk.
     scope = valid_domain(policy_domain)
     allowed = {i for i, c in enumerate(chunks) if c.get("policy_category") == scope} if scope else None
     if allowed is not None and not allowed:
@@ -528,14 +506,16 @@ def execute_rag_pipeline(
         selected_candidates = rerank_cross_encoder(query, rrf_results, store, top_n=top_k, rerank_mode=rerank_mode)
 
     else:
-        # RAG-3: rewritten + HyDE retrieval, graph expansion, then cross-encoder reranking.
+        # RAG-3: RAG-2 plus an LLM rewrite of the question and entity-graph expansion, then the same reranking.
+        # Experiment 2D's step-by-step ablation (11 Nov) dropped three earlier parts: HyDE (its imagined answer
+        # narrowed multi-topic questions to one topic: Category E recall 0.83 -> 0.75), a 1.08 boost for the guessed
+        # policy domain, and a score-drop cutoff (both only removed passages for a question's secondary topics).
         pipeline = "RAG-3"
-        rewritten, hyde = _rewrite_and_hypothesize(query)
-        rewritten = expand_query(rewritten)
+        rewritten = expand_query(_rewrite_query(query))
         fused: Dict[int, float] = {}
         # the user's own words are searched too: an expansion or rewrite can drop the best match (C3-01's answer
         # ranked 2nd for the plain question and fell out of the pool for the expanded one)
-        for search_query in dict.fromkeys(q for q in (query, rewritten, hyde) if q):
+        for search_query in dict.fromkeys((query, expand_query(query), rewritten)):
             dense_results = retrieve_dense(search_query, store, top_k=20, allowed=allowed)
             bm25_results = retrieve_bm25(search_query, store, top_k=20, allowed=allowed)
             for idx, score in reciprocal_rank_fusion(dense_results, bm25_results, k=60, top_n=20):
@@ -543,25 +523,9 @@ def execute_rag_pipeline(
         graph_candidates = _graph_expand_candidates(
             sorted(fused.items(), key=lambda item: item[1], reverse=True)[:20], store, allowed=allowed
         )
-        # two-phase (Topic 8 §4): the rewrite, HyDE and expansion widen the candidate pool; the cross-encoder then
+        # two-phase (Topic 8 §4): the rewrite and graph expansion widen the candidate pool; the cross-encoder then
         # reads the user's own question with each candidate, so expansion terms cannot steer the final order
-        selected_candidates = rerank_cross_encoder(query, graph_candidates, store, top_n=30, rerank_mode=rerank_mode)
-
-        # Domain re-weighting: if explicit domain match, slight prior boost
-        if domain:
-            boosted = []
-            for idx, score in selected_candidates:
-                c = chunks[idx]
-                b_score = score * 1.08 if c.get("policy_category") == domain else score
-                boosted.append((idx, b_score))
-            boosted.sort(key=lambda x: x[1], reverse=True)
-            max_boosted = max((score for _, score in boosted), default=1.0)
-            selected_candidates = [(idx, round(score / max_boosted, 4)) for idx, score in boosted]
-        # Score-drop cutoff, never more than top_k: without the cap every one of the 30 reranked candidates came
-        # back, since the blended scores fall smoothly and no single step crossed the drop ratio.
-        selected_candidates = _sage_gradient_select(
-            selected_candidates, min_k=min(2, top_k), drop_ratio=0.30
-        )[:top_k]
+        selected_candidates = rerank_cross_encoder(query, graph_candidates, store, top_n=top_k, rerank_mode=rerank_mode)
 
     # Build typed PolicyPassage models
     passages: List[PolicyPassage] = []

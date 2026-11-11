@@ -37,7 +37,7 @@ DOCS_DIR = DATA_DIR / "policy_documents"
 STORE_PKL = DATA_DIR / "policy_store.pkl"
 CHUNKS_JSON = DATA_DIR / "policy_chunks.json"
 _SEGMENTATION_MODEL: Any = None
-SAGE_SIMILARITY_THRESHOLD = 0.35   # chosen on Category C by the Nov 2026 sweep (run_rag_ablation 2C) over the official-page corpus
+SAGE_SIMILARITY_THRESHOLD = 0.35   # chosen on Category C by the Nov 2026 sweep (Experiment 2B, run_rag_ablation) over the official-page corpus
 
 # Acronyms and domain keywords to explicitly index
 DOMAIN_KEYWORDS = [
