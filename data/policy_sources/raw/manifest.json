@@ -261,6 +261,16 @@
     "url": "https://www.hdb.gov.sg/buying-a-flat/bto-sbf-and-open-booking-of-flats/process-for-buying-a-new-flat/application/fresh-start-housing-scheme",
     "url_verified": true
   },
+  "hdb_general_conditions_for_purchase": {
+    "captured_at": "2026-11-11T09:42:29.252561+00:00",
+    "file": "general_conditions_for_purchase.pdf",
+    "method": "manual",
+    "recorded_at": "2026-11-11T09:44:22.926061+00:00",
+    "sha256": "6d14860a2016d25a40e99425c60f9a62f525d38c338734cb6b2cd4dbe45c3f81",
+    "status": null,
+    "url": "https://services-homes.hdb.gov.sg/sales/files/general_conditions_for_purchase.pdf",
+    "url_verified": true
+  },
   "hdb_housing_loan_from_financial_institutions": {
     "captured_at": "2026-11-09T10:43:10.390916+00:00",
     "file": "Housing Loan from Financial Institutions.html",
@@ -449,6 +459,16 @@
     "sha256": "0718e72dc41c18d46e4ea5f93dd027dbb8fd10c126c8ed0d871506dc8ace44b9",
     "status": null,
     "url": "https://www.hdb.gov.sg/buying-a-flat/resale-flats/process-for-buying-a-resale-flat/resale-flat-completion",
+    "url_verified": true
+  },
+  "hdb_resale_terms_and_conditions": {
+    "captured_at": "2026-11-11T09:42:29.288172+00:00",
+    "file": "Resale Terms  Conditions.pdf",
+    "method": "manual",
+    "recorded_at": "2026-11-11T09:44:22.924020+00:00",
+    "sha256": "3eb7d8097c76182e99c55b18b8cc8f660ff67febfddbc36c415c0415b4e3969f",
+    "status": null,
+    "url": "https://www.hdb.gov.sg/-/media/managing-my-home/selling-a-flat/process-for-selling-a-flat/option-to-purchase/Resale-Terms--Conditions.pdf?sc_lang=en&hash=9EF92CAB044AA54F4B093A670530BF1E",
     "url_verified": true
   },
   "hdb_seniors": {
