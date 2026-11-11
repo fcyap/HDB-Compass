@@ -1,0 +1,421 @@
+{
+  "source_code_commit": "23c9076",
+  "variant": "C",
+  "provenance": "Selected scorer fields copied from the last raw row per variant/question; not independently rescored.",
+  "cases": [
+    {
+      "id": "B2-04",
+      "runs": {
+        "q38fp8": {
+          "task_success": false,
+          "tool_selection": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "expected": [
+              "filter_blocks_by_amenity_proximity",
+              "query_resale_blocks_by_criteria"
+            ],
+            "predicted": [
+              "filter_blocks_by_amenity_proximity",
+              "query_resale_blocks_by_criteria"
+            ]
+          },
+          "parameter_em": {
+            "checked": 2,
+            "matched": 2,
+            "rate": 1.0,
+            "details": [
+              {
+                "tool": "query_resale_blocks_by_criteria",
+                "match": true
+              },
+              {
+                "tool": "filter_blocks_by_amenity_proximity",
+                "match": true
+              }
+            ]
+          },
+          "csr": {
+            "recommended": 1,
+            "satisfying": 1,
+            "rate": 1.0
+          },
+          "ground_truth": {
+            "truth_corrected": true,
+            "blocks_exact": false,
+            "block_precision": 1.0,
+            "block_recall": 0.25,
+            "success": false
+          }
+        },
+        "gemma4nvfp90": {
+          "task_success": true,
+          "tool_selection": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "expected": [
+              "filter_blocks_by_amenity_proximity",
+              "query_resale_blocks_by_criteria"
+            ],
+            "predicted": [
+              "filter_blocks_by_amenity_proximity",
+              "query_resale_blocks_by_criteria"
+            ]
+          },
+          "parameter_em": {
+            "checked": 2,
+            "matched": 2,
+            "rate": 1.0,
+            "details": [
+              {
+                "tool": "query_resale_blocks_by_criteria",
+                "match": true
+              },
+              {
+                "tool": "filter_blocks_by_amenity_proximity",
+                "match": true
+              }
+            ]
+          },
+          "csr": {
+            "recommended": 4,
+            "satisfying": 4,
+            "rate": 1.0
+          },
+          "ground_truth": {
+            "truth_corrected": true,
+            "blocks_exact": true,
+            "block_precision": 1.0,
+            "block_recall": 1.0,
+            "success": true
+          }
+        }
+      }
+    },
+    {
+      "id": "E1-07",
+      "runs": {
+        "q38fp8": {
+          "task_success": false,
+          "tool_selection": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "expected": [
+              "calculate_cpf_housing_grants",
+              "calculate_maximum_affordability",
+              "filter_blocks_by_amenity_proximity",
+              "query_resale_blocks_by_criteria"
+            ],
+            "predicted": [
+              "calculate_cpf_housing_grants",
+              "calculate_maximum_affordability",
+              "filter_blocks_by_amenity_proximity",
+              "query_resale_blocks_by_criteria"
+            ]
+          },
+          "parameter_em": {
+            "checked": 4,
+            "matched": 4,
+            "rate": 1.0,
+            "details": [
+              {
+                "tool": "query_resale_blocks_by_criteria",
+                "match": true
+              },
+              {
+                "tool": "filter_blocks_by_amenity_proximity",
+                "match": true
+              },
+              {
+                "tool": "calculate_cpf_housing_grants",
+                "match": true
+              },
+              {
+                "tool": "calculate_maximum_affordability",
+                "match": true
+              }
+            ]
+          },
+          "csr": {
+            "recommended": 1,
+            "satisfying": 1,
+            "rate": 1.0
+          },
+          "ground_truth": {
+            "truth_corrected": false,
+            "blocks_exact": false,
+            "block_precision": 1.0,
+            "block_recall": 0.5,
+            "asked_for_missing": true,
+            "invented_budget": false,
+            "success": false
+          }
+        },
+        "gemma4nvfp90": {
+          "task_success": true,
+          "tool_selection": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "expected": [
+              "calculate_cpf_housing_grants",
+              "calculate_maximum_affordability",
+              "filter_blocks_by_amenity_proximity",
+              "query_resale_blocks_by_criteria"
+            ],
+            "predicted": [
+              "calculate_cpf_housing_grants",
+              "calculate_maximum_affordability",
+              "filter_blocks_by_amenity_proximity",
+              "query_resale_blocks_by_criteria"
+            ]
+          },
+          "parameter_em": {
+            "checked": 4,
+            "matched": 2,
+            "rate": 0.5,
+            "details": [
+              {
+                "tool": "query_resale_blocks_by_criteria",
+                "match": true
+              },
+              {
+                "tool": "filter_blocks_by_amenity_proximity",
+                "match": true
+              },
+              {
+                "tool": "calculate_cpf_housing_grants",
+                "match": false
+              },
+              {
+                "tool": "calculate_maximum_affordability",
+                "match": false
+              }
+            ]
+          },
+          "csr": {
+            "recommended": 2,
+            "satisfying": 2,
+            "rate": 1.0
+          },
+          "ground_truth": {
+            "truth_corrected": false,
+            "blocks_exact": true,
+            "block_precision": 1.0,
+            "block_recall": 1.0,
+            "asked_for_missing": true,
+            "invented_budget": false,
+            "success": true
+          }
+        }
+      }
+    },
+    {
+      "id": "E1-08",
+      "runs": {
+        "q38fp8": {
+          "task_success": false,
+          "tool_selection": {
+            "precision": 1.0,
+            "recall": 0.75,
+            "f1": 0.8571428571428571,
+            "expected": [
+              "calculate_cpf_housing_grants",
+              "calculate_maximum_affordability",
+              "filter_blocks_by_amenity_proximity",
+              "query_resale_blocks_by_criteria"
+            ],
+            "predicted": [
+              "calculate_cpf_housing_grants",
+              "filter_blocks_by_amenity_proximity",
+              "query_resale_blocks_by_criteria"
+            ]
+          },
+          "parameter_em": {
+            "checked": 3,
+            "matched": 3,
+            "rate": 1.0,
+            "details": [
+              {
+                "tool": "query_resale_blocks_by_criteria",
+                "match": true
+              },
+              {
+                "tool": "filter_blocks_by_amenity_proximity",
+                "match": true
+              },
+              {
+                "tool": "calculate_cpf_housing_grants",
+                "match": true
+              }
+            ]
+          },
+          "csr": {
+            "recommended": 4,
+            "satisfying": 4,
+            "rate": 1.0
+          },
+          "ground_truth": {
+            "truth_corrected": false,
+            "blocks_exact": false,
+            "block_precision": 1.0,
+            "block_recall": 0.5,
+            "asked_for_missing": true,
+            "invented_budget": false,
+            "success": false
+          }
+        },
+        "gemma4nvfp90": {
+          "task_success": true,
+          "tool_selection": {
+            "precision": 1.0,
+            "recall": 0.75,
+            "f1": 0.8571428571428571,
+            "expected": [
+              "calculate_cpf_housing_grants",
+              "calculate_maximum_affordability",
+              "filter_blocks_by_amenity_proximity",
+              "query_resale_blocks_by_criteria"
+            ],
+            "predicted": [
+              "calculate_cpf_housing_grants",
+              "filter_blocks_by_amenity_proximity",
+              "query_resale_blocks_by_criteria"
+            ]
+          },
+          "parameter_em": {
+            "checked": 3,
+            "matched": 3,
+            "rate": 1.0,
+            "details": [
+              {
+                "tool": "query_resale_blocks_by_criteria",
+                "match": true
+              },
+              {
+                "tool": "filter_blocks_by_amenity_proximity",
+                "match": true
+              },
+              {
+                "tool": "calculate_cpf_housing_grants",
+                "match": true
+              }
+            ]
+          },
+          "csr": {
+            "recommended": 8,
+            "satisfying": 8,
+            "rate": 1.0
+          },
+          "ground_truth": {
+            "truth_corrected": false,
+            "blocks_exact": true,
+            "block_precision": 1.0,
+            "block_recall": 1.0,
+            "asked_for_missing": true,
+            "invented_budget": false,
+            "success": true
+          }
+        }
+      }
+    },
+    {
+      "id": "D3-04",
+      "runs": {
+        "q38fp8": {
+          "task_success": false,
+          "tool_selection": {
+            "precision": 1.0,
+            "recall": 0.6666666666666666,
+            "f1": 0.8,
+            "expected": [
+              "calculate_bsd_and_upfront_outlay",
+              "calculate_cpf_housing_grants",
+              "calculate_maximum_affordability"
+            ],
+            "predicted": [
+              "calculate_bsd_and_upfront_outlay",
+              "calculate_cpf_housing_grants"
+            ]
+          },
+          "parameter_em": {
+            "checked": 2,
+            "matched": 2,
+            "rate": 1.0,
+            "details": [
+              {
+                "tool": "calculate_cpf_housing_grants",
+                "match": true
+              },
+              {
+                "tool": "calculate_bsd_and_upfront_outlay",
+                "match": true
+              }
+            ]
+          },
+          "csr": {
+            "recommended": 0,
+            "satisfying": 0,
+            "rate": null
+          },
+          "ground_truth": {
+            "kind": "financial",
+            "expected_status": "needs_information",
+            "names_missing": false,
+            "asked_for_missing": false,
+            "invented_figure": false,
+            "success": false
+          }
+        },
+        "gemma4nvfp90": {
+          "task_success": true,
+          "tool_selection": {
+            "precision": 1.0,
+            "recall": 0.6666666666666666,
+            "f1": 0.8,
+            "expected": [
+              "calculate_bsd_and_upfront_outlay",
+              "calculate_cpf_housing_grants",
+              "calculate_maximum_affordability"
+            ],
+            "predicted": [
+              "calculate_bsd_and_upfront_outlay",
+              "calculate_cpf_housing_grants"
+            ]
+          },
+          "parameter_em": {
+            "checked": 2,
+            "matched": 2,
+            "rate": 1.0,
+            "details": [
+              {
+                "tool": "calculate_cpf_housing_grants",
+                "match": true
+              },
+              {
+                "tool": "calculate_bsd_and_upfront_outlay",
+                "match": true
+              }
+            ]
+          },
+          "csr": {
+            "recommended": 0,
+            "satisfying": 0,
+            "rate": null
+          },
+          "ground_truth": {
+            "kind": "financial",
+            "expected_status": "needs_information",
+            "names_missing": true,
+            "asked_for_missing": false,
+            "invented_figure": false,
+            "success": true
+          }
+        }
+      }
+    }
+  ]
+}
