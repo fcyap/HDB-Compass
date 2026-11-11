@@ -4,16 +4,16 @@ import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
 
 // A link the answer wrote as a bare URL ("... remains unchanged https://www.hdb.gov.sg/...") is shown as a short
-// source label, "(hdb.gov.sg)", with the full address on hover, instead of a long address run into the sentence.
+// source label, "hdb.gov.sg ↗" (no brackets of its own, since the answer may already wrap the link in some), with the full address on hover, instead of a long address run into the sentence.
 // Links with their own text are left as they are. Every link opens in a new tab.
 function SourceLink({ href, children, node: _node, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { node?: unknown }) {
   const text = Array.isArray(children) ? children.join('') : String(children ?? '');
   let label: React.ReactNode = children;
   if (href && /^https?:\/\//.test(text.trim())) {
     try {
-      label = `(${new URL(href).hostname.replace(/^www\./, '')})`;
+      label = `${new URL(href).hostname.replace(/^www\./, '')} ↗`;
     } catch {
-      label = '(source)';
+      label = 'source ↗';
     }
   }
   return <a {...props} href={href} title={href} target="_blank" rel="noopener noreferrer">{label}</a>;
