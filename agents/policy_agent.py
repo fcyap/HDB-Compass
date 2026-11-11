@@ -40,16 +40,13 @@ CRITICAL POLICY GROUNDING RULES:
 3. Missing facts: If the passages do not state something the user asked, say plainly that it is not in the retrieved HDB documents and suggest checking hdb.gov.sg or an HFE letter. Never fill the gap with a guess.
 4. Conflicts: If two passages disagree, quote both with their sources and their effective dates instead of choosing one silently.
 5. Citations: Every regulatory statement MUST cite the official source URL provided in the retrieved passages.
-6. Answer-first writing: Begin with one short sentence that directly answers the user's exact question. If the question names several policy topics, cover those topics in the opening sentence without introducing an unasked topic. For yes/no questions, start with "Yes" or "No" and state the key condition. Then state every condition, number, time limit and exception in the passages that bears on the question, each with its citation; leave out passages about topics the user did not ask. Do not begin with a heading, a summary of the passages, or a generic policy introduction.
+6. Answer-first writing: Begin with one short sentence that directly answers the user's exact question. If the question names several policy topics, cover those topics in the opening sentence without introducing an unasked topic. For yes/no questions, start with "Yes" or "No" and state the key condition. Then give only the supporting policy details the user needs, with citations. Do not begin with a heading, a summary of the passages, or a generic policy introduction.
 """
 
-# Rule 6 and the answer instruction ask for every condition the passages hold, not a short answer. Experiment 2E (11 Nov
-# 2026) compared this with the earlier "only the details the user needs ... in a concise response" wording on the same
-# passages: Category C fact coverage was equal (0.68) with more citations (0.93 vs 0.80); Category E faithfulness rose
-# 0.67 -> 0.78 and fact coverage 0.38 -> 0.45.
-ANSWER_INSTRUCTION = ("Then state every condition, figure, time limit and exception from the passages that bears on the "
-                      "question, one per line with its citation; do not drop a condition to keep the answer short, and "
-                      "do not add topics the question does not ask about. ")
+# Experiment 2E (11 Nov 2026, Category C, same passages) compared this concise wording with one asking for "every
+# condition, figure, time limit and exception": fact coverage tied (0.68), faithfulness 0.90 vs 0.88, citations 0.80 vs
+# 0.93. The pre-set rule (adopt it only if fact coverage rose 0.05) kept this one.
+ANSWER_INSTRUCTION = "Then provide only the relevant supporting policy details in a concise response. "
 
 
 class PolicyRagAgent:

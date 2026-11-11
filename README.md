@@ -1190,9 +1190,9 @@ The policy agent answers HDB, CPF and stamp-duty questions only from official do
 - **Chunking:** split by headings (each chunk keeps its heading path), tables kept whole, a lead-in never separated from its list; within a section a new chunk starts where neighbouring sentences' MiniLM similarity drops below 0.35 (max 380 words). 1,297 chunks.
 - **Retrieval:** BM25 and dense search (`all-MiniLM-L6-v2`, cosine) for the question and its acronym-expanded form, merged by reciprocal rank fusion (k=60) into 20 candidates; the cross-encoder `ms-marco-MiniLM-L-6-v2` reranks them and keeps the top 5.
 - **Relevance gate:** if the best cross-encoder score is below -3.2, no passage is shown and the agent says no HDB rule was found.
-- **Generation:** Gemini `gemini-3.5-flash-lite` answers from the 5 passages: the answer first, then every condition, figure, time limit and exception that bears on the question, each with its source URL; anything the passages do not state is reported as not in the documents.
+- **Generation:** Gemini `gemini-3.5-flash-lite` answers from the 5 passages: the answer first, then the supporting details concisely, each with its source URL; anything the passages do not state is reported as not in the documents.
 
-**Evaluation** (`evaluation/run_rag_ablation.py`, 30 benchmark questions: 15 Category C policy + 15 Category E multi-objective; results in `evaluation/rag_ablation_results.json`):
+**Evaluation** (`evaluation/run_rag_ablation.py`; results in `evaluation/rag_ablation_results.json`). Retrieval (2A-2D) uses 30 questions: 15 Category C policy questions and 15 Category E multi-objective questions, with the policy rules each E question depends on as ground truth. Generation (2E) uses Category C only: Category E questions target the market, spatial and financial agents, so the policy agent alone cannot answer them.
 
 | Experiment | What it compares | Result (11 Nov 2026) |
 |---|---|---|
@@ -1200,7 +1200,7 @@ The policy agent answers HDB, CPF and stamp-duty questions only from official do
 | 2B threshold | similarity threshold 0.15-0.55 | 0.35 in use; 0.15 scored higher after the PDFs were added (to confirm) |
 | 2C embedder | MiniLM / BGE-small / BGE-base | MiniLM best inside RAG-2 (recall 0.83) and fastest |
 | 2D retrieval | RAG-1 dense / RAG-2 hybrid + cross-encoder / RAG-3 RAG-2 + LLM rewrite + entity-graph expansion | recall 0.44 / **0.83** / 0.79; RAG-2 precision 0.92, MRR 0.98 at 0.4 s |
-| 2E generation | writer models and answer prompt, same RAG-2 passages | policy faithfulness ~0.9 for all three writers; the complete prompt raised Category E faithfulness 0.67 to 0.78 |
+| 2E generation (Category C) | gemini-3.5-flash-lite / gemini-3.5-flash / qwen3.8-27b on the same RAG-2 passages | faithfulness 0.90 / 0.89 / 0.92; Flash Lite kept (Flash allows 20 requests a day) |
 
 Retrieval is scored by code against the fact sheet's key clauses (recall, MAP@5 precision, MRR). Answers are scored with the `ragas` library (Faithfulness, Answer Relevancy, Context Recall, Context Precision) by judges from another model family than the writers (OpenAI gpt-oss-120b / -20b on Groq), plus fact coverage and citation checks in code. Answers and scores are cached in `evaluation/.cache/`, so an interrupted run resumes.
 

@@ -15,15 +15,19 @@ retrieval against exact clauses from the verified fact sheet (evaluation/policy_
         RAG-2  BM25 + dense for the question and its expansion, RRF k=60 to 20 candidates, cross-encoder rerank
         RAG-3  RAG-2 plus an LLM query rewrite and entity-graph expansion
       Context recall, context precision (MAP@5), MRR, latency.
-  2E  Generation: RAG-2's passages (the app's pipeline) answered by three generator models, gemini-3.5-flash-lite
+  2E  Generation, Category C only: RAG-2's passages (the app's pipeline) answered by three generator models, gemini-3.5-flash-lite
       (the app's), gemini-3.5-flash and qwen3.8-27b (LLM_E2E_GENERATORS), with the app's answer prompt. Same passages
-      throughout, so only the writer changes. (The 11 Nov run also compared two answer prompts; the "complete" one
-      won and is now the only prompt, see agents/policy_agent.py.) The `ragas` library scores Faithfulness and Answer Relevancy (judge Groq gpt-oss-120b) and, once
+      throughout, so only the writer changes. (The 11 Nov run also compared the app's concise prompt with a
+      "complete" one; the concise prompt was kept, see agents/policy_agent.py.) The `ragas` library scores Faithfulness and Answer Relevancy (judge Groq gpt-oss-120b) and, once
       per question, RAGAS Context Recall and Context Precision against the fact-sheet reference (Groq gpt-oss-20b);
       the judges are OpenAI models, a different family from every generator, so no model grades its own answers.
       Fact coverage (gold clauses in the answer) and citation compliance are scored by code. Answers and scores are
       cached in evaluation/.cache/: a run stopped by a quota leaves the missing scores empty, and the next run fills
       only those.
+      Category E is scored on retrieval (2A-2D) only. Its questions target the market, spatial and financial agents
+      (their expected_agents); the policy rules they depend on (CATEGORY_E_POLICY_GROUND_TRUTH) test whether retrieval
+      finds them, but the policy agent alone cannot answer the listings and budgets they ask for, so its answers to
+      them are not a fair measure of generation.
 Variants measured during development and dropped to keep the comparison simple: a blended rerank score (Category E
 recall 0.55 vs 0.83) and per-sub-question decomposition (no gain over RAG-2); see the git history of this file.
 
@@ -421,7 +425,7 @@ def generator_client(spec: str) -> Any:
 
 
 # The answer prompt the cached answers were written with (agents/policy_agent.py). Change it when that prompt changes.
-PROMPT_VERSION = "prompt=complete-2026-11-11"
+PROMPT_VERSION = "prompt=concise-2026-11-12"
 
 SCORE_GROUPS = {"generation": ("llm_faithfulness", "llm_answer_relevance"),
                 "retrieval": ("ragas_context_recall", "ragas_context_precision")}
@@ -839,7 +843,9 @@ def run_ablation(generation: bool = True, limit: Optional[int] = None):
     print("--> 2D retrieval pipelines ...")
     execute_rag_pipeline(query="Warmup query MOP Prime", pipeline="RAG-3", top_k=5)   # warm the models before timing
     execute_rag_pipeline(query="Warmup query MOP Prime", pipeline="RAG-1", top_k=5)
-    retrieval = {p: [evaluate_query_end_to_end(case, pipeline=p, use_llm=generation and p == "RAG-2")
+    # the app's answers (2E) are written alongside RAG-2's retrieval, for Category C only (see the docstring)
+    retrieval = {p: [evaluate_query_end_to_end(case, pipeline=p,
+                                               use_llm=generation and p == "RAG-2" and case["category"] == "C")
                      for case in all_cases]
                  for p in ("RAG-1", "RAG-2", "RAG-3")}
     exp_2d = _by_category(retrieval)
@@ -852,17 +858,18 @@ def run_ablation(generation: bool = True, limit: Optional[int] = None):
     generation_results: Dict[str, List[Dict[str, Any]]] = {}
     if generation:
         app_model = GENERATORS[0]
-        generation_results = {f"RAG-2 · {app_model.split(':', 1)[1]}": retrieval["RAG-2"]}
+        policy_cases = [case for case in all_cases if case["category"] == "C"]
+        generation_results = {f"RAG-2 · {app_model.split(':', 1)[1]}":
+                              [r for r in retrieval["RAG-2"] if r["category"] == "C"]}
         for spec in GENERATORS[1:]:
             print(f"--> 2E generation: RAG-2 passages, written by {spec} ...")
             label = f"RAG-2 · {spec.split(':', 1)[1]}"
             generation_results[label] = [{**evaluate_query_end_to_end(case, "RAG-2", use_llm=True, generator=spec),
-                                          "pipeline": label} for case in all_cases]
-        exp_2e = _by_category(generation_results)
-        for group, label in (("category_c", "Category C"), ("category_e", "Category E"), ("combined", "Combined C + E")):
-            print_generation_table(f"EXPERIMENT 2E: GENERATION on RAG-2's passages - ragas; judges "
-                                   f"{_JUDGE[1] if _JUDGE else '-'} / {_RETRIEVAL_JUDGE[1] if _RETRIEVAL_JUDGE else '-'} "
-                                   f"({label})", exp_2e[group])
+                                          "pipeline": label} for case in policy_cases]
+        exp_2e = {"category_c": {p: compute_group_summary(rows) for p, rows in generation_results.items()}}
+        print_generation_table(f"EXPERIMENT 2E: GENERATION on RAG-2's passages, Category C (N={len(policy_cases)}) - "
+                               f"ragas; judges {_JUDGE[1] if _JUDGE else '-'} / "
+                               f"{_RETRIEVAL_JUDGE[1] if _RETRIEVAL_JUDGE else '-'}", exp_2e["category_c"])
 
     payload = {
         "questions": n,
@@ -878,7 +885,7 @@ def run_ablation(generation: bool = True, limit: Optional[int] = None):
         "retrieval_judge_model": _RETRIEVAL_JUDGE[1] if _RETRIEVAL_JUDGE else None,
         "judge_token_usage": _judge_usage() if generation else None,
         "judges_out_of_daily_quota": _judge_exhausted() if generation else None,
-        "detailed_results": generation_results or retrieval,
+        "detailed_results": {"retrieval_2d": retrieval, "generation_2e": generation_results},
     }
     suffix = ("" if generation else "_retrieval_only") + (f"_limit{limit}" if limit else "")
     out_path = RESULTS_JSON.with_name(RESULTS_JSON.stem + suffix + RESULTS_JSON.suffix)
