@@ -5,7 +5,7 @@
 
 - vLLM 0.33.0 on one 24 GB slice of an NVIDIA RTX PRO 6000 Blackwell; MXFP4 weights, mixture of experts (32 experts, 4 active per token), alternating full and 128-token sliding-window attention.
 - Context window: the model's native maximum is 131,072 tokens; served at **65,536**. Attention backend forced to Triton (FlashInfer cannot be built on the cluster nodes); tool calls parsed with `openai`, reasoning with `openai_gptoss`. KV cache size: see the server log.
-- The shared profile still sent the Qwen-specific ' /no_think' suffix and `enable_thinking=false`; default reasoning effort was used and the switches' effect here was not separately measured.
+- Default reasoning effort was used. The Qwen-specific ' /no_think' suffix and `enable_thinking=false` were not sent: `agents/llm.py` (at `23c9076`) drops both for model names without "qwen3" (corrected 12 Nov from code; the rows do not record the suffix).
 - Per-call limits for every model: response cap `max_tokens` 4,096 (profile `vllm` in config/experiment_config.yaml; the constraint reading is capped at 1,536 tokens), model-call timeout 180 s, temperature 0, seed 42, one request at a time.
 
 - Checkpoint: 2026-11-11 11:55 UTC, label: **run finished (final)**. Code commit recorded in the rows: `23c9076`.
