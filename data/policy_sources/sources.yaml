@@ -351,6 +351,22 @@ sources:
     verified: true
     file: "Removal of the 15-month Wait-out Period for Private Residential Property Owners Purchasing Non-Subsidised HDB Resale Flats.html"
     notes: 27 July 2026 removal of the 15-month wait-out for private property owners buying non-subsidised resale flats without an HDB loan; records the earlier 55+ senior exemption (4-room or smaller).
+  - id: hdb_resale_terms_and_conditions
+    url: https://www.hdb.gov.sg/-/media/managing-my-home/selling-a-flat/process-for-selling-a-flat/option-to-purchase/Resale-Terms--Conditions.pdf?sc_lang=en&hash=9EF92CAB044AA54F4B093A670530BF1E
+    publisher: HDB
+    policy_category: resale_process
+    capture: manual
+    verified: true
+    file: "Resale Terms  Conditions.pdf"
+    notes: Terms and Conditions of Sale and Purchase of an HDB Resale Flat (PDF of 28 Aug 2026; 20 pages), linked from HDB's Option to Purchase page; saved 11 Nov 2026.
+  - id: hdb_general_conditions_for_purchase
+    url: https://services-homes.hdb.gov.sg/sales/files/general_conditions_for_purchase.pdf
+    publisher: HDB
+    policy_category: bto_priority
+    capture: manual
+    verified: true
+    file: general_conditions_for_purchase.pdf
+    notes: General Conditions for Purchase of a Flat under the Nov 2026 Sales Launch (PDF of 28 Oct 2026; 35 pages) - application, eligibility, priority schemes, EHG, Step-Up grant, booking, wait-out on rejection; saved 11 Nov 2026.
 
   # --- CPF Board (auto: server-rendered, robots.txt allows /member/) -------------------------------------------------
   - id: cpf_ehg_phg_guide

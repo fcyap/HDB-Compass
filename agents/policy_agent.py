@@ -19,6 +19,7 @@ import json
 import re
 import sys
 from pathlib import Path
+import os
 from typing import Any, Dict, List, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -40,8 +41,34 @@ CRITICAL POLICY GROUNDING RULES:
 3. Missing facts: If the passages do not state something the user asked, say plainly that it is not in the retrieved HDB documents and suggest checking hdb.gov.sg or an HFE letter. Never fill the gap with a guess.
 4. Conflicts: If two passages disagree, quote both with their sources and their effective dates instead of choosing one silently.
 5. Citations: Every regulatory statement MUST cite the official source URL provided in the retrieved passages.
-6. Answer-first writing: Begin with one short sentence that directly answers the user's exact question. If the question names several policy topics, cover those topics in the opening sentence without introducing an unasked topic. For yes/no questions, start with "Yes" or "No" and state the key condition. Then give only the supporting policy details the user needs, with citations. Do not begin with a heading, a summary of the passages, or a generic policy introduction.
+6. Answer-first writing: Begin with one short sentence that directly answers the user's exact question. If the question names several policy topics, cover those topics in the opening sentence without introducing an unasked topic. For yes/no questions, start with "Yes" or "No" and state the key condition. {details_rule} Do not begin with a heading, a summary of the passages, or a generic policy introduction.
 """
+
+# How much supporting detail follows the opening sentence. Experiment 2E compares the two on the same passages:
+# "concise" left out a condition the passages held in 7 of 15 policy questions (fact coverage 0.68 vs 0.81 retrieved).
+ANSWER_STYLES = {
+    "concise": {
+        "details_rule": "Then give only the supporting policy details the user needs, with citations.",
+        "instruction": ("Then provide only the relevant supporting policy details in a concise response. "),
+    },
+    "complete": {
+        "details_rule": ("Then state every condition, number, time limit and exception in the passages that bears on the "
+                         "question, each with its citation; leave out passages about topics the user did not ask."),
+        "instruction": ("Then state every condition, figure, time limit and exception from the passages that bears on the "
+                        "question, one per line with its citation; do not drop a condition to keep the answer short, and "
+                        "do not add topics the question does not ask about. "),
+    },
+}
+ANSWER_STYLE = os.getenv("POLICY_ANSWER_STYLE", "concise").strip().lower()
+
+
+def policy_system_prompt(style: Optional[str] = None) -> str:
+    return POLICY_AGENT_SYSTEM.format(details_rule=ANSWER_STYLES[_style(style)]["details_rule"])
+
+
+def _style(style: Optional[str]) -> str:
+    style = (style or ANSWER_STYLE).strip().lower()
+    return style if style in ANSWER_STYLES else "concise"
 
 
 class PolicyRagAgent:
@@ -104,11 +131,14 @@ class PolicyRagAgent:
         return (opening + "\n\n" if opening else "") + "### Official HDB & CPF Regulatory Analysis\n\n" + "\n\n".join(sections_out) + disclaimer
 
     @staticmethod
-    def generate_llm_answer(query: str, passages: List[Dict[str, Any]], context_override: Optional[str] = None) -> str:
+    def generate_llm_answer(query: str, passages: List[Dict[str, Any]], context_override: Optional[str] = None,
+                            style: Optional[str] = None, llm: Any = None) -> str:
         """The grounded LLM answer the user sees ("" when no model is configured or the call fails).
         context_override replaces the numbered passages with other context (the ablation's long-context baseline,
-        which sends every policy document instead of retrieved chunks)."""
-        llm = get_llm()
+        which sends every policy document instead of retrieved chunks). style: an ANSWER_STYLES key (default
+        POLICY_ANSWER_STYLE, "concise"). llm: a client to write with instead of the active profile's (Experiment 2E
+        compares generator models)."""
+        llm = llm or get_llm()
         if llm is None:
             return ""
         try:
@@ -123,12 +153,12 @@ class PolicyRagAgent:
                 "Answer the user's exact question directly in the first sentence, before any explanation. "
                 "If the question names several policy topics, cover those topics in that first sentence and omit unasked topics. "
                 "For a yes/no question, begin with Yes or No and include the key condition in that sentence. "
-                "Then provide only the relevant supporting policy details in a concise response. "
+                + ANSWER_STYLES[_style(style)]["instruction"] +
                 "Do not start with a heading or a generic introduction about the policies or retrieved passages. "
                 "Use only the retrieved context, and include inline citations with exact URLs for each factual claim. "
                 "If the context does not state something the user asked, say it is not in the retrieved HDB documents."
             )
-            response = llm.invoke([SystemMessage(content=POLICY_AGENT_SYSTEM), HumanMessage(content=prompt)])
+            response = llm.invoke([SystemMessage(content=policy_system_prompt(style)), HumanMessage(content=prompt)])
             content = response.content
             if isinstance(content, list):
                 content = " ".join(str(x.get("text", "")) for x in content if isinstance(x, dict))

@@ -175,9 +175,30 @@ def clean_title(title: Optional[str]) -> Optional[str]:
 def extract_pdf(path: Path) -> Tuple[str, Optional[str], Optional[str]]:
     """(markdown body, title, None) of a page saved as PDF."""
     import pymupdf4llm
-    body = pymupdf4llm.to_markdown(str(path))
+    body = strip_pdf_page_furniture(pymupdf4llm.to_markdown(str(path)))
     first = next((ln.strip("# ").strip() for ln in body.splitlines() if ln.strip()), None)
     return body, first, None
+
+
+def strip_pdf_page_furniture(body: str) -> str:
+    """Drop what a printed page repeats rather than says: the running header (the document title printed again at the
+    top of every page) and bare page-number lines. The first title is kept and no policy sentence is touched: only a
+    line whose text is exactly the title is dropped (HDB's 20-page resale terms print it 23 times).
+    """
+    norm = lambda ln: re.sub(r"</?u>|[*_#]", "", ln).strip()  # noqa: E731 - markdown emphasis off, words unchanged
+    lines = body.splitlines()
+    title = next((norm(ln) for ln in lines if norm(ln)), "")
+    out, seen_title = [], False
+    for ln in lines:
+        text = norm(ln)
+        if title and text == title:
+            if seen_title:
+                continue
+            seen_title = True
+        elif re.fullmatch(r"\d{1,3}", text) and not ln.lstrip().startswith("|"):
+            continue
+        out.append(ln)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out))
 
 
 _FOOTNOTE_REF = re.compile(r"<sup>[^<]*</sup>")
