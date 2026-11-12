@@ -35,7 +35,9 @@ from evaluation import architecture_metrics as M  # noqa: E402
 
 EVAL_DIR = PROJECT_ROOT / "evaluation"
 DATASETS: Dict[str, Dict[str, Any]] = {
-    "category_a": {"name": "hdb-compass-category-a", "file": "category_a_queries.json", "addons": "app",
+    # id_salt: LangSmith keeps example ids of a deleted dataset, so re-creating the dataset under the same ids answers
+    # 409 ("dataset id does not match example's dataset id"). A salt gives the new dataset fresh ids.
+    "category_a": {"name": "hdb-compass-category-a", "file": "category_a_queries.json", "addons": "app", "id_salt": "v2",
                    "description": "Category A: historical resale statistics questions with ground-truth figures"},
     "category_b": {"name": "hdb-compass-category-b", "file": "category_b_queries.json", "addons": "off",
                    "description": "Category B: spatial reasoning, primary school boundaries, multi-amenity, and dual-transit commute"},
@@ -58,8 +60,8 @@ def load_items(key: str) -> List[Dict[str, Any]]:
     return json.loads((EVAL_DIR / DATASETS[key]["file"]).read_text(encoding="utf-8"))
 
 
-def example_id(dataset_name: str, qid: str) -> str:
-    return str(uuid.uuid5(ID_NAMESPACE, f"{dataset_name}:{qid}"))
+def example_id(dataset_name: str, qid: str, salt: str = "") -> str:
+    return str(uuid.uuid5(ID_NAMESPACE, f"{dataset_name}{':' + salt if salt else ''}:{qid}"))
 
 
 def build_examples(key: str, items: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
@@ -68,7 +70,7 @@ def build_examples(key: str, items: Optional[List[Dict[str, Any]]] = None) -> Li
     out = []
     for it in (items if items is not None else load_items(key)):
         out.append({
-            "id": example_id(name, it["id"]),
+            "id": example_id(name, it["id"], DATASETS[key].get("id_salt", "")),
             "inputs": {"query": it["query"], "initial_map_state": it.get("initial_map_state"), "question_id": it["id"]},
             "outputs": {k: v for k, v in it.items() if k not in OUTPUT_DROP},
             "metadata": {"question_id": it["id"], "category": it.get("category"), "sub_use_case": it.get("sub_use_case"),
@@ -245,7 +247,7 @@ def run_experiment(client: Any, key: str, variant: str, limit: Optional[int] = N
                    evaluators: Optional[Sequence[Callable]] = None, target: Optional[Callable] = None) -> Any:
     spec = DATASETS[key]
     items = load_items(key)[:limit] if limit else load_items(key)
-    ids = [example_id(spec["name"], it["id"]) for it in items]
+    ids = [example_id(spec["name"], it["id"], spec.get("id_salt", "")) for it in items]
     data = list(client.list_examples(dataset_name=spec["name"], example_ids=ids))
     if not data:
         raise SystemExit(f"dataset {spec['name']} has no examples; run with --upload-only first")
