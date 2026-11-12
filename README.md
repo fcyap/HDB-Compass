@@ -10,6 +10,16 @@
 
 ---
 
+## Start here
+
+| I want to... | Go to |
+|---|---|
+| check the reported numbers (a second, no model or database needed) | `python evaluation/reported_results/verify_results.py` ([what it checks](evaluation/reported_results/validation.md)) |
+| reproduce the environment, tests and runs, and know what each needs | [docs/REPRODUCE.md](docs/REPRODUCE.md) |
+| see what was compared and what it showed | [Architecture comparison](#architecture-comparison), [Results and findings](#results-and-findings-as-of-11-nov-2026) |
+| find the source of every part of the report | [docs/REPORT_MAP.md](docs/REPORT_MAP.md) |
+| run the app | [Setup](#setup), [Demo day](#demo-day-one-command) |
+
 ## System Architecture
 
 A high-level map of how a question travels through HDB-Compass: from the chat, through the multi-agent graph, to the tools and data behind each answer. Details of every contract are in [`docs/INTERFACES.md`](docs/INTERFACES.md).
@@ -1508,6 +1518,9 @@ Install dependencies in the activated environment:
 python -m pip install -r requirements.txt
 ```
 
+`requirements.txt` lists the direct dependencies. `requirements.lock` pins every package to versions the full test suite
+passed with on 12 Nov 2026 (on Linux it includes torch's CUDA libraries, about 6 GB; see the notes at its top).
+
 ### 2. Configure `.env`
 
 Copy `.env.example` to `.env`. If it already exists, add the required settings
@@ -1562,7 +1575,8 @@ python -m pytest tests/ -q
 ```
 
 Tests need no API credentials or running model, and include agent and in-memory
-MCP calls. The suite has about 1,930 tests in 70 modules and takes about 6 minutes on a
+MCP calls. The suite has about 2,000 tests in 75 modules (2,003 passed and 23 skipped on 12 Nov 2026 in a fresh environment from
+`requirements.lock`, local database) and takes about 6 minutes on a
 laptop CPU. Two things must be in place, or tests fail for reasons unrelated to the code:
 
 1. **Every package in `requirements.txt`, including `sentence-transformers`.** Without it the
@@ -1581,6 +1595,9 @@ laptop CPU. Two things must be in place, or tests fail for reasons unrelated to 
    `python -m data.build_market_db --csv ...`), then check with `python -m evaluation.build_category_a --check`.
    With no database at all, the tests that read it (Category A analysis, price checks, place questions,
    code-written openings) fail.
+
+Since then the six snapshot-id cases skip, with the reason printed, when the local database's snapshot differs from the
+answer keys' snapshot (`HDB_REQUIRE_PINNED_SNAPSHOT=1` makes them fail again); the results below predate that change.
 
 Historical local baseline saved 11 Nov 2026 (`LLM_PROFILE=none`, local snapshot `d888eb158ece`):
 1,906 passed, 17 skipped, 6 failed, all 6 being the snapshot-id cases above.
@@ -2060,9 +2077,8 @@ python -m pytest tests/test_comparable_resale.py -q
 - [x] Validate inputs and outputs, register each completed tool with FastMCP,
   switch its configuration to `real`, and verify direct, agent and MCP calls.
 - [x] Add independent financial reference cases, boundary and integration tests.
-- [ ] Produce Category A & D accuracy results with Member 5 using fixed data/rule versions.
-  The question sets and scorers exist; the unit tests and mock benchmarks do not
-  by themselves establish accuracy.
+- [x] Produce Category A & D accuracy results with Member 5 using fixed data/rule versions: the 90-question benchmark
+  scores A and D per variant and model (see [Results and findings](#results-and-findings-as-of-11-nov-2026)).
 - [ ] Document the MCP client–server flow and explain how SQL/Python calculations
   supply numeric evidence to the LLM for the role presentation.
 
