@@ -196,6 +196,59 @@ flowchart TD
 
 **Never an unrelated answer:** nothing defaults to the policy search any more. Policy passages are shown only for a question that names an HDB rule and only when the search finds a real match (relevance gate: best cross-encoder score ≥ -3.2, `POLICY_RELEVANCE_FLOOR`; raw BM25 floor only if the cross-encoder cannot load); price questions get town medians, and unsupported asks (a single-destination commute, price forecasts) are declined plainly. `tests/test_scope_routing.py` locks this, and locks the Category C/E benchmark routes. Details: `docs/INTERFACES.md` §10. Known gap: a message that names a town but asks for something no tool covers (for example "best school for my kid in Bishan") still falls back to the generic block search instead of a plain "I can't answer that".
 
+### 2b. The three variants side by side (A, B and C)
+
+The app runs C. The three graphs share `agents/state.py`, the tool registry and the tool implementations; input
+sanitisation happens in `initial_state` for all variants. The input guardrail and the runtime auditor are C-only graph
+nodes. B has a menu-pick shortcut that skips extraction (`start_gate` in `agents/arch_2_coarse.py`).
+
+```mermaid
+flowchart LR
+    subgraph A["A · Monolith"]
+        direction TB
+        A0["Sanitised input"] --> A1["One ReAct agent<br/>all visible tools · up to 8 turns"]
+        A1 --> A2["Model combines results and writes the answer<br/>code plan / template fallback"] --> A3["Finalize"]
+    end
+    subgraph B["B · Coarse split"]
+        direction TB
+        B0["Sanitised input"] --> BG{"Menu selection?"}
+        BG -->|yes| BM["Menu follow-up"] --> BF["Finalize"]
+        BG -->|no| BX["Extract constraints"] --> BR["Route by task"]
+        BR --> BD["Data agent<br/>market + spatial + financial · up to 8 turns"]
+        BR --> BP["Policy agent · up to 4 turns"]
+        BR -->|no active agent| BS["Synthesize<br/>model reconciles results"]
+        BD & BP --> BS --> BF
+    end
+    subgraph C["C · Supervisor + four specialists"]
+        direction TB
+        C0["Sanitised input"] --> CG{"Input guardrail"}
+        CG -->|blocked| CF["Finalize"]
+        CG -->|allowed| CX["Extract constraints"] --> CR["Route by task"]
+        CR --> CM["Market"] & CS["Spatial"] & CC["Financial"] & CP["Policy"]
+        CR -->|no active specialist| CY["Synthesize checked facts"]
+        CM & CS & CC & CP --> CJ["Intersect candidates in code"]
+        CJ --> CL{"Relax constraints?"}
+        CL -->|yes| CE["Relax in code"] --> CY
+        CL -->|no| CY
+        CY --> CA{"Runtime auditor"}
+        CA -->|rewrite, up to 2 retries| CY
+        CA -->|pass or retries exhausted| CF
+    end
+```
+
+| Responsibility | A | B | C |
+|---|---|---|---|
+| Tools offered with add-ons on for all (benchmark runs) | 25 together | 24 data + 1 policy | 14 market, 7 spatial, 3 financial, 1 policy; further gated by the task |
+| Tools offered in the app (`addons.offer_in: app`) | 12 core | 11 data + 1 policy | core and add-on tools |
+| Model constraint extraction | no; regex feeds the fallback only | shared extraction node | shared extraction node |
+| Price / distance intersection and relaxation | model combines; no join node | model combines; no join node | explicit code nodes |
+| Input guardrail / runtime auditor | neither | neither | both |
+
+Sources: `agents/arch_1_monolith.py`, `agents/arch_2_coarse.py`, `agents/arch_3_specialist_5agent.py`,
+`agents/supervisor.py`, `agents/addons/__init__.py`. All variants have argument validation and deterministic
+tool-plan fallbacks; none is an unassisted model loop. The full per-variant comparison and the reasons are in
+[Experiment 1: what was compared](#experiment-1-what-was-compared-variants-a-b-and-c).
+
 ### 3. Agents and the tools they can use
 
 All tools are called through the tool registry (argument validation, mock/real switch, call logging) and are also exposed to any MCP client by the FastMCP server. **Core** tools are the proposal's 12; the 13 **add-on** tools come from the packs in `agents/addons/` (`research`, `schools`) and are offered to the app and Variant C (switch: `addons.offer_in`, see `docs/INTERFACES.md` §8).
@@ -382,7 +435,9 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    Q(["question"]) --> X["extract_constraints<br/>(model reading, code-checked)"] --> R{"route_coarse"}
+    Q(["question"]) --> MG{"menu pick?"}
+    MG -->|"yes"| MP["menu_pick<br/>that option's follow-up"] --> Fin
+    MG -->|"no"| X["extract_constraints<br/>(model reading, code-checked)"] --> R{"route_coarse"}
     R --> D["data_agent ≤ 8 turns<br/>24 tools: market + spatial + financial"]
     R --> P["policy_agent ≤ 4 turns<br/>1 tool"]
     D & P --> S["synthesize<br/>model reconciles price and distance lists<br/>(no join in code)"] --> Fin(["finalize"])
@@ -396,6 +451,7 @@ flowchart LR
     G -->|"blocked"| Fin(["finalize"])
     G --> X["extract_constraints"] --> R{"route"}
     R --> M["market_sql ≤ 4"] & S["spatial ≤ 4"] & F["financial ≤ 4"] & P["policy_rag ≤ 4"]
+    R -->|"no active specialist"| SY
     M & S & F & P --> J["intersect (code)"] --> RX{"empty?"}
     RX -->|"yes"| RL["relax (code)"] --> SY
     RX -->|"no"| SY["synthesize<br/>code facts + model opening"]
