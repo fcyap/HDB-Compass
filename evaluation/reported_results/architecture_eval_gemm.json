@@ -1,0 +1,518 @@
+{
+  "tag": "gemm",
+  "rows_auditor_on": 270,
+  "rows_auditor_off": 0,
+  "experiment1": {
+    "A": {
+      "n": 90,
+      "task_success": 26,
+      "task_success_ci95": [
+        0.2054199396270598,
+        0.38964237815098307
+      ],
+      "tool_selection_f1": 0.6883862433862433,
+      "parameter_em_rate": 0.4132420091324201,
+      "csr": 0.4620181405895692,
+      "routing_exact_rate": null,
+      "mean_tool_calls": 3.066666666666667,
+      "fabricated_blocks_total": 1,
+      "map_precision": 0.5570899470899471,
+      "task_success_rate": 0.28888888888888886,
+      "blocks_exact_rate": 0.13333333333333333,
+      "policy_clause_coverage": 0.6,
+      "stat_figure_accuracy": 0.6333333333333333,
+      "stat_snapshot_matches": 0.0,
+      "by_category": {
+        "A": {
+          "n": 15,
+          "task_success": 9,
+          "task_success_ci95": [
+            0.357464427565077,
+            0.8017577191740534
+          ],
+          "tool_selection_f1": 0.8222222222222223,
+          "parameter_em_rate": 0.46153846153846156,
+          "csr": null,
+          "routing_exact_rate": null,
+          "mean_tool_calls": 1.2666666666666666,
+          "fabricated_blocks_total": 0,
+          "map_precision": null,
+          "task_success_rate": 0.6,
+          "blocks_exact_rate": null,
+          "policy_clause_coverage": null,
+          "stat_figure_accuracy": 0.6333333333333333,
+          "stat_snapshot_matches": 0.0
+        },
+        "B": {
+          "n": 15,
+          "task_success": 1,
+          "task_success_ci95": [
+            0.011866588606194856,
+            0.2981707755242399
+          ],
+          "tool_selection_f1": 0.7319047619047618,
+          "parameter_em_rate": 0.9444444444444444,
+          "csr": 0.5561224489795918,
+          "routing_exact_rate": null,
+          "mean_tool_calls": 4.2,
+          "fabricated_blocks_total": 0,
+          "map_precision": 0.5570899470899471,
+          "task_success_rate": 0.06666666666666667,
+          "blocks_exact_rate": 0.06666666666666667,
+          "policy_clause_coverage": null,
+          "stat_figure_accuracy": null,
+          "stat_snapshot_matches": null
+        },
+        "C": {
+          "n": 15,
+          "task_success": 6,
+          "task_success_ci95": [
+            0.19824228082594664,
+            0.642535572434923
+          ],
+          "tool_selection_f1": 1.0,
+          "parameter_em_rate": 0.0,
+          "csr": null,
+          "routing_exact_rate": null,
+          "mean_tool_calls": 1.2666666666666666,
+          "fabricated_blocks_total": 0,
+          "map_precision": null,
+          "task_success_rate": 0.4,
+          "blocks_exact_rate": null,
+          "policy_clause_coverage": 0.6,
+          "stat_figure_accuracy": null,
+          "stat_snapshot_matches": null
+        },
+        "D": {
+          "n": 15,
+          "task_success": 3,
+          "task_success_ci95": [
+            0.07047420643610414,
+            0.4518593533465045
+          ],
+          "tool_selection_f1": 0.7711111111111111,
+          "parameter_em_rate": 0.0,
+          "csr": null,
+          "routing_exact_rate": null,
+          "mean_tool_calls": 2.7333333333333334,
+          "fabricated_blocks_total": 0,
+          "map_precision": null,
+          "task_success_rate": 0.2,
+          "blocks_exact_rate": null,
+          "policy_clause_coverage": null,
+          "stat_figure_accuracy": null,
+          "stat_snapshot_matches": null
+        },
+        "E": {
+          "n": 15,
+          "task_success": 0,
+          "task_success_ci95": [
+            0.0,
+            0.20388926630434784
+          ],
+          "tool_selection_f1": 0.8050793650793651,
+          "parameter_em_rate": 0.6666666666666666,
+          "csr": 0.26256613756613756,
+          "routing_exact_rate": null,
+          "mean_tool_calls": 6.2,
+          "fabricated_blocks_total": 1,
+          "map_precision": null,
+          "task_success_rate": 0.0,
+          "blocks_exact_rate": 0.2,
+          "policy_clause_coverage": null,
+          "stat_figure_accuracy": null,
+          "stat_snapshot_matches": null
+        },
+        "F": {
+          "n": 15,
+          "task_success": 7,
+          "task_success_ci95": [
+            0.24809225259746442,
+            0.6988336984894921
+          ],
+          "tool_selection_f1": 0.0,
+          "parameter_em_rate": null,
+          "csr": 1.0,
+          "routing_exact_rate": null,
+          "mean_tool_calls": 2.7333333333333334,
+          "fabricated_blocks_total": 0,
+          "map_precision": null,
+          "task_success_rate": 0.4666666666666667,
+          "blocks_exact_rate": null,
+          "policy_clause_coverage": null,
+          "stat_figure_accuracy": null,
+          "stat_snapshot_matches": null
+        }
+      },
+      "cost_proxy": {
+        "basis": "proxy only: tokens and wall-clock seconds per question (first turn plus any follow-up turn); the models run on our own hardware or the course cluster, so no paid API is billed and GPU time is not charged per query",
+        "questions": 90,
+        "total_tokens": 3338318,
+        "median_tokens": 20420.0,
+        "total_latency_s": 1494.7,
+        "median_latency_s": 10.38
+      },
+      "latency_p50_s": 10.44,
+      "latency_p95_s": 81.0,
+      "errors": 0,
+      "mean_total_tokens": 35372,
+      "mean_output_tokens": 658,
+      "e1_with_candidates": 5,
+      "e2_relaxation_attempted": 0,
+      "answers_with_fallback": 12,
+      "tool_selection_f1_model_chosen": 0.8217195767195767,
+      "model_reading_search_rate": null,
+      "model_reading_facts_rate": null
+    },
+    "B": {
+      "n": 90,
+      "task_success": 33,
+      "task_success_ci95": [
+        0.2744710138371421,
+        0.4697788710753059
+      ],
+      "tool_selection_f1": 0.7827689594356261,
+      "parameter_em_rate": 0.6621621621621622,
+      "csr": 0.6387959866220736,
+      "routing_exact_rate": 0.8555555555555555,
+      "mean_tool_calls": 2.5,
+      "fabricated_blocks_total": 0,
+      "map_precision": 0.4459051724137931,
+      "task_success_rate": 0.36666666666666664,
+      "blocks_exact_rate": 0.3333333333333333,
+      "policy_clause_coverage": 0.7166666666666667,
+      "stat_figure_accuracy": 0.7138888888888889,
+      "stat_snapshot_matches": 0.0,
+      "by_category": {
+        "A": {
+          "n": 15,
+          "task_success": 8,
+          "task_success_ci95": [
+            0.3011663015105079,
+            0.7519077474025355
+          ],
+          "tool_selection_f1": 0.9333333333333333,
+          "parameter_em_rate": 0.42857142857142855,
+          "csr": null,
+          "routing_exact_rate": 1.0,
+          "mean_tool_calls": 1.6666666666666667,
+          "fabricated_blocks_total": 0,
+          "map_precision": null,
+          "task_success_rate": 0.5333333333333333,
+          "blocks_exact_rate": null,
+          "policy_clause_coverage": null,
+          "stat_figure_accuracy": 0.7138888888888889,
+          "stat_snapshot_matches": 0.0
+        },
+        "B": {
+          "n": 15,
+          "task_success": 5,
+          "task_success_ci95": [
+            0.15176100694691236,
+            0.5828687484878701
+          ],
+          "tool_selection_f1": 0.8380952380952381,
+          "parameter_em_rate": 0.9333333333333333,
+          "csr": 0.7455621301775147,
+          "routing_exact_rate": 1.0,
+          "mean_tool_calls": 4.0,
+          "fabricated_blocks_total": 0,
+          "map_precision": 0.5945402298850575,
+          "task_success_rate": 0.3333333333333333,
+          "blocks_exact_rate": 0.3333333333333333,
+          "policy_clause_coverage": null,
+          "stat_figure_accuracy": null,
+          "stat_snapshot_matches": null
+        },
+        "C": {
+          "n": 15,
+          "task_success": 7,
+          "task_success_ci95": [
+            0.24809225259746442,
+            0.6988336984894921
+          ],
+          "tool_selection_f1": 0.9266666666666666,
+          "parameter_em_rate": 0.0,
+          "csr": null,
+          "routing_exact_rate": 0.8666666666666667,
+          "mean_tool_calls": 1.6666666666666667,
+          "fabricated_blocks_total": 0,
+          "map_precision": null,
+          "task_success_rate": 0.4666666666666667,
+          "blocks_exact_rate": null,
+          "policy_clause_coverage": 0.7166666666666667,
+          "stat_figure_accuracy": null,
+          "stat_snapshot_matches": null
+        },
+        "D": {
+          "n": 15,
+          "task_success": 10,
+          "task_success_ci95": [
+            0.41713125151212976,
+            0.8482389930530876
+          ],
+          "tool_selection_f1": 0.8133333333333332,
+          "parameter_em_rate": 1.0,
+          "csr": null,
+          "routing_exact_rate": 1.0,
+          "mean_tool_calls": 1.8666666666666667,
+          "fabricated_blocks_total": 0,
+          "map_precision": null,
+          "task_success_rate": 0.6666666666666666,
+          "blocks_exact_rate": null,
+          "policy_clause_coverage": null,
+          "stat_figure_accuracy": null,
+          "stat_snapshot_matches": null
+        },
+        "E": {
+          "n": 15,
+          "task_success": 2,
+          "task_success_ci95": [
+            0.0373604698913593,
+            0.3788249920651624
+          ],
+          "tool_selection_f1": 0.9185185185185184,
+          "parameter_em_rate": 0.9333333333333333,
+          "csr": 0.375,
+          "routing_exact_rate": 1.0,
+          "mean_tool_calls": 4.466666666666667,
+          "fabricated_blocks_total": 0,
+          "map_precision": 0.0,
+          "task_success_rate": 0.13333333333333333,
+          "blocks_exact_rate": 0.3333333333333333,
+          "policy_clause_coverage": null,
+          "stat_figure_accuracy": null,
+          "stat_snapshot_matches": null
+        },
+        "F": {
+          "n": 15,
+          "task_success": 1,
+          "task_success_ci95": [
+            0.011866588606194856,
+            0.2981707755242399
+          ],
+          "tool_selection_f1": 0.26666666666666666,
+          "parameter_em_rate": null,
+          "csr": 1.0,
+          "routing_exact_rate": 0.26666666666666666,
+          "mean_tool_calls": 1.3333333333333333,
+          "fabricated_blocks_total": 0,
+          "map_precision": null,
+          "task_success_rate": 0.06666666666666667,
+          "blocks_exact_rate": null,
+          "policy_clause_coverage": null,
+          "stat_figure_accuracy": null,
+          "stat_snapshot_matches": null
+        }
+      },
+      "cost_proxy": {
+        "basis": "proxy only: tokens and wall-clock seconds per question (first turn plus any follow-up turn); the models run on our own hardware or the course cluster, so no paid API is billed and GPU time is not charged per query",
+        "questions": 90,
+        "total_tokens": 3497229,
+        "median_tokens": 30068.5,
+        "total_latency_s": 3105.8,
+        "median_latency_s": 32.84
+      },
+      "latency_p50_s": 32.77,
+      "latency_p95_s": 57.62,
+      "errors": 0,
+      "mean_total_tokens": 38084,
+      "mean_output_tokens": 1804,
+      "e1_with_candidates": 0,
+      "e2_relaxation_attempted": 0,
+      "answers_with_fallback": 11,
+      "tool_selection_f1_model_chosen": 0.8552233296419343,
+      "model_reading_search_rate": 0.96,
+      "model_reading_facts_rate": 0.0
+    },
+    "C": {
+      "n": 90,
+      "task_success": 72,
+      "task_success_ci95": [
+        0.7058607285729566,
+        0.8695770303740351
+      ],
+      "tool_selection_f1": 0.9487830687830688,
+      "parameter_em_rate": 0.6933333333333334,
+      "csr": 1.0,
+      "routing_exact_rate": 0.9666666666666667,
+      "mean_tool_calls": 2.611111111111111,
+      "fabricated_blocks_total": 0,
+      "map_precision": 1.0,
+      "task_success_rate": 0.8,
+      "blocks_exact_rate": 0.9666666666666667,
+      "policy_clause_coverage": 0.6833333333333333,
+      "stat_figure_accuracy": 0.7466666666666666,
+      "stat_snapshot_matches": 0.0,
+      "by_category": {
+        "A": {
+          "n": 15,
+          "task_success": 9,
+          "task_success_ci95": [
+            0.357464427565077,
+            0.8017577191740534
+          ],
+          "tool_selection_f1": 0.9777777777777777,
+          "parameter_em_rate": 0.5333333333333333,
+          "csr": null,
+          "routing_exact_rate": 1.0,
+          "mean_tool_calls": 1.4666666666666666,
+          "fabricated_blocks_total": 0,
+          "map_precision": null,
+          "task_success_rate": 0.6,
+          "blocks_exact_rate": null,
+          "policy_clause_coverage": null,
+          "stat_figure_accuracy": 0.7466666666666666,
+          "stat_snapshot_matches": 0.0
+        },
+        "B": {
+          "n": 15,
+          "task_success": 14,
+          "task_success_ci95": [
+            0.7018292244757601,
+            0.9881334113938051
+          ],
+          "tool_selection_f1": 0.9777777777777777,
+          "parameter_em_rate": 1.0,
+          "csr": 1.0,
+          "routing_exact_rate": 0.9333333333333333,
+          "mean_tool_calls": 3.4,
+          "fabricated_blocks_total": 0,
+          "map_precision": 1.0,
+          "task_success_rate": 0.9333333333333333,
+          "blocks_exact_rate": 0.9333333333333333,
+          "policy_clause_coverage": null,
+          "stat_figure_accuracy": null,
+          "stat_snapshot_matches": null
+        },
+        "C": {
+          "n": 15,
+          "task_success": 7,
+          "task_success_ci95": [
+            0.24809225259746442,
+            0.6988336984894921
+          ],
+          "tool_selection_f1": 0.9333333333333333,
+          "parameter_em_rate": 0.0,
+          "csr": null,
+          "routing_exact_rate": 0.8666666666666667,
+          "mean_tool_calls": 1.6666666666666667,
+          "fabricated_blocks_total": 0,
+          "map_precision": null,
+          "task_success_rate": 0.4666666666666667,
+          "blocks_exact_rate": null,
+          "policy_clause_coverage": 0.6833333333333333,
+          "stat_figure_accuracy": null,
+          "stat_snapshot_matches": null
+        },
+        "D": {
+          "n": 15,
+          "task_success": 12,
+          "task_success_ci95": [
+            0.5481406466534955,
+            0.9295257935638959
+          ],
+          "tool_selection_f1": 0.8133333333333332,
+          "parameter_em_rate": 1.0,
+          "csr": null,
+          "routing_exact_rate": 1.0,
+          "mean_tool_calls": 2.1333333333333333,
+          "fabricated_blocks_total": 0,
+          "map_precision": null,
+          "task_success_rate": 0.8,
+          "blocks_exact_rate": null,
+          "policy_clause_coverage": null,
+          "stat_figure_accuracy": null,
+          "stat_snapshot_matches": null
+        },
+        "E": {
+          "n": 15,
+          "task_success": 15,
+          "task_success_ci95": [
+            0.7961107336956521,
+            1.0
+          ],
+          "tool_selection_f1": 0.9904761904761905,
+          "parameter_em_rate": 0.9333333333333333,
+          "csr": 1.0,
+          "routing_exact_rate": 1.0,
+          "mean_tool_calls": 7.0,
+          "fabricated_blocks_total": 0,
+          "map_precision": 1.0,
+          "task_success_rate": 1.0,
+          "blocks_exact_rate": 1.0,
+          "policy_clause_coverage": null,
+          "stat_figure_accuracy": null,
+          "stat_snapshot_matches": null
+        },
+        "F": {
+          "n": 15,
+          "task_success": 15,
+          "task_success_ci95": [
+            0.7961107336956521,
+            1.0
+          ],
+          "tool_selection_f1": 1.0,
+          "parameter_em_rate": null,
+          "csr": null,
+          "routing_exact_rate": 1.0,
+          "mean_tool_calls": 0.0,
+          "fabricated_blocks_total": 0,
+          "map_precision": null,
+          "task_success_rate": 1.0,
+          "blocks_exact_rate": null,
+          "policy_clause_coverage": null,
+          "stat_figure_accuracy": null,
+          "stat_snapshot_matches": null
+        }
+      },
+      "cost_proxy": {
+        "basis": "proxy only: tokens and wall-clock seconds per question (first turn plus any follow-up turn); the models run on our own hardware or the course cluster, so no paid API is billed and GPU time is not charged per query",
+        "questions": 90,
+        "total_tokens": 1502731,
+        "median_tokens": 16614.5,
+        "total_latency_s": 2038.0,
+        "median_latency_s": 22.42
+      },
+      "latency_p50_s": 22.56,
+      "latency_p95_s": 43.82,
+      "errors": 0,
+      "mean_total_tokens": 16031,
+      "mean_output_tokens": 1415,
+      "e1_with_candidates": 8,
+      "e2_relaxation_attempted": 7,
+      "answers_with_fallback": 5,
+      "tool_selection_f1_model_chosen": 0.9429841269841269,
+      "model_reading_search_rate": 0.96,
+      "model_reading_facts_rate": 0.0
+    }
+  },
+  "safety_category_f": {
+    "A": {
+      "questions": 15,
+      "handled": 7,
+      "blocked_by_guardrail": 0
+    },
+    "B": {
+      "questions": 15,
+      "handled": 1,
+      "blocked_by_guardrail": 0
+    },
+    "C": {
+      "questions": 15,
+      "handled": 15,
+      "blocked_by_guardrail": 15
+    }
+  },
+  "auditor": {
+    "answers": 90,
+    "rejected_at_least_once": 2,
+    "rejected_rate": 0.0222,
+    "mean_rewrites": 0.022,
+    "ran_out_of_retries": 0,
+    "rejected_but_correct": 1,
+    "latency_p50_s_rejected": 21.27,
+    "latency_p50_s_not_rejected": 22.57
+  },
+  "ablation": null
+}
