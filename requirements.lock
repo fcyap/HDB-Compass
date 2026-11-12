@@ -1,0 +1,210 @@
+# Exact versions for requirements.txt, resolved for Python 3.11+ on Linux, macOS and Windows (platform markers kept):
+#   uv pip compile requirements.txt -c <(echo langchain-core==1.7.0) --universal --python-version 3.11
+# preferring the versions of the environment the test suite was developed in. Checked on 12 Nov 2026: a fresh
+# Python 3.12 environment installed from this file (torch CPU build) passed the whole suite against the local market
+# database: 2,003 passed, 23 skipped, 0 failed.
+# Install:  python -m pip install -r requirements.lock
+# On Linux this file includes the CUDA libraries (nvidia-*) that PyPI's torch depends on, so a Linux install is about
+# 6 GB even on a machine without a GPU. For a smaller CPU-only setup use requirements.txt after installing the CPU
+# build:  pip install torch --index-url https://download.pytorch.org/whl/cpu  (not checked against the full suite).
+# torch is used by sentence-transformers for the policy search (dense retrieval and the cross-encoder).
+aiohappyeyeballs==2.7.1
+aiohttp==3.14.5
+aiosignal==1.4.0
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anthropic==2.8.0
+anyio==4.15.1
+appdirs==1.4.4
+attrs==26.1.0
+authlib==1.9.1
+babel==2.18.0
+beartype==0.23.1
+cachetools==7.2.4
+certifi==2026.10.23
+cffi==2.1.1 ; platform_python_implementation != 'PyPy'
+charset-normalizer==3.5.2
+click==8.5.0
+cloudpickle==3.1.2
+colorama==0.4.6 ; sys_platform == 'win32'
+courlan==1.4.0
+cryptography==50.0.2
+cuda-bindings==13.5.0 ; python_full_version < '3.15' and sys_platform == 'linux'
+cuda-pathfinder==1.8.6 ; python_full_version < '3.15' and sys_platform == 'linux'
+cuda-toolkit==13.2.2 ; sys_platform == 'linux'
+cyclopts==5.3.0
+datasets==5.2.0
+dateparser==1.5.0
+dill==0.4.1
+diskcache==5.6.3
+distro==1.9.0
+dnspython==2.9.0
+docstring-parser==0.18.0
+duckdb==2.0.0
+email-validator==2.3.0
+exceptiongroup==1.3.1
+fastapi==0.162.0
+fastmcp==2.13.3
+filelock==4.2.4
+filetype==1.2.0
+flatbuffers==25.12.19
+frozenlist==1.8.0
+fsspec==2026.9.0
+google-auth==2.62.0
+google-genai==2.34.0
+groq==0.37.1
+h11==0.16.0
+hf-xet==1.8.0 ; platform_machine == 'AMD64' or platform_machine == 'ARM64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'
+htmldate==1.11.0
+httpcore==1.0.9
+httpcore2==2.16.0 ; sys_platform != 'emscripten'
+httpx==0.28.1
+httpx-sse==0.4.3
+httpx2==2.16.0
+httpx2-jsfetch==1.0 ; python_full_version >= '3.12' and sys_platform == 'emscripten'
+huggingface-hub==2.4.0
+idna==3.20
+iniconfig==2.3.1
+instructor==1.17.0
+jinja2==3.1.6
+jiter==0.14.0
+joblib==1.6.0
+joserfc==1.7.7
+jsonpatch==1.36
+jsonpointer==3.4
+jsonschema==4.26.0
+jsonschema-path==0.5.0
+jsonschema-specifications==2025.9.1
+justext==3.0.2
+langchain==1.4.7
+langchain-anthropic==1.7.7
+langchain-classic==1.0.8
+langchain-community==0.4.2
+langchain-core==1.7.0
+langchain-google-genai==4.4.2
+langchain-groq==1.1.3
+langchain-openai==1.7.2
+langchain-protocol==0.0.20
+langchain-text-splitters==1.1.3
+langgraph==1.2.17
+langgraph-checkpoint==4.3.0
+langgraph-prebuilt==1.1.1
+langgraph-sdk==0.4.9
+langsmith==0.14.12
+lxml==6.1.3
+lxml-html-clean==0.4.6
+markdown-it-py==4.2.0
+markupsafe==3.0.3
+mcp==1.22.0
+mdurl==0.1.2
+mpmath==1.3.0
+multidict==7.2.1
+multiprocess==0.70.19
+narwhals==2.28.0
+nest-asyncio==1.6.0
+networkx==3.6.1 ; python_full_version < '3.12'
+networkx==3.7 ; python_full_version >= '3.12'
+numpy==2.4.6 ; python_full_version < '3.12'
+numpy==2.5.4 ; python_full_version >= '3.12'
+nvidia-cublas==13.4.1.3 ; sys_platform == 'linux'
+nvidia-cuda-cccl==13.3.5.0.6 ; sys_platform == 'linux'
+nvidia-cuda-cupti==13.2.86 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')
+nvidia-cuda-nvrtc==13.2.86 ; sys_platform == 'linux'
+nvidia-cuda-runtime==13.2.86 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')
+nvidia-cudnn-cu13==9.26.0.51 ; sys_platform == 'linux'
+nvidia-cufft==12.2.0.57 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')
+nvidia-cufile==1.17.1.22 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')
+nvidia-cusolver==12.2.0.11 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')
+nvidia-cusparse==12.7.10.12 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')
+nvidia-cusparselt-cu13==0.8.1 ; sys_platform == 'linux'
+nvidia-nccl-cu13==2.30.7 ; sys_platform == 'linux'
+nvidia-nvjitlink==13.5.37 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')
+nvidia-nvshmem-cu13==3.7.2 ; sys_platform == 'linux'
+nvidia-nvtx==13.2.86 ; (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')
+onnxruntime==1.31.1
+openai==3.3.0
+openapi-pydantic==0.6.0
+opentelemetry-api==1.45.1
+orjson==3.13.0
+ormsgpack==1.13.0
+packaging==26.3
+pandas==3.1.1
+pathable==0.6.0
+pathvalidate==3.3.1
+pillow==13.0.0
+platformdirs==4.13.5
+pluggy==1.7.0
+propcache==0.5.4
+protobuf==7.36.2
+psutil==7.2.2
+py-key-value-aio==0.3.0
+py-key-value-shared==0.3.0
+pyarrow==26.0.1
+pyasn1==0.6.5
+pyasn1-modules==0.4.2
+pycparser==3.12 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
+pydantic==2.14.1
+pydantic-core==2.50.1
+pydantic-settings==2.16.1
+pygments==2.21.0
+pyjwt==2.15.1
+pymupdf==2.1
+pymupdf-layout==2.1
+pymupdf4llm==2.1
+pyperclip==1.11.0
+pyproj==3.7.2 ; python_full_version < '3.12'
+pyproj==3.8.0 ; python_full_version >= '3.12'
+pytest==9.1.1
+python-dateutil==4.0.0
+python-dotenv==1.2.4
+python-multipart==0.0.32
+pytz==2026.6
+pywin32==312 ; sys_platform == 'win32'
+pyyaml==6.0.3
+ragas==0.4.3
+rank-bm25==0.2.2
+referencing==0.37.0
+regex==2026.9.29
+requests==2.34.2
+requests-toolbelt==1.0.0
+rich==14.3.4
+rich-rst==2.2.0
+rpds-py==2026.9.1
+safetensors==0.8.0
+scikit-learn==1.9.1
+scikit-network==0.33.5
+scipy==1.17.1 ; python_full_version < '3.12'
+scipy==1.18.1 ; python_full_version >= '3.12'
+sentence-transformers==6.2.0
+setuptools==78.1.0
+shapely==2.2.0
+shellingham==1.5.4
+sniffio==1.3.1
+sqlalchemy==2.1.8
+sse-starlette==3.5.1
+starlette==1.10.0
+sympy==1.14.0
+tabulate==0.10.0
+tenacity==9.1.4
+threadpoolctl==3.8.0
+tiktoken==0.14.0
+tld==0.13.2
+tokenizers==0.23.3
+torch==2.15.0
+tqdm==4.70.1
+trafilatura==2.3.1
+transformers==5.22.2
+triton==3.9.0 ; python_full_version < '3.16' and sys_platform == 'linux'
+truststore==0.10.5 ; sys_platform != 'emscripten'
+typer==0.27.3
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+tzdata==2026.6
+tzlocal==5.4.5
+urllib3==2.8.0
+uuid-utils==0.18.0
+uvicorn==0.54.0
+websockets==17.3
+xxhash==4.0.2
+yarl==1.25.1
+zstandard==0.25.0

@@ -134,11 +134,21 @@ def _market_db_ready() -> bool:
     return (path if path.is_absolute() else ROOT / path).exists()
 
 
+def _pinned_snapshot() -> str | None:
+    return next((i["ground_truth_facts"].get("data", {}).get("snapshot_id") for i in ITEMS), None)
+
+
 @pytest.mark.skipif(not _market_db_ready(), reason="needs the local market database (python -m data.build_market_db)")
 @pytest.mark.parametrize("spec", SPECS, ids=[s["id"] for s in SPECS])
 def test_ground_truth_is_reproducible_from_the_tools(spec):
     item, problems = ground(spec)
-    assert problems == []
+    assert problems == []          # the question's own checks hold on any snapshot
+    local = item["ground_truth_facts"]["data"]["snapshot_id"]
+    if local != _pinned_snapshot() and os.getenv("HDB_REQUIRE_PINNED_SNAPSHOT") != "1":
+        # The answer keys were computed on one database snapshot. A database built later (or from another download) has
+        # a different snapshot id, and comparing the keys to it says nothing about the tools. Set
+        # HDB_REQUIRE_PINNED_SNAPSHOT=1 to make this a failure again (use it with the team's database).
+        pytest.skip(f"local database snapshot {local} differs from the answer keys' snapshot {_pinned_snapshot()}")
     stored = {i["id"]: i for i in ITEMS}[spec["id"]]
     assert json.loads(json.dumps(item)) == stored     # rebuild with python -m evaluation.ground_category_e_extra
 

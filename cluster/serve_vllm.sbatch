@@ -24,9 +24,28 @@
 set -euo pipefail
 SCRATCH="/common/scratch/users/${USER:0:1}/$USER"
 MODEL_REPO="${MODEL_REPO:-Qwen/Qwen3-30B-A3B-GPTQ-Int4}"
-MODEL_DIR="${MODEL_DIR:-$SCRATCH/models/${MODEL_REPO##*/}}"
 PARSER="${PARSER:-hermes}"             # Qwen3 tool calls -> hermes parser
 MAX_LEN="${MAX_LEN:-32768}"            # 40960 needs 3.75 GiB of KV cache; the 24 GB slice has 3.3 (vLLM 0.33)
+GPU_UTIL="${GPU_UTIL:-0.95}"
+REASONING_PARSER="${REASONING_PARSER:-}"
+EXTRA_ARGS="${EXTRA_ARGS:-}"
+# MODEL_PRESET selects the flags used for the reported Experiment 1 runs (README "Setup used for these runs"); with no
+# preset the defaults above (Qwen3-30B-A3B on the 24 GB slice) apply. Submit with the GPU named in the comment, e.g.
+#   sbatch --constraint='a40|l40s' --export=ALL,MODEL_PRESET=qwen38 cluster/serve_vllm.sbatch
+# (download the model first with setup_env.sbatch and the same MODEL_REPO). A preset sets every variable it names, so to
+# change a single flag, submit without MODEL_PRESET and pass MODEL_REPO, PARSER, MAX_LEN, ... yourself.
+case "${MODEL_PRESET:-}" in
+  "") ;;
+  qwen3-30b) ;;                                                    # defaults; --constraint=rtx_pro_6000_blackwell_max
+  qwen38)    MODEL_REPO=Qwen/Qwen3.8-27B-FP8; PARSER=qwen3_coder; REASONING_PARSER=qwen3; MAX_LEN=65536
+             GPU_UTIL=0.92; EXTRA_ARGS="--max-num-seqs 32" ;;      # --constraint='a40|l40s'
+  gptoss)    MODEL_REPO=openai/gpt-oss-20b; PARSER=openai; REASONING_PARSER=openai_gptoss; MAX_LEN=65536
+             GPU_UTIL=0.92; EXTRA_ARGS="--attention-backend TRITON_ATTN" ;;   # --constraint=rtx_pro_6000_blackwell_max
+  gemma4)    MODEL_REPO=nvidia/Gemma-4-26B-A4B-NVFP4; PARSER=gemma4; REASONING_PARSER=gemma4; MAX_LEN=65536
+             GPU_UTIL=0.92; EXTRA_ARGS="--max-num-seqs 16" ;;      # --constraint='a40|l40s' (the 24 GB slice is too small)
+  *) echo "unknown MODEL_PRESET=$MODEL_PRESET (qwen3-30b, qwen38, gptoss, gemma4)" >&2; exit 2 ;;
+esac
+MODEL_DIR="${MODEL_DIR:-$SCRATCH/models/${MODEL_REPO##*/}}"
 export HF_HOME="$SCRATCH/hf" HF_HUB_OFFLINE=1
 # The nodes have no nvcc, and FlashInfer's top-k/top-p sampler JIT-compiles on first use, which
 # kills start-up. Our requests are greedy (temperature 0), so vLLM's PyTorch sampler is equivalent.
@@ -54,5 +73,6 @@ exec vllm serve "$MODEL_DIR" \
   --seed 42 \
   --max-model-len "$MAX_LEN" \
   --enable-auto-tool-choice --tool-call-parser "$PARSER" \
+  ${REASONING_PARSER:+--reasoning-parser "$REASONING_PARSER"} \
   --generation-config vllm \
-  --gpu-memory-utilization 0.95
+  --gpu-memory-utilization "$GPU_UTIL" $EXTRA_ARGS

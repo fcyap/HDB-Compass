@@ -7,7 +7,7 @@ name = "hdb-compass"
 version = "1.0.0"
 description = "HDB-Compass: Multi-Agent & FastMCP Decision-Support System for Singapore Public Housing"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "langgraph>=0.0.30",
     "fastmcp>=2.13,<2.14",
